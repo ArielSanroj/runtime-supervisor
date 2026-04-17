@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; font-family: var(--sans); }
+
+/* ------- Ops console dark theme (scoped to .ops-shell) ------- */
+.ops-shell {
+  --bg: #0b0d12;
+  --panel: #12151d;
+  --panel-2: #1a1f2a;
+  --border: #262c39;
+  --text: #e6e9ef;
+  --muted: #8a93a5;
+  --accent: #7aa2ff;
+  --ok: #3ecf8e;
+  --warn: #f5b642;
+  --danger: #ef4f5a;
+
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.ops-shell a { color: var(--accent); text-decoration: none; }
+.ops-shell a:hover { text-decoration: underline; }
+
+.ops-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.ops-header nav { display: flex; gap: 16px; }
+.ops-shell .brand { display: flex; align-items: baseline; gap: 12px; }
+.ops-shell .brand .env { color: var(--muted); font-size: 12px; }
+.ops-main { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+
+.ops-shell h1 { font-size: 22px; margin: 0 0 16px; }
+.ops-shell h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+
+.ops-shell .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+.ops-shell .grid { display: grid; gap: 16px; }
+.ops-shell .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.ops-shell .grid.cols-2 { grid-template-columns: 2fr 1fr; }
+
+.ops-shell .kpi { font-size: 30px; font-weight: 700; }
+.ops-shell .kpi .label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+.ops-shell table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ops-shell table th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.ops-shell table td { padding: 10px; border-bottom: 1px solid var(--border); }
+.ops-shell table tr:hover td { background: var(--panel-2); }
+
+.ops-shell .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+.ops-shell .badge.pending { color: var(--warn); border-color: rgba(245, 182, 66, 0.4); background: rgba(245, 182, 66, 0.08); }
+.ops-shell .badge.approved { color: var(--ok); border-color: rgba(62, 207, 142, 0.4); background: rgba(62, 207, 142, 0.08); }
+.ops-shell .badge.rejected { color: var(--danger); border-color: rgba(239, 79, 90, 0.4); background: rgba(239, 79, 90, 0.08); }
+
+.ops-shell pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
+
+.ops-shell button {
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font-weight: 500;
+}
+.ops-shell button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d12; }
+.ops-shell button.danger { background: var(--danger); border-color: var(--danger); color: #0b0d12; }
+.ops-shell button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ops-shell input, .ops-shell textarea {
+  width: 100%; padding: 8px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-family: inherit;
+}
+.ops-shell textarea { min-height: 80px; resize: vertical; }
+
+.ops-shell .row { display: flex; gap: 10px; align-items: center; }
+.ops-shell .muted { color: var(--muted); }
+.ops-shell .chain-ok { color: var(--ok); }
+.ops-shell .chain-bad { color: var(--danger); }
+.ops-shell .mono { font-family: var(--mono); }

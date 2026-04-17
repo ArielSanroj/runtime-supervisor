@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .db import Base
+
+BigIntPk = BigInteger().with_variant(Integer, "sqlite")
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class Action(Base):
+    __tablename__ = "actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="received")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    decision: Mapped[Decision | None] = relationship(back_populates="action", uselist=False)
+    review: Mapped[ReviewItem | None] = relationship(back_populates="action", uselist=False)
+    events: Mapped[list[EvidenceEvent]] = relationship(back_populates="action", order_by="EvidenceEvent.seq")
+
+
+class Decision(Base):
+    __tablename__ = "decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    action_id: Mapped[str] = mapped_column(ForeignKey("actions.id"), nullable=False, unique=True)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)  # allow|deny|review
+    policy_hits: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    risk_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    risk_breakdown: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    action: Mapped[Action] = relationship(back_populates="decision")
+
+
+class ReviewItem(Base):
+    __tablename__ = "review_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    action_id: Mapped[str] = mapped_column(ForeignKey("actions.id"), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    approver: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    approver_notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    action: Mapped[Action] = relationship(back_populates="review")
+
+
+class EvidenceEvent(Base):
+    __tablename__ = "evidence_log"
+    __table_args__ = (UniqueConstraint("action_id", "seq", name="uq_evidence_action_seq"),)
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    action_id: Mapped[str] = mapped_column(ForeignKey("actions.id"), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    prev_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    action: Mapped[Action] = relationship(back_populates="events")

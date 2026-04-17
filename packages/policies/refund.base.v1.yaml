@@ -1,0 +1,16 @@
+name: refund.base
+version: 1
+description: Base refund supervision policy (Phase 1 MVP).
+rules:
+  - id: hard-cap
+    when: "payload['amount'] > 10000"
+    action: deny
+    reason: amount-exceeds-hard-cap
+  - id: negative-amount
+    when: "payload['amount'] <= 0"
+    action: deny
+    reason: invalid-amount
+  - id: fraud-dispute
+    when: "payload.get('reason') == 'fraud_dispute'"
+    action: review
+    reason: fraud-dispute-requires-human

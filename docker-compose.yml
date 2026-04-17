@@ -22,6 +22,9 @@ services:
       DATABASE_URL: postgresql+psycopg://aic:aic@postgres:5432/aic
       EVIDENCE_HMAC_SECRET: ${EVIDENCE_HMAC_SECRET:-dev-hmac-secret-change-me}
       POLICY_PATH: /policies/refund.base.v1.yaml
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-false}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret-change-me}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +42,8 @@ services:
     environment:
       SUPERVISOR_API_URL: http://supervisor_api:8000
       NEXT_PUBLIC_SUPERVISOR_API_URL: http://localhost:8000
+      SUPERVISOR_APP_ID: ${SUPERVISOR_APP_ID:-}
+      SUPERVISOR_SECRET: ${SUPERVISOR_SECRET:-}
     ports:
       - "3000:3000"
     depends_on:

@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     evidence_hmac_secret: str = Field(default="dev-hmac-secret-change-me", alias="EVIDENCE_HMAC_SECRET")
     policy_path: str = Field(default="packages/policies/refund.base.v1.yaml", alias="POLICY_PATH")
     app_env: str = Field(default="dev", alias="APP_ENV")
+    require_auth: bool = Field(default=False, alias="REQUIRE_AUTH")
+    admin_bootstrap_token: str = Field(default="", alias="ADMIN_BOOTSTRAP_TOKEN")
+    webhook_secret: str = Field(default="dev-webhook-secret-change-me", alias="WEBHOOK_SECRET")
 
     @property
     def resolved_policy_path(self) -> Path:

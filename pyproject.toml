@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["services/supervisor_api"]
+members = ["services/supervisor_api", "packages/supervisor-client-py", "packages/mcp-supervisor"]
 
 [tool.ruff]
 line-length = 100

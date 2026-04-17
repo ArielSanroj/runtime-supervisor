@@ -62,6 +62,43 @@ class ReviewItem(Base):
     action: Mapped[Action] = relationship(back_populates="review")
 
 
+class Integration(Base):
+    __tablename__ = "integrations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    shared_secret: Mapped[str] = mapped_column(String(256), nullable=False)
+    scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebhookSubscription(Base):
+    __tablename__ = "webhook_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    integration_id: Mapped[str] = mapped_column(ForeignKey("integrations.id"), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    subscription_id: Mapped[str] = mapped_column(ForeignKey("webhook_subscriptions.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status_code: Mapped[int | None] = mapped_column(nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class EvidenceEvent(Base):
     __tablename__ = "evidence_log"
     __table_args__ = (UniqueConstraint("action_id", "seq", name="uq_evidence_action_seq"),)

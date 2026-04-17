@@ -5,11 +5,10 @@ type, tightened enum) should fail loudly here before it reaches a consumer.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
-
 from supervisor_api.schemas import (
     DecisionOut,
     EvaluateRequest,
@@ -18,7 +17,6 @@ from supervisor_api.schemas import (
     ReviewItemOut,
     ReviewResolveRequest,
 )
-
 
 # ---------- EvaluateRequest ----------
 
@@ -88,20 +86,20 @@ def test_evidence_event_requires_hash_fields():
             event_payload={},
             # prev_hash missing
             hash="abc",  # type: ignore[call-arg]
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
 
 def test_evidence_bundle_shape():
     ev = EvidenceEventOut(
         seq=1, event_type="action.received", event_payload={"k": "v"},
-        prev_hash="0" * 64, hash="a" * 64, created_at=datetime.now(timezone.utc),
+        prev_hash="0" * 64, hash="a" * 64, created_at=datetime.now(UTC),
     )
     bundle = EvidenceBundle(
         action_id="a1", action_type="refund", status="allowed",
         events=[ev], chain_ok=True, broken_at_seq=None,
         bundle_hash="b" * 64, bundle_signature="s" * 64,
-        exported_at=datetime.now(timezone.utc),
+        exported_at=datetime.now(UTC),
     )
     assert bundle.chain_ok is True
     assert bundle.events[0].seq == 1
@@ -112,7 +110,7 @@ def test_evidence_bundle_can_report_broken_chain():
         action_id="a1", action_type="refund", status="allowed",
         events=[], chain_ok=False, broken_at_seq=3,
         bundle_hash="b" * 64, bundle_signature="s" * 64,
-        exported_at=datetime.now(timezone.utc),
+        exported_at=datetime.now(UTC),
     )
     assert bundle.chain_ok is False
     assert bundle.broken_at_seq == 3
@@ -123,7 +121,7 @@ def test_evidence_bundle_can_report_broken_chain():
 def test_review_item_status_is_constrained():
     base = dict(
         id="r1", action_id="a1", action_payload={}, action_type="refund",
-        risk_score=0, policy_hits=[], created_at=datetime.now(timezone.utc),
+        risk_score=0, policy_hits=[], created_at=datetime.now(UTC),
     )
     for status in ("pending", "approved", "rejected"):
         ReviewItemOut(status=status, **base)  # type: ignore[arg-type]

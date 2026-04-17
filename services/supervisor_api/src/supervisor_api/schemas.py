@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvaluateRequest(BaseModel):
@@ -70,3 +70,58 @@ class ReviewItemOut(BaseModel):
 class ReviewResolveRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class IntegrationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    scopes: list[str] = Field(default_factory=lambda: ["*"])
+
+
+class IntegrationOut(BaseModel):
+    id: str
+    name: str
+    scopes: list[str]
+    active: bool
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+class IntegrationCreated(IntegrationOut):
+    shared_secret: str  # returned once at creation / rotation
+
+
+class IntegrationRotate(BaseModel):
+    # empty body; kept for future knobs like "set expiry"
+    pass
+
+
+class WebhookSubscriptionCreate(BaseModel):
+    url: str = Field(min_length=1, max_length=1024)
+    events: list[Literal["decision.made", "review.resolved", "action.denied"]] = Field(min_length=1)
+
+    @field_validator("url")
+    @classmethod
+    def _url_is_http(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+
+class WebhookSubscriptionOut(BaseModel):
+    id: str
+    integration_id: str
+    url: str
+    events: list[str]
+    active: bool
+    created_at: datetime
+
+
+class WebhookDeliveryOut(BaseModel):
+    id: int
+    subscription_id: str
+    event_type: str
+    status_code: int | None
+    error: str | None
+    attempts: int
+    delivered_at: datetime | None
+    created_at: datetime

@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .. import evidence, registry
+from .. import auth, evidence, registry, webhooks
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
@@ -25,9 +25,13 @@ def _policy() -> Policy:
 @router.post("/actions/evaluate", response_model=DecisionOut)
 def evaluate_action(
     body: EvaluateRequest,
+    background_tasks: BackgroundTasks,
     dry_run: bool = Query(default=False, description="Return decision without persisting"),
     db: Session = Depends(get_db),
+    principal: auth.Principal = Depends(auth.require_any_scope),
 ) -> DecisionOut:
+    if not (set(principal.scopes) & {"*", body.action_type}):
+        raise HTTPException(status_code=403, detail=f"scope '{body.action_type}' not granted")
     if body.action_type not in registry.LIVE_ACTION_TYPES:
         spec = registry.get(body.action_type)
         if spec is not None and spec.status == "planned":
@@ -82,6 +86,20 @@ def evaluate_action(
 
     db.commit()
 
+    webhook_event = "action.denied" if dec.decision == "deny" else "decision.made"
+    background_tasks.add_task(
+        webhooks.dispatch,
+        webhook_event,
+        {
+            "action_id": action.id,
+            "action_type": body.action_type,
+            "decision": dec.decision,
+            "reasons": dec.reasons,
+            "risk_score": dec.risk_score,
+            "policy_version": dec.policy_version,
+        },
+    )
+
     return DecisionOut(
         action_id=action.id,
         decision=dec.decision,
@@ -92,7 +110,11 @@ def evaluate_action(
 
 
 @router.get("/decisions/{action_id}", response_model=DecisionOut)
-def get_decision(action_id: str, db: Session = Depends(get_db)) -> DecisionOut:
+def get_decision(
+    action_id: str,
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> DecisionOut:
     action = db.get(Action, action_id)
     if action is None or action.decision is None:
         raise HTTPException(status_code=404, detail="decision not found")
@@ -111,7 +133,11 @@ def get_decision(action_id: str, db: Session = Depends(get_db)) -> DecisionOut:
 
 
 @router.get("/decisions/{action_id}/evidence", response_model=EvidenceBundle)
-def get_evidence(action_id: str, db: Session = Depends(get_db)) -> EvidenceBundle:
+def get_evidence(
+    action_id: str,
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> EvidenceBundle:
     try:
         data = evidence.bundle(db, action_id)
     except LookupError as e:

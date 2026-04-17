@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import evidence
+from .. import auth, evidence, webhooks
 from ..db import get_db
 from ..models import Action, ReviewItem
 from ..schemas import ReviewItemOut, ReviewResolveRequest
@@ -36,6 +36,7 @@ def _to_out(item: ReviewItem, action: Action) -> ReviewItemOut:
 def list_reviews(
     status: Literal["pending", "approved", "rejected"] | None = Query(default=None),
     db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
 ) -> list[ReviewItemOut]:
     q = select(ReviewItem).order_by(ReviewItem.created_at.desc())
     if status:
@@ -50,7 +51,11 @@ def list_reviews(
 
 
 @router.get("/review-cases/{review_id}", response_model=ReviewItemOut)
-def get_review(review_id: str, db: Session = Depends(get_db)) -> ReviewItemOut:
+def get_review(
+    review_id: str,
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> ReviewItemOut:
     item = db.get(ReviewItem, review_id)
     if item is None:
         raise HTTPException(status_code=404, detail="review not found")
@@ -64,8 +69,10 @@ def get_review(review_id: str, db: Session = Depends(get_db)) -> ReviewItemOut:
 def resolve_review(
     review_id: str,
     body: ReviewResolveRequest,
+    background_tasks: BackgroundTasks,
     x_approver: str = Header(default="anonymous", alias="X-Approver"),
     db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
 ) -> ReviewItemOut:
     item = db.get(ReviewItem, review_id)
     if item is None:
@@ -90,4 +97,18 @@ def resolve_review(
     })
 
     db.commit()
+
+    background_tasks.add_task(
+        webhooks.dispatch,
+        "review.resolved",
+        {
+            "review_id": item.id,
+            "action_id": action.id,
+            "action_type": action.action_type,
+            "status": item.status,
+            "approver": x_approver,
+            "notes": body.notes,
+        },
+    )
+
     return _to_out(item, action)

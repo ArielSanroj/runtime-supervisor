@@ -1,0 +1,22 @@
+[project]
+name = "mcp-supervisor"
+version = "0.1.0"
+description = "MCP server exposing runtime-supervisor tools to LLM agents (Claude, etc.)"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2",
+    "supervisor-client>=0.1",
+]
+
+[project.scripts]
+mcp-supervisor = "mcp_supervisor.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_supervisor"]
+
+[tool.uv.sources]
+supervisor-client = { workspace = true }

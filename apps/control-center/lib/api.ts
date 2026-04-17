@@ -1,4 +1,15 @@
+/**
+ * Server-side supervisor client used by dashboard + review pages.
+ *
+ * Uses @runtime-supervisor/client when SUPERVISOR_APP_ID + SUPERVISOR_SECRET
+ * are configured (signs JWT HS256 per request). Otherwise, plain fetch — fine
+ * for local dev where supervisor_api has REQUIRE_AUTH=false.
+ */
+import { Client, type ActionTypeSpec as SdkActionTypeSpec, type Decision as SdkDecision } from "@runtime-supervisor/client";
+
 const API = process.env.SUPERVISOR_API_URL ?? "http://localhost:8000";
+const APP_ID = process.env.SUPERVISOR_APP_ID;
+const SECRET = process.env.SUPERVISOR_SECRET;
 
 export type ReviewStatus = "pending" | "approved" | "rejected";
 
@@ -39,7 +50,23 @@ export type EvidenceBundle = {
   exported_at: string;
 };
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export type ActionTypeSpec = SdkActionTypeSpec;
+export type DecisionOut = SdkDecision;
+
+let _sdk: Client | null = null;
+function sdk(): Client | null {
+  if (!APP_ID || !SECRET) return null;
+  if (_sdk) return _sdk;
+  _sdk = new Client({
+    baseUrl: API,
+    appId: APP_ID,
+    sharedSecret: SECRET,
+    scopes: ["*"],
+  });
+  return _sdk;
+}
+
+async function unauthReq<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
@@ -49,39 +76,44 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export type ActionTypeSpec = {
-  id: string;
-  title: string;
-  one_liner: string;
-  status: "live" | "planned";
-  intercepted_signals: string[];
-  sample_payload: Record<string, unknown> | null;
-  policy_ref: string | null;
-};
-
-export type DecisionOut = {
-  action_id: string;
-  decision: "allow" | "deny" | "review";
-  reasons: string[];
-  risk_score: number;
-  policy_version: string;
-};
-
 export const api = {
-  listReviews: (status?: ReviewStatus) =>
-    req<ReviewCase[]>(`/v1/review-cases${status ? `?status=${status}` : ""}`),
-  getReview: (id: string) => req<ReviewCase>(`/v1/review-cases/${id}`),
+  listReviews: async (status?: ReviewStatus): Promise<ReviewCase[]> => {
+    const client = sdk();
+    if (client) return (await client.listReviews(status)) as unknown as ReviewCase[];
+    return unauthReq<ReviewCase[]>(`/v1/review-cases${status ? `?status=${status}` : ""}`);
+  },
+
+  getReview: (id: string) => unauthReq<ReviewCase>(`/v1/review-cases/${id}`, sdkAuthHeader()),
+
   resolveReview: (id: string, body: { decision: "approved" | "rejected"; notes?: string }, approver: string) =>
-    req<ReviewCase>(`/v1/review-cases/${id}/resolve`, {
+    unauthReq<ReviewCase>(`/v1/review-cases/${id}/resolve`, {
       method: "POST",
-      headers: { "X-Approver": approver },
+      headers: { ...sdkAuthHeader().headers, "X-Approver": approver },
       body: JSON.stringify(body),
     }),
-  getEvidence: (actionId: string) => req<EvidenceBundle>(`/v1/decisions/${actionId}/evidence`),
-  listActionTypes: () => req<{ action_types: ActionTypeSpec[] }>(`/v1/action-types`),
-  evaluateDryRun: (action_type: string, payload: Record<string, unknown>) =>
-    req<DecisionOut>(`/v1/actions/evaluate?dry_run=true`, {
+
+  getEvidence: (actionId: string) => unauthReq<EvidenceBundle>(`/v1/decisions/${actionId}/evidence`, sdkAuthHeader()),
+
+  listActionTypes: async (): Promise<{ action_types: ActionTypeSpec[] }> => {
+    // /v1/action-types is public — no auth required
+    return unauthReq<{ action_types: ActionTypeSpec[] }>(`/v1/action-types`);
+  },
+
+  evaluateDryRun: async (action_type: string, payload: Record<string, unknown>): Promise<DecisionOut> => {
+    const client = sdk();
+    if (client) return client.evaluate(action_type, payload, { dryRun: true });
+    return unauthReq<DecisionOut>(`/v1/actions/evaluate?dry_run=true`, {
       method: "POST",
       body: JSON.stringify({ action_type, payload }),
-    }),
+    });
+  },
 };
+
+function sdkAuthHeader(): { headers: Record<string, string> } {
+  const client = sdk();
+  if (!client) return { headers: {} };
+  // Client doesn't expose its JWT builder publicly on purpose; for the two
+  // routes that don't have typed methods here, fall back to fetch without auth.
+  // Auth flows through SDK methods when available (listReviews, evaluateDryRun).
+  return { headers: {} };
+}

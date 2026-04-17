@@ -20,6 +20,9 @@ def _env() -> Iterator[None]:
     os.environ["POLICY_PATH"] = str(POLICY_PATH)
     os.environ["EVIDENCE_HMAC_SECRET"] = "test-secret"
     os.environ["APP_ENV"] = "test"
+    os.environ["REQUIRE_AUTH"] = "false"
+    os.environ["ADMIN_BOOTSTRAP_TOKEN"] = "test-admin-token"
+    os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
     yield
 
 

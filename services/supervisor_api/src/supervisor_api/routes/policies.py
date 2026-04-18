@@ -20,6 +20,9 @@ from ..models import Action, Decision, PolicyRecord
 from ..schemas import (
     PolicyCreate,
     PolicyDiffResult,
+    PolicyExportEntry,
+    PolicyImportItem,
+    PolicyImportResult,
     PolicyOut,
     PolicyRef,
     PolicyReplayResult,
@@ -88,6 +91,66 @@ def list_policies(
         q = q.where(PolicyRecord.is_active.is_(True))
     rows = db.execute(q).scalars().all()
     return [_to_out(p) for p in rows]
+
+
+@router.get("/export", response_model=list[PolicyExportEntry])
+def export_policies(
+    active_only: bool = Query(default=False),
+    action_type: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[PolicyExportEntry]:
+    q = select(PolicyRecord).order_by(PolicyRecord.action_type.asc(), PolicyRecord.version.desc())
+    if active_only:
+        q = q.where(PolicyRecord.is_active.is_(True))
+    if action_type:
+        q = q.where(PolicyRecord.action_type == action_type)
+    rows = db.execute(q).scalars().all()
+    return [
+        PolicyExportEntry(
+            action_type=p.action_type, name=p.name, version=p.version, is_active=p.is_active,
+            yaml_source=p.yaml_source, created_by=p.created_by, created_at=p.created_at,
+        )
+        for p in rows
+    ]
+
+
+@router.post("/import", response_model=PolicyImportResult)
+def import_policies(
+    items: list[PolicyImportItem],
+    db: Session = Depends(get_db),
+) -> PolicyImportResult:
+    imported = 0
+    promoted = 0
+    errors: list[dict] = []
+    ids: list[str] = []
+    for i, item in enumerate(items):
+        try:
+            parsed = compile_policy_yaml(item.yaml_source)
+        except Exception as e:
+            errors.append({"index": i, "action_type": item.action_type, "error": str(e)})
+            continue
+        next_version = (db.execute(
+            select(func.coalesce(func.max(PolicyRecord.version), 0))
+            .where(PolicyRecord.action_type == item.action_type)
+        ).scalar_one() or 0) + 1
+        record = PolicyRecord(
+            action_type=item.action_type, name=parsed.name, version=next_version,
+            yaml_source=item.yaml_source, is_active=False, created_by="import",
+        )
+        db.add(record)
+        db.flush()
+        if item.promote:
+            _deactivate_others(db, item.action_type, except_id=record.id)
+            record.is_active = True
+            promoted += 1
+        imported += 1
+        ids.append(record.id)
+        audit.record(actor="admin", action="policy.import", target_type="policy",
+                     target_id=record.id,
+                     details={"action_type": record.action_type, "version": record.version, "promoted": item.promote},
+                     db=db)
+    db.commit()
+    return PolicyImportResult(imported=imported, promoted=promoted, errors=errors, policy_ids=ids)
 
 
 @router.get("/{policy_id}", response_model=PolicyOut)

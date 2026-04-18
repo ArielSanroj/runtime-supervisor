@@ -153,6 +153,29 @@ class PolicyReplayResult(BaseModel):
     divergences: list[ReplayDivergence]
 
 
+class PolicyExportEntry(BaseModel):
+    action_type: str
+    name: str
+    version: int
+    is_active: bool
+    yaml_source: str
+    created_by: str | None
+    created_at: datetime
+
+
+class PolicyImportItem(BaseModel):
+    action_type: str
+    yaml_source: str
+    promote: bool = False
+
+
+class PolicyImportResult(BaseModel):
+    imported: int
+    promoted: int
+    errors: list[dict[str, Any]]
+    policy_ids: list[str]
+
+
 class EvidenceExportResult(BaseModel):
     action_id: str
     key: str

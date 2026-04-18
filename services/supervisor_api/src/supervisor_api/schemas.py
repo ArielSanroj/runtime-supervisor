@@ -153,6 +153,22 @@ class PolicyReplayResult(BaseModel):
     divergences: list[ReplayDivergence]
 
 
+class PolicyRef(BaseModel):
+    id: str
+    name: str
+    version: int
+
+
+class PolicyDiffResult(BaseModel):
+    model_config = {"populate_by_name": True}
+    action_type: str
+    from_: PolicyRef = Field(alias="from")
+    to: PolicyRef
+    added_lines: int
+    removed_lines: int
+    diff: str
+
+
 class ExecuteConfigRequest(BaseModel):
     url: str | None = Field(default=None, max_length=1024)
     method: Literal["POST", "PUT", "PATCH"] = "POST"

@@ -19,7 +19,9 @@ from ..engines.policy import Policy, compile_policy_yaml
 from ..models import Action, Decision, PolicyRecord
 from ..schemas import (
     PolicyCreate,
+    PolicyDiffResult,
     PolicyOut,
+    PolicyRef,
     PolicyReplayResult,
     PolicyTestRequest,
     PolicyTestResult,
@@ -144,6 +146,48 @@ _REPLAY_WINDOWS = {
     "30d": timedelta(days=30),
 }
 _TIGHTEN_ORDER = {"allow": 0, "review": 1, "deny": 2}
+
+
+@router.get("/{policy_id}/diff", response_model=PolicyDiffResult)
+def diff_policy(
+    policy_id: str,
+    against: str = Query(..., description="Other policy id to diff against"),
+    db: Session = Depends(get_db),
+) -> PolicyDiffResult:
+    import difflib
+
+    target = db.get(PolicyRecord, policy_id)
+    base = db.get(PolicyRecord, against)
+    if target is None or base is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    if target.action_type != base.action_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cross action_type diff not supported: {base.action_type} vs {target.action_type}",
+        )
+
+    base_lines = base.yaml_source.splitlines(keepends=True)
+    target_lines = target.yaml_source.splitlines(keepends=True)
+    diff_lines = list(
+        difflib.unified_diff(
+            base_lines,
+            target_lines,
+            fromfile=f"{base.name}@v{base.version}",
+            tofile=f"{target.name}@v{target.version}",
+            lineterm="",
+        )
+    )
+    added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+
+    return PolicyDiffResult(
+        action_type=target.action_type,
+        **{"from": PolicyRef(id=base.id, name=base.name, version=base.version)},
+        to=PolicyRef(id=target.id, name=target.name, version=target.version),
+        added_lines=added,
+        removed_lines=removed,
+        diff="\n".join(diff_lines) + ("\n" if diff_lines else ""),
+    )
 
 
 @router.post("/{policy_id}/replay", response_model=PolicyReplayResult)

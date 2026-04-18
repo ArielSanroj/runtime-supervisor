@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { policiesApi } from "@/lib/policies";
+import DiffPanel from "./DiffPanel";
 import PolicyActions from "./PolicyActions";
 import ReplayPanel from "./ReplayPanel";
 import TestPanel from "./TestPanel";
@@ -29,6 +30,11 @@ export default async function PolicyDetail({
   const { id } = await params;
   const sp = await searchParams;
   const policy = await policiesApi.get(id);
+  const allSameType = await policiesApi.list(policy.action_type).catch(() => []);
+  const siblings = allSameType
+    .filter((p) => p.id !== policy.id)
+    .sort((a, b) => b.version - a.version)
+    .map((p) => ({ id: p.id, version: p.version, name: p.name, is_active: p.is_active }));
 
   return (
     <div>
@@ -78,6 +84,11 @@ export default async function PolicyDetail({
           <h2 style={{ marginTop: 24 }}>Test against payload</h2>
           <TestPanel id={policy.id} samplePayload={SAMPLE_PAYLOADS[policy.action_type] ?? "{}"} />
         </div>
+      </div>
+
+      <h2>Diff against another version</h2>
+      <div className="card">
+        <DiffPanel id={policy.id} siblings={siblings} />
       </div>
 
       <h2>Replay against recent actions</h2>

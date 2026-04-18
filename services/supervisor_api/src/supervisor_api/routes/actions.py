@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from functools import lru_cache
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -10,7 +9,7 @@ from .. import auth, evidence, execution, registry, webhooks
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
-from ..engines.policy import Policy, load_for_action_type
+from ..engines.policy import Policy, load_for_action_type_with_db
 from ..models import Action, Decision, ReviewItem, ThreatAssessmentRow
 from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, ThreatSignalOut
 from ..threats import assess as assess_threats
@@ -18,9 +17,10 @@ from ..threats import assess as assess_threats
 router = APIRouter(prefix="/v1", tags=["actions"])
 
 
-@lru_cache(maxsize=16)
-def _policy(action_type: str) -> Policy:
-    return load_for_action_type(action_type, get_settings().repo_root)
+def _policy(action_type: str, db: Session) -> Policy:
+    # DB-managed active policy wins; fall back to packages/policies/*.yaml.
+    # No cache: promoting a new policy takes effect on the next evaluate.
+    return load_for_action_type_with_db(action_type, db, get_settings().repo_root)
 
 
 @router.post("/actions/evaluate", response_model=DecisionOut)
@@ -39,7 +39,7 @@ def evaluate_action(
             raise HTTPException(status_code=501, detail=f"action_type '{body.action_type}' is planned but not live yet")
         raise HTTPException(status_code=400, detail=f"unknown action_type: {body.action_type}")
 
-    policy = _policy(body.action_type)
+    policy = _policy(body.action_type, db)
 
     # Threat pipeline runs first. Critical → deny; warn → review; else continue.
     threat_assessment = assess_threats(body.payload, db=db, integration_id=principal.integration_id)

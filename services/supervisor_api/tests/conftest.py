@@ -35,7 +35,7 @@ def client() -> Iterator[TestClient]:
     from supervisor_api.routes import actions as actions_route
 
     get_settings.cache_clear()
-    actions_route._policy.cache_clear()
+    _ = actions_route  # keep import for side effects
     # Reset schema between tests for isolation.
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)

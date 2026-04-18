@@ -62,6 +62,21 @@ class ReviewItem(Base):
     action: Mapped[Action] = relationship(back_populates="review")
 
 
+class PolicyRecord(Base):
+    __tablename__ = "policies"
+    __table_args__ = (UniqueConstraint("action_type", "version", name="uq_policy_action_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    yaml_source: Mapped[str] = mapped_column(String(20000), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Integration(Base):
     __tablename__ = "integrations"
 

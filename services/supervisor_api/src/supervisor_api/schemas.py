@@ -107,6 +107,34 @@ class IntegrationRotate(BaseModel):
     pass
 
 
+class PolicyCreate(BaseModel):
+    action_type: str = Field(min_length=1, max_length=64)
+    yaml_source: str = Field(min_length=1, max_length=20000)
+    promote: bool = Field(default=False, description="If true, deactivate any current active policy for this action_type and make this one active")
+
+
+class PolicyOut(BaseModel):
+    id: str
+    action_type: str
+    name: str
+    version: int
+    yaml_source: str
+    is_active: bool
+    created_by: str | None
+    created_at: datetime
+    deactivated_at: datetime | None
+
+
+class PolicyTestRequest(BaseModel):
+    payload: dict[str, Any]
+
+
+class PolicyTestResult(BaseModel):
+    decision: Literal["allow", "deny", "review"]
+    hits: list[dict[str, Any]]
+    reasons: list[str]
+
+
 class ExecuteConfigRequest(BaseModel):
     url: str | None = Field(default=None, max_length=1024)
     method: Literal["POST", "PUT", "PATCH"] = "POST"

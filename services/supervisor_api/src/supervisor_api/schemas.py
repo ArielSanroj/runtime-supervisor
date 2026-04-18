@@ -135,6 +135,24 @@ class PolicyTestResult(BaseModel):
     reasons: list[str]
 
 
+class ReplayDivergence(BaseModel):
+    action_id: str
+    created_at: datetime
+    from_decision: Literal["allow", "deny", "review"]
+    to_decision: Literal["allow", "deny", "review"]
+    to_reasons: list[str]
+
+
+class PolicyReplayResult(BaseModel):
+    window: str
+    total: int
+    same: int
+    differ: int
+    would_tighten: int
+    would_loosen: int
+    divergences: list[ReplayDivergence]
+
+
 class ExecuteConfigRequest(BaseModel):
     url: str | None = Field(default=None, max_length=1024)
     method: Literal["POST", "PUT", "PATCH"] = "POST"

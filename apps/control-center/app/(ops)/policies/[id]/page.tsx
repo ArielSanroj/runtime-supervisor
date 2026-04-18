@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { policiesApi } from "@/lib/policies";
 import PolicyActions from "./PolicyActions";
+import ReplayPanel from "./ReplayPanel";
 import TestPanel from "./TestPanel";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,11 @@ export default async function PolicyDetail({
           <h2 style={{ marginTop: 24 }}>Test against payload</h2>
           <TestPanel id={policy.id} samplePayload={SAMPLE_PAYLOADS[policy.action_type] ?? "{}"} />
         </div>
+      </div>
+
+      <h2>Replay against recent actions</h2>
+      <div className="card">
+        <ReplayPanel id={policy.id} />
       </div>
     </div>
   );

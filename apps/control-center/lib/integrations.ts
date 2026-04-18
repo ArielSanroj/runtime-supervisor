@@ -49,7 +49,24 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+export type ActionExecution = {
+  id: number;
+  action_id: string;
+  integration_id: string | null;
+  url: string;
+  method: string;
+  status_code: number | null;
+  error: string | null;
+  attempts: number;
+  state: "pending" | "success" | "failed";
+  triggered_by: "allow" | "review";
+  queued_at: string;
+  executed_at: string | null;
+};
+
 export const integrationsApi = {
+  listExecutions: (id: string, limit = 50) =>
+    req<ActionExecution[]>(`/v1/integrations/${id}/executions?limit=${limit}`),
   list: () => req<Integration[]>("/v1/integrations"),
   get: (id: string) => req<Integration>(`/v1/integrations/${id}`),
   create: (body: { name: string; scopes: string[] }) =>

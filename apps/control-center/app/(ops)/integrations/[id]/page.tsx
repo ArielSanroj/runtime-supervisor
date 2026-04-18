@@ -1,5 +1,6 @@
-import { integrationsApi, type WebhookSubscription } from "@/lib/integrations";
+import { integrationsApi, type ActionExecution, type WebhookSubscription } from "@/lib/integrations";
 import ExecuteConfigForm from "./ExecuteConfigForm";
+import ExecutionsPanel from "./ExecutionsPanel";
 import IntegrationActions from "./IntegrationActions";
 import WebhooksPanel from "./WebhooksPanel";
 
@@ -9,10 +10,15 @@ export default async function IntegrationDetail({ params }: { params: Promise<{ 
   const { id } = await params;
   const integ = await integrationsApi.get(id);
   let webhooks: WebhookSubscription[] = [];
+  let executions: ActionExecution[] = [];
   try {
-    webhooks = await integrationsApi.listWebhooks(id);
+    [webhooks, executions] = await Promise.all([
+      integrationsApi.listWebhooks(id),
+      integrationsApi.listExecutions(id, 50),
+    ]);
   } catch {
     webhooks = [];
+    executions = [];
   }
 
   return (
@@ -46,6 +52,9 @@ export default async function IntegrationDetail({ params }: { params: Promise<{ 
           <IntegrationActions id={integ.id} active={integ.active} />
         </div>
       </div>
+
+      <h2>Recent executions (action_proxy)</h2>
+      <ExecutionsPanel rows={executions} />
 
       <h2>Webhook subscriptions</h2>
       <WebhooksPanel id={integ.id} initial={webhooks} />

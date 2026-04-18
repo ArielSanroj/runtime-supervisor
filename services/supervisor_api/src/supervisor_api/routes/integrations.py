@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import auth
+from .. import auth, execution
 from ..db import get_db
-from ..models import Integration
+from ..models import ActionExecution, Integration
 from ..schemas import (
+    ActionExecutionOut,
     ExecuteConfigRequest,
     IntegrationCreate,
     IntegrationCreated,
@@ -98,3 +99,20 @@ def revoke(integration_id: str, db: Session = Depends(get_db)) -> IntegrationOut
     db.commit()
     db.refresh(i)
     return _to_out(i)
+
+
+@router.get("/{integration_id}/executions", response_model=list[ActionExecutionOut])
+def list_executions(
+    integration_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+) -> list[ActionExecutionOut]:
+    if db.get(Integration, integration_id) is None:
+        raise HTTPException(status_code=404, detail="integration not found")
+    rows = db.execute(
+        select(ActionExecution)
+        .where(ActionExecution.integration_id == integration_id)
+        .order_by(ActionExecution.queued_at.desc())
+        .limit(limit)
+    ).scalars().all()
+    return [ActionExecutionOut(**execution.build_execution_out(r)) for r in rows]

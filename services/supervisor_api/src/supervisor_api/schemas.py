@@ -153,6 +153,16 @@ class PolicyReplayResult(BaseModel):
     divergences: list[ReplayDivergence]
 
 
+class EvidenceExportResult(BaseModel):
+    action_id: str
+    key: str
+    url: str
+    bundle_hash: str
+    bundle_signature: str
+    exported_at: datetime
+    size_bytes: int
+
+
 class PolicyRef(BaseModel):
     id: str
     name: str

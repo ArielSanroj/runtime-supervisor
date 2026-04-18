@@ -11,7 +11,7 @@ from ..db import get_db
 from ..engines import decision as decision_engine
 from ..engines.policy import Policy, load_for_action_type_with_db
 from ..models import Action, Decision, ReviewItem, ThreatAssessmentRow
-from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, ThreatSignalOut
+from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, EvidenceExportResult, ThreatSignalOut
 from ..threats import assess as assess_threats
 
 router = APIRouter(prefix="/v1", tags=["actions"])
@@ -284,3 +284,44 @@ def get_evidence(
     final = evidence.bundle(db, action_id)
     final["exported_at"] = datetime.now(UTC)
     return EvidenceBundle(**final)
+
+
+@router.post("/decisions/{action_id}/evidence/export", response_model=EvidenceExportResult)
+def export_evidence_to_blob(
+    action_id: str,
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> EvidenceExportResult:
+    """Serialize the action's evidence bundle to the configured blob storage
+    (local FS or S3) and return the durable URL. Useful for compliance
+    retention — the DB can be pruned but the signed bundle remains recoverable.
+    """
+    import json
+    from datetime import date
+
+    from .. import storage
+
+    try:
+        data = evidence.bundle(db, action_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    day = date.today().isoformat()
+    key = f"{day}/{action_id}.json"
+    body = json.dumps(data, default=str).encode()
+    url = storage.get_backend().put(key, body)
+
+    evidence.append(db, action_id=action_id, event_type="bundle.exported_to_blob", payload={
+        "url": url, "bundle_hash": data["bundle_hash"],
+    })
+    db.commit()
+
+    return EvidenceExportResult(
+        action_id=action_id,
+        key=key,
+        url=url,
+        bundle_hash=data["bundle_hash"],
+        bundle_signature=data["bundle_signature"],
+        exported_at=data["exported_at"],
+        size_bytes=len(body),
+    )

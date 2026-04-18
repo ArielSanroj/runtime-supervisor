@@ -13,6 +13,7 @@ export default function OpsLayout({ children }: { children: React.ReactNode }) {
           <Link href="/review">Review queue</Link>
           <Link href="/threats">Threats</Link>
           <Link href="/policies">Policies</Link>
+          <Link href="/integrations">Integrations</Link>
           <Link href="/">← Site</Link>
         </nav>
       </header>

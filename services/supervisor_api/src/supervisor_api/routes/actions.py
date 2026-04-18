@@ -10,7 +10,7 @@ from .. import auth, evidence, registry, webhooks
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
-from ..engines.policy import Policy, load_policy
+from ..engines.policy import Policy, load_for_action_type
 from ..models import Action, Decision, ReviewItem, ThreatAssessmentRow
 from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, ThreatSignalOut
 from ..threats import assess as assess_threats
@@ -18,9 +18,9 @@ from ..threats import assess as assess_threats
 router = APIRouter(prefix="/v1", tags=["actions"])
 
 
-@lru_cache
-def _policy() -> Policy:
-    return load_policy(get_settings().resolved_policy_path)
+@lru_cache(maxsize=16)
+def _policy(action_type: str) -> Policy:
+    return load_for_action_type(action_type, get_settings().repo_root)
 
 
 @router.post("/actions/evaluate", response_model=DecisionOut)
@@ -39,7 +39,7 @@ def evaluate_action(
             raise HTTPException(status_code=501, detail=f"action_type '{body.action_type}' is planned but not live yet")
         raise HTTPException(status_code=400, detail=f"unknown action_type: {body.action_type}")
 
-    policy = _policy()
+    policy = _policy(body.action_type)
 
     # Threat pipeline runs first. Critical → deny; warn → review; else continue.
     threat_assessment = assess_threats(body.payload, db=db, integration_id=principal.integration_id)
@@ -66,7 +66,7 @@ def evaluate_action(
                 risk_score=0, policy_version="threat-pipeline",
                 threat_level=threat_assessment.level, threats=threats_out,
             )
-        dec = decision_engine.decide(policy, body.payload)
+        dec = decision_engine.decide(policy, body.payload, action_type=body.action_type)
         return DecisionOut(
             action_id="dry-run",
             decision=dec.decision,
@@ -145,7 +145,7 @@ def evaluate_action(
             threat_level=threat_assessment.level, threats=threats_out,
         )
 
-    dec = decision_engine.decide(policy, body.payload)
+    dec = decision_engine.decide(policy, body.payload, action_type=body.action_type)
     # A warn-level threat escalates decision to review regardless of policy/risk outcome.
     if threat_assessment.needs_review and dec.decision == "allow":
         threat_reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "warn"]

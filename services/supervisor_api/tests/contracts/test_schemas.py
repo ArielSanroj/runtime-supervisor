@@ -31,7 +31,8 @@ def test_evaluate_request_rejects_missing_payload():
 
 
 def test_evaluate_endpoint_rejects_planned_action_type(client):
-    r = client.post("/v1/actions/evaluate", json={"action_type": "payment", "payload": {"amount": 1}})
+    # Pick any currently-planned action_type from the registry.
+    r = client.post("/v1/actions/evaluate", json={"action_type": "data_access", "payload": {}})
     assert r.status_code == 501
     assert "planned" in r.json()["detail"]
 

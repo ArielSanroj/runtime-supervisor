@@ -1,0 +1,24 @@
+name: payment.base
+version: 1
+description: Base payment supervision policy. Guards vendor payouts and transfers.
+rules:
+  - id: hard-cap
+    when: "payload['amount'] > 100000"
+    action: deny
+    reason: amount-exceeds-hard-cap
+  - id: negative-amount
+    when: "payload['amount'] <= 0"
+    action: deny
+    reason: invalid-amount
+  - id: missing-approval-chain
+    when: "payload['amount'] > 50000 and len(payload.get('approval_chain') or []) == 0"
+    action: deny
+    reason: missing-approval-chain-on-large-amount
+  - id: restricted-country
+    when: "payload.get('beneficiary_country') in ['KP', 'IR', 'SY']"
+    action: deny
+    reason: sanctioned-country
+  - id: bank-account-changed-on-large-amount
+    when: "payload.get('bank_account_changed') == True and payload['amount'] > 5000"
+    action: review
+    reason: bank-account-changed-mid-amount

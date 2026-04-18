@@ -12,7 +12,7 @@ from .. import auth
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
-from ..engines.policy import load_policy
+from ..engines.policy import load_for_action_type
 from ..models import ThreatAssessmentRow
 from ..schemas import (
     DecisionOut,
@@ -135,8 +135,8 @@ def simulate_attack(
         )
     else:
         # Threat missed by detectors — fall back to policy/risk for honesty.
-        policy = load_policy(get_settings().resolved_policy_path)
-        dec = decision_engine.decide(policy, payload)
+        policy = load_for_action_type("refund", get_settings().repo_root)
+        dec = decision_engine.decide(policy, payload, action_type="refund")
         decision = DecisionOut(
             action_id="simulated",
             decision=dec.decision,

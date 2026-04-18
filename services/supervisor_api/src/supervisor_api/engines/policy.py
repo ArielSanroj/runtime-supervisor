@@ -65,3 +65,16 @@ def worst_action(hits: list[PolicyHit]) -> str | None:
     if not hits:
         return None
     return max(hits, key=lambda h: order[h.action]).action
+
+
+def resolve_policy_path(action_type: str, repo_root: Path) -> Path:
+    """Locate the policy file for a given action_type under packages/policies/.
+
+    Looks for `<action_type>.base.v1.yaml` — the naming convention used by
+    every live supervisor. Bumping versions would use a manifest later.
+    """
+    return repo_root / "packages/policies" / f"{action_type}.base.v1.yaml"
+
+
+def load_for_action_type(action_type: str, repo_root: Path) -> Policy:
+    return load_policy(resolve_policy_path(action_type, repo_root))

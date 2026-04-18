@@ -21,12 +21,16 @@ class Settings(BaseSettings):
         p = Path(self.policy_path)
         if p.is_absolute():
             return p
-        # Walk up from cwd to find the repo root (contains pnpm-workspace.yaml)
+        return self.repo_root / self.policy_path
+
+    @property
+    def repo_root(self) -> Path:
+        """Walk up from cwd to find the repo root (contains pnpm-workspace.yaml)."""
         here = Path.cwd().resolve()
         for candidate in [here, *here.parents]:
             if (candidate / "pnpm-workspace.yaml").exists():
-                return candidate / self.policy_path
-        return p
+                return candidate
+        return here
 
 
 @lru_cache

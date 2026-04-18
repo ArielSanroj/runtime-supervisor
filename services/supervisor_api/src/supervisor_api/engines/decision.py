@@ -18,7 +18,7 @@ class Decision:
     policy_version: str
 
 
-def decide(policy: Policy, payload: dict[str, Any]) -> Decision:
+def decide(policy: Policy, payload: dict[str, Any], action_type: str = "refund") -> Decision:
     hits = policy_engine.evaluate(policy, payload)
     deny_hits = [h for h in hits if h.action == "deny"]
     review_hits = [h for h in hits if h.action == "review"]
@@ -33,7 +33,7 @@ def decide(policy: Policy, payload: dict[str, Any]) -> Decision:
             policy_version=policy.version_tag,
         )
 
-    total, breakdown = risk_engine.score(payload)
+    total, breakdown = risk_engine.score(payload, action_type=action_type)
 
     if review_hits or risk_engine.needs_review(total):
         reasons = [h.reason for h in review_hits] or [f"risk-score-{total}"]

@@ -50,9 +50,19 @@ REGISTRY: list[ActionTypeSpec] = [
     ActionTypeSpec(
         id="payment",
         title="Payment approvals",
-        one_liner="Enforce thresholds, approval chains, and anomaly detection on outgoing payments.",
-        status="planned",
-        intercepted_signals=["amount", "vendor_id", "bank_account", "approval_chain", "first_seen_days"],
+        one_liner="Enforce thresholds, approval chains, sanctions screening, and anomaly detection on outgoing payments.",
+        status="live",
+        intercepted_signals=["amount", "vendor_id", "vendor_first_seen_days", "approval_chain", "bank_account_changed", "beneficiary_country"],
+        sample_payload={
+            "amount": 12000,
+            "currency": "USD",
+            "vendor_id": "v_demo",
+            "vendor_first_seen_days": 14,
+            "approval_chain": ["finance_manager"],
+            "bank_account_changed": False,
+            "beneficiary_country": "US",
+        },
+        policy_ref="payment.base@v1",
     ),
     ActionTypeSpec(
         id="account_change",

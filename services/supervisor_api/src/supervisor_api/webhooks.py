@@ -160,6 +160,15 @@ def retry_due_deliveries(batch_size: int = 50) -> dict[str, int]:
                 row.error = error
                 row.next_retry_at = None
                 counts["dead"] += 1
+                # Emit alert — subscribers get told about dead webhooks via critical.alert
+                try:
+                    from . import alerting
+                    alerting.emit("webhook.dead", {
+                        "delivery_id": row.id, "subscription_id": row.subscription_id,
+                        "event_type": row.event_type, "last_error": error,
+                    })
+                except Exception:
+                    pass
             else:
                 row.error = error
                 row.next_retry_at = _next_retry_at(row.attempts)

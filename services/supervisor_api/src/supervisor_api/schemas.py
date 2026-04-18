@@ -210,7 +210,7 @@ class ActionExecutionOut(BaseModel):
 
 class WebhookSubscriptionCreate(BaseModel):
     url: str = Field(min_length=1, max_length=1024)
-    events: list[Literal["decision.made", "review.resolved", "action.denied", "threat.detected"]] = Field(min_length=1)
+    events: list[Literal["decision.made", "review.resolved", "action.denied", "threat.detected", "critical.alert"]] = Field(min_length=1)
 
     @field_validator("url")
     @classmethod

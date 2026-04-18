@@ -11,7 +11,13 @@ from ..db import get_db
 from ..engines import decision as decision_engine
 from ..engines.policy import Policy, load_for_action_type_with_db
 from ..models import Action, Decision, ReviewItem, ThreatAssessmentRow
-from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, EvidenceExportResult, ThreatSignalOut
+from ..schemas import (
+    DecisionOut,
+    EvaluateRequest,
+    EvidenceBundle,
+    EvidenceExportResult,
+    ThreatSignalOut,
+)
 from ..threats import assess as assess_threats
 
 router = APIRouter(prefix="/v1", tags=["actions"])
@@ -107,6 +113,12 @@ def evaluate_action(
         })
 
     if threat_assessment.is_blocking:
+        from .. import alerting
+        alerting.emit("threat.critical", {
+            "action_type": body.action_type,
+            "integration_id": principal.integration_id,
+            "signals": [{"detector_id": s.detector_id, "owasp_ref": s.owasp_ref} for s in threat_assessment.signals],
+        })
         # Short-circuit: deny before policy/risk runs.
         reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "critical"]
         db.add(Decision(
@@ -239,6 +251,17 @@ def get_action_execution(
     if row is None:
         raise HTTPException(status_code=404, detail="no execution recorded for this action")
     return execution.build_execution_out(row)
+
+
+@router.post("/actions/{action_id}/execution/retry")
+def retry_action_execution(
+    action_id: str,
+    _: auth.Principal = Depends(auth.require_admin),
+) -> dict:
+    try:
+        return execution.retry_dead_or_failed(action_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.get("/decisions/{action_id}", response_model=DecisionOut)

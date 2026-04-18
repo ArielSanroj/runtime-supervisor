@@ -140,6 +140,35 @@ def execute(action_id: str, *, triggered_by: str, integration_id: str | None = N
         span.end()
 
 
+def retry_dead_or_failed(action_id: str) -> dict[str, Any]:
+    """Admin-triggered retry for dead/failed executions.
+
+    Resets idempotency by deleting the existing ActionExecution row, then
+    calls execute() again which will create a fresh row.
+    """
+    db = SessionLocal()
+    try:
+        row = db.query(ActionExecution).filter_by(action_id=action_id).one_or_none()
+        if row is None:
+            raise LookupError(f"no execution recorded for action {action_id}")
+        if row.state == "success":
+            return {"skipped": True, "reason": "already successful"}
+        integration_id = row.integration_id
+        db.delete(row)
+        db.commit()
+    finally:
+        db.close()
+
+    execute(action_id, triggered_by="retry", integration_id=integration_id)
+
+    db = SessionLocal()
+    try:
+        row = db.query(ActionExecution).filter_by(action_id=action_id).one_or_none()
+        return build_execution_out(row) if row else {"skipped": True, "reason": "no row after retry"}
+    finally:
+        db.close()
+
+
 def build_execution_out(row: ActionExecution) -> dict[str, Any]:
     return {
         "id": row.id,

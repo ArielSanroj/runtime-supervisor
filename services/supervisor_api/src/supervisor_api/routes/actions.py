@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .. import auth, evidence, execution, registry, webhooks
+from .. import auth, evidence, execution, ratelimit, registry, webhooks
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
@@ -33,6 +33,7 @@ def evaluate_action(
 ) -> DecisionOut:
     if not (set(principal.scopes) & {"*", body.action_type}):
         raise HTTPException(status_code=403, detail=f"scope '{body.action_type}' not granted")
+    ratelimit.check_and_consume(principal)
     if body.action_type not in registry.LIVE_ACTION_TYPES:
         spec = registry.get(body.action_type)
         if spec is not None and spec.status == "planned":

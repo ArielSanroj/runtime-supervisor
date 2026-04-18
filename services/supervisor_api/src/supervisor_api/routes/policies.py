@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import auth
+from .. import audit, auth
 from ..db import get_db
 from ..engines import decision as decision_engine
 from ..engines.policy import Policy, compile_policy_yaml
@@ -69,6 +69,9 @@ def create_policy(body: PolicyCreate, db: Session = Depends(get_db)) -> PolicyOu
 
     db.commit()
     db.refresh(record)
+    audit.record(actor="admin", action="policy.create" + (".promoted" if body.promote else ""),
+                 target_type="policy", target_id=record.id,
+                 details={"action_type": record.action_type, "version": record.version, "name": record.name})
     return _to_out(record)
 
 
@@ -107,6 +110,8 @@ def promote_policy(policy_id: str, db: Session = Depends(get_db)) -> PolicyOut:
     p.deactivated_at = None
     db.commit()
     db.refresh(p)
+    audit.record(actor="admin", action="policy.promote", target_type="policy", target_id=p.id,
+                 details={"action_type": p.action_type, "version": p.version})
     return _to_out(p)
 
 
@@ -119,6 +124,8 @@ def deactivate_policy(policy_id: str, db: Session = Depends(get_db)) -> PolicyOu
     p.deactivated_at = datetime.now(UTC)
     db.commit()
     db.refresh(p)
+    audit.record(actor="admin", action="policy.deactivate", target_type="policy", target_id=p.id,
+                 details={"action_type": p.action_type, "version": p.version})
     return _to_out(p)
 
 

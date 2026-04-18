@@ -8,7 +8,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .bootstrap import seed_policies_from_yaml
-from .routes import actions, catalog, integrations, metrics, policies, review, threats, webhooks
+from .config import get_settings
+from .observability import configure_logging
+from .routes import (
+    actions,
+    admin,
+    catalog,
+    integrations,
+    metrics,
+    policies,
+    review,
+    threats,
+    webhooks,
+)
 from .telemetry import setup_telemetry
 
 log = logging.getLogger(__name__)
@@ -27,6 +39,7 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(
         title="Agentic Internal Controls — Supervisor API",
         version="0.1.0",
@@ -48,6 +61,19 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(threats.router)
     app.include_router(metrics.router)
+    app.include_router(admin.router)
+
+    @app.middleware("http")
+    async def max_payload_middleware(request, call_next):
+        limit = get_settings().max_payload_bytes
+        cl = request.headers.get("content-length")
+        if cl and int(cl) > limit:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"payload exceeds {limit} bytes"},
+            )
+        return await call_next(request)
 
     setup_telemetry(app)
 

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import DeliveriesPanel from "./DeliveriesPanel";
 
 type WebhookSubscription = {
   id: string;
@@ -74,12 +75,19 @@ export default function WebhooksPanel({ id, initial }: { id: string; initial: We
             </thead>
             <tbody>
               {rows.map((s) => (
-                <tr key={s.id}>
-                  <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>{s.url}</td>
-                  <td className="mono">{(s.events || []).join(", ")}</td>
-                  <td className="muted mono">{new Date(s.created_at).toLocaleString()}</td>
-                  <td><button className="danger" onClick={() => remove(s.id)}>delete</button></td>
-                </tr>
+                <>
+                  <tr key={s.id}>
+                    <td className="mono" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>{s.url}</td>
+                    <td className="mono">{(s.events || []).join(", ")}</td>
+                    <td className="muted mono">{new Date(s.created_at).toLocaleString()}</td>
+                    <td><button className="danger" onClick={() => remove(s.id)}>delete</button></td>
+                  </tr>
+                  <tr key={`${s.id}-del`}>
+                    <td colSpan={4} style={{ paddingLeft: 16 }}>
+                      <DeliveriesPanel integrationId={id} subId={s.id} />
+                    </td>
+                  </tr>
+                </>
               ))}
             </tbody>
           </table>

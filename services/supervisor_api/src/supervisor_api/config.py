@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     require_auth: bool = Field(default=False, alias="REQUIRE_AUTH")
     admin_bootstrap_token: str = Field(default="", alias="ADMIN_BOOTSTRAP_TOKEN")
     webhook_secret: str = Field(default="dev-webhook-secret-change-me", alias="WEBHOOK_SECRET")
+    max_payload_bytes: int = Field(default=65536, alias="MAX_PAYLOAD_BYTES")
 
     @property
     def resolved_policy_path(self) -> Path:

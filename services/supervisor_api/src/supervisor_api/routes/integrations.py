@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import auth, execution
+from .. import audit, auth, execution
 from ..db import get_db
 from ..models import ActionExecution, Integration
 from ..schemas import (
@@ -44,6 +44,8 @@ def create_integration(body: IntegrationCreate, db: Session = Depends(get_db)) -
         db.rollback()
         raise HTTPException(status_code=409, detail=f"integration name conflict: {e}") from e
     db.refresh(integration)
+    audit.record(actor="admin", action="integration.create", target_type="integration",
+                 target_id=integration.id, details={"name": integration.name, "scopes": list(integration.scopes or [])})
     return IntegrationCreated(**_to_out(integration).model_dump(), shared_secret=secret)
 
 
@@ -70,6 +72,7 @@ def rotate_secret(integration_id: str, db: Session = Depends(get_db)) -> Integra
     i.shared_secret = new_secret
     db.commit()
     db.refresh(i)
+    audit.record(actor="admin", action="integration.rotate", target_type="integration", target_id=i.id, details={})
     return IntegrationCreated(**_to_out(i).model_dump(), shared_secret=new_secret)
 
 
@@ -86,6 +89,8 @@ def set_execute_config(
     i.execute_method = body.method
     db.commit()
     db.refresh(i)
+    audit.record(actor="admin", action="integration.execute_config", target_type="integration",
+                 target_id=i.id, details={"url": body.url, "method": body.method})
     return _to_out(i)
 
 
@@ -98,6 +103,7 @@ def revoke(integration_id: str, db: Session = Depends(get_db)) -> IntegrationOut
     i.revoked_at = datetime.now(UTC)
     db.commit()
     db.refresh(i)
+    audit.record(actor="admin", action="integration.revoke", target_type="integration", target_id=i.id, details={})
     return _to_out(i)
 
 

@@ -62,6 +62,19 @@ class ReviewItem(Base):
     action: Mapped[Action] = relationship(back_populates="review")
 
 
+class AdminEvent(Base):
+    __tablename__ = "admin_events"
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class PolicyRecord(Base):
     __tablename__ = "policies"
     __table_args__ = (UniqueConstraint("action_type", "version", name="uq_policy_action_version"),)

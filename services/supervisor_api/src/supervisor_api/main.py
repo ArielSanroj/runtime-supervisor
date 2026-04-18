@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import logging
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .bootstrap import seed_policies_from_yaml
 from .routes import actions, catalog, integrations, metrics, policies, review, threats, webhooks
+
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Startup: seed DB policies from YAML if the DB has none for each live action_type.
+    # Opt out with SUPERVISOR_SKIP_SEED=true (used by tests that want an empty DB).
+    if os.environ.get("SUPERVISOR_SKIP_SEED", "").lower() not in ("1", "true", "yes"):
+        try:
+            seed_policies_from_yaml()
+        except Exception as e:  # defensive: never block startup on seed failure
+            log.warning("policy seed skipped: %s", e)
+    yield
 
 
 def create_app() -> FastAPI:
@@ -11,6 +30,7 @@ def create_app() -> FastAPI:
         title="Agentic Internal Controls — Supervisor API",
         version="0.1.0",
         description="Gate agent actions against declarative policies + risk scoring, with tamper-evident evidence.",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

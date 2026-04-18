@@ -23,6 +23,7 @@ def _env() -> Iterator[None]:
     os.environ["REQUIRE_AUTH"] = "false"
     os.environ["ADMIN_BOOTSTRAP_TOKEN"] = "test-admin-token"
     os.environ["WEBHOOK_SECRET"] = "test-webhook-secret"
+    os.environ["SUPERVISOR_SKIP_SEED"] = "true"
     yield
 
 

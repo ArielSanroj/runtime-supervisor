@@ -62,6 +62,27 @@ class ReviewItem(Base):
     action: Mapped[Action] = relationship(back_populates="review")
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)  # admin | compliance | ops | auditor
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class AdminEvent(Base):
     __tablename__ = "admin_events"
 
@@ -103,6 +124,8 @@ class Integration(Base):
     # action_proxy: where to POST approved actions for downstream execution
     execute_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     execute_method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+    # Multi-tenant scaffold — nullable until row-level enforcement ships.
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
 
 
 class ActionExecution(Base):

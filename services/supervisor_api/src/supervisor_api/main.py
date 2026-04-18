@@ -18,7 +18,9 @@ from .routes import (
     metrics,
     policies,
     review,
+    tenants,
     threats,
+    users,
     webhooks,
 )
 from .telemetry import setup_telemetry
@@ -62,6 +64,8 @@ def create_app() -> FastAPI:
     app.include_router(threats.router)
     app.include_router(metrics.router)
     app.include_router(admin.router)
+    app.include_router(tenants.router)
+    app.include_router(users.router)
 
     @app.middleware("http")
     async def max_payload_middleware(request, call_next):

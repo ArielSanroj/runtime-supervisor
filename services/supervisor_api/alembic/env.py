@@ -3,10 +3,9 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-
+from supervisor_api import models  # noqa: F401  (register models on metadata)
 from supervisor_api.config import get_settings
 from supervisor_api.db import Base
-from supervisor_api import models  # noqa: F401  (register models on metadata)
 
 config = context.config
 if config.config_file_name:

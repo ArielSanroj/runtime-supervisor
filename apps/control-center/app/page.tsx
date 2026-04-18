@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getLandingData } from "@/lib/landing-data";
 import type { ActionTypeSpec, DecisionOut } from "@/lib/api";
+import type { ThreatCatalogEntry } from "@/lib/threats";
+import SimulateAttackButton from "./SimulateAttackButton";
 
 export const revalidate = 300;
 
@@ -124,8 +126,33 @@ function UseCaseCard({ spec, dark = false }: { spec: ActionTypeSpec; dark?: bool
   );
 }
 
+function severityBadge(severity: "info" | "warn" | "critical"): string {
+  if (severity === "critical") return "bg-rose-100 text-rose-800 border-rose-200";
+  if (severity === "warn") return "bg-amber-100 text-amber-800 border-amber-200";
+  return "bg-emerald-100 text-emerald-800 border-emerald-200";
+}
+
+function ThreatCard({ spec }: { spec: ThreatCatalogEntry }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 p-6 bg-white">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-lg font-semibold">{spec.title}</h3>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase ${severityBadge(spec.severity)}`}>
+            {spec.severity}
+          </span>
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700">{spec.owasp_ref}</span>
+        </div>
+      </div>
+      <p className="mt-3 text-slate-600 text-sm">{spec.one_liner}</p>
+      <p className="mt-3 text-xs text-slate-500"><span className="font-medium">Remediation:</span> {spec.remediation}</p>
+      <SimulateAttackButton threatId={spec.id} title={spec.title} />
+    </div>
+  );
+}
+
 export default async function AgenticInternalControlsLanding() {
-  const { actionTypes, liveDemo, sourcedFromApi } = await getLandingData();
+  const { actionTypes, threatCatalog, liveDemo, sourcedFromApi } = await getLandingData();
   const live = actionTypes.filter((a) => a.status === "live");
   const planned = actionTypes.filter((a) => a.status === "planned");
 
@@ -137,6 +164,9 @@ export default async function AgenticInternalControlsLanding() {
           <div className="flex items-center gap-3">
             <Link href="#supervisors" className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
               Supervised actions
+            </Link>
+            <Link href="#threats" className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
+              What we detect
             </Link>
             <Link href="/dashboard" className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
               Open console
@@ -221,6 +251,31 @@ export default async function AgenticInternalControlsLanding() {
           )}
         </div>
       </section>
+
+      {threatCatalog.length > 0 && (
+        <section id="threats" className="mx-auto max-w-7xl px-6 py-20">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full bg-rose-50 border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-800 uppercase tracking-wide">
+              Runtime threat detection
+            </div>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight">What we detect while agents act</h2>
+            <p className="mt-4 text-lg text-slate-600">
+              Every inbound action runs through an AI-security pipeline mapped to the <strong>OWASP LLM Top 10</strong>.
+              Prompt injection and jailbreak attempts are blocked before the agent's action ever reaches your systems.
+              Click <em>Simulate</em> on any card to see the real detector fire in under a second.
+            </p>
+          </div>
+          <div className="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {threatCatalog.map((t) => (
+              <ThreatCard key={t.id} spec={t} />
+            ))}
+          </div>
+          <div className="mt-8 rounded-2xl bg-slate-50 border border-slate-200 p-5 text-sm text-slate-600">
+            Detections are hash-chained into the same tamper-evident evidence log as decisions.
+            Tampering any record is provably detectable at bundle export time.
+          </div>
+        </section>
+      )}
 
       <section id="how" className="mx-auto max-w-7xl px-6 py-20">
         <div className="max-w-3xl">

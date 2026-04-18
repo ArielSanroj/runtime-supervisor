@@ -11,8 +11,9 @@ from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
 from ..engines.policy import Policy, load_policy
-from ..models import Action, Decision, ReviewItem
-from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle
+from ..models import Action, Decision, ReviewItem, ThreatAssessmentRow
+from ..schemas import DecisionOut, EvaluateRequest, EvidenceBundle, ThreatSignalOut
+from ..threats import assess as assess_threats
 
 router = APIRouter(prefix="/v1", tags=["actions"])
 
@@ -39,7 +40,32 @@ def evaluate_action(
         raise HTTPException(status_code=400, detail=f"unknown action_type: {body.action_type}")
 
     policy = _policy()
+
+    # Threat pipeline runs first. Critical → deny; warn → review; else continue.
+    threat_assessment = assess_threats(body.payload, db=db, integration_id=principal.integration_id)
+    threats_out = [
+        ThreatSignalOut(
+            detector_id=s.detector_id, owasp_ref=s.owasp_ref, level=s.level,
+            message=s.message, evidence=s.evidence,
+        )
+        for s in threat_assessment.signals
+    ]
+
     if dry_run:
+        if threat_assessment.is_blocking:
+            return DecisionOut(
+                action_id="dry-run", decision="deny",
+                reasons=[f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "critical"],
+                risk_score=0, policy_version="threat-pipeline",
+                threat_level=threat_assessment.level, threats=threats_out,
+            )
+        if threat_assessment.needs_review:
+            return DecisionOut(
+                action_id="dry-run", decision="review",
+                reasons=[f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "warn"],
+                risk_score=0, policy_version="threat-pipeline",
+                threat_level=threat_assessment.level, threats=threats_out,
+            )
         dec = decision_engine.decide(policy, body.payload)
         return DecisionOut(
             action_id="dry-run",
@@ -47,6 +73,8 @@ def evaluate_action(
             reasons=dec.reasons,
             risk_score=dec.risk_score,
             policy_version=dec.policy_version,
+            threat_level=threat_assessment.level,
+            threats=threats_out,
         )
 
     action = Action(action_type=body.action_type, status="received", payload=body.payload)
@@ -58,7 +86,77 @@ def evaluate_action(
         "payload": body.payload,
     })
 
+    # Persist threat assessment rows + evidence event when signals were raised
+    if threat_assessment.signals:
+        for s in threat_assessment.signals:
+            db.add(ThreatAssessmentRow(
+                action_id=action.id,
+                integration_id=principal.integration_id,
+                detector_id=s.detector_id,
+                owasp_ref=s.owasp_ref,
+                level=s.level,
+                signals=[{"message": s.message, "evidence": s.evidence}],
+            ))
+        evidence.append(db, action_id=action.id, event_type="threat.detected", payload={
+            "level": threat_assessment.level,
+            "signals": [
+                {"detector_id": s.detector_id, "owasp_ref": s.owasp_ref, "level": s.level, "message": s.message}
+                for s in threat_assessment.signals
+            ],
+        })
+
+    if threat_assessment.is_blocking:
+        # Short-circuit: deny before policy/risk runs.
+        reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "critical"]
+        db.add(Decision(
+            action_id=action.id,
+            decision="deny",
+            policy_hits=[],
+            risk_score=0,
+            risk_breakdown=[],
+            policy_version="threat-pipeline",
+        ))
+        evidence.append(db, action_id=action.id, event_type="decision.made", payload={
+            "decision": "deny", "reasons": reasons, "policy_version": "threat-pipeline",
+        })
+        action.status = "denied"
+        db.commit()
+        background_tasks.add_task(
+            webhooks.dispatch, "action.denied",
+            {
+                "action_id": action.id, "action_type": body.action_type,
+                "decision": "deny", "reasons": reasons,
+                "threat_level": threat_assessment.level,
+            },
+        )
+        background_tasks.add_task(
+            webhooks.dispatch, "threat.detected",
+            {
+                "action_id": action.id, "level": threat_assessment.level,
+                "signals": [
+                    {"detector_id": s.detector_id, "owasp_ref": s.owasp_ref, "level": s.level, "message": s.message}
+                    for s in threat_assessment.signals
+                ],
+            },
+        )
+        return DecisionOut(
+            action_id=action.id, decision="deny", reasons=reasons,
+            risk_score=0, policy_version="threat-pipeline",
+            threat_level=threat_assessment.level, threats=threats_out,
+        )
+
     dec = decision_engine.decide(policy, body.payload)
+    # A warn-level threat escalates decision to review regardless of policy/risk outcome.
+    if threat_assessment.needs_review and dec.decision == "allow":
+        threat_reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "warn"]
+        dec = decision_engine.Decision(  # type: ignore[attr-defined]
+            decision="review",
+            reasons=threat_reasons,
+            hits=dec.hits,
+            risk_score=dec.risk_score,
+            risk_breakdown=dec.risk_breakdown,
+            policy_version=dec.policy_version,
+        )
 
     db.add(Decision(
         action_id=action.id,
@@ -97,8 +195,20 @@ def evaluate_action(
             "reasons": dec.reasons,
             "risk_score": dec.risk_score,
             "policy_version": dec.policy_version,
+            "threat_level": threat_assessment.level,
         },
     )
+    if threat_assessment.signals:
+        background_tasks.add_task(
+            webhooks.dispatch, "threat.detected",
+            {
+                "action_id": action.id, "level": threat_assessment.level,
+                "signals": [
+                    {"detector_id": s.detector_id, "owasp_ref": s.owasp_ref, "level": s.level, "message": s.message}
+                    for s in threat_assessment.signals
+                ],
+            },
+        )
 
     return DecisionOut(
         action_id=action.id,
@@ -106,6 +216,8 @@ def evaluate_action(
         reasons=dec.reasons,
         risk_score=dec.risk_score,
         policy_version=dec.policy_version,
+        threat_level=threat_assessment.level,
+        threats=threats_out,
     )
 
 

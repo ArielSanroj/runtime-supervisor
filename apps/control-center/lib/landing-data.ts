@@ -1,4 +1,6 @@
 import { api, type ActionTypeSpec, type DecisionOut } from "./api";
+import type { ThreatCatalogEntry } from "./threats";
+import { threatsApi } from "./threats";
 
 const FALLBACK: ActionTypeSpec[] = [
   {
@@ -41,13 +43,17 @@ const FALLBACK: ActionTypeSpec[] = [
 
 export type LandingData = {
   actionTypes: ActionTypeSpec[];
+  threatCatalog: ThreatCatalogEntry[];
   liveDemo: { spec: ActionTypeSpec; decision: DecisionOut } | null;
   sourcedFromApi: boolean;
 };
 
 export async function getLandingData(): Promise<LandingData> {
   try {
-    const { action_types } = await api.listActionTypes();
+    const [{ action_types }, threatCatalog] = await Promise.all([
+      api.listActionTypes(),
+      threatsApi.catalog(),
+    ]);
     const liveSpec = action_types.find((a) => a.status === "live" && a.sample_payload);
     let liveDemo = null;
     if (liveSpec && liveSpec.sample_payload) {
@@ -58,8 +64,8 @@ export async function getLandingData(): Promise<LandingData> {
         liveDemo = null;
       }
     }
-    return { actionTypes: action_types, liveDemo, sourcedFromApi: true };
+    return { actionTypes: action_types, threatCatalog, liveDemo, sourcedFromApi: true };
   } catch {
-    return { actionTypes: FALLBACK, liveDemo: null, sourcedFromApi: false };
+    return { actionTypes: FALLBACK, threatCatalog: [], liveDemo: null, sourcedFromApi: false };
   }
 }

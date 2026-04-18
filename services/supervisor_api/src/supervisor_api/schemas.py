@@ -13,12 +13,22 @@ class EvaluateRequest(BaseModel):
     payload: dict[str, Any]
 
 
+class ThreatSignalOut(BaseModel):
+    detector_id: str
+    owasp_ref: str
+    level: Literal["info", "warn", "critical"]
+    message: str
+    evidence: dict[str, Any]
+
+
 class DecisionOut(BaseModel):
     action_id: str
     decision: Literal["allow", "deny", "review"]
     reasons: list[str]
     risk_score: int
     policy_version: str
+    threat_level: Literal["none", "info", "warn", "critical"] = "none"
+    threats: list[ThreatSignalOut] = Field(default_factory=list)
 
 
 class PolicyHit(BaseModel):
@@ -97,7 +107,7 @@ class IntegrationRotate(BaseModel):
 
 class WebhookSubscriptionCreate(BaseModel):
     url: str = Field(min_length=1, max_length=1024)
-    events: list[Literal["decision.made", "review.resolved", "action.denied"]] = Field(min_length=1)
+    events: list[Literal["decision.made", "review.resolved", "action.denied", "threat.detected"]] = Field(min_length=1)
 
     @field_validator("url")
     @classmethod
@@ -114,6 +124,33 @@ class WebhookSubscriptionOut(BaseModel):
     events: list[str]
     active: bool
     created_at: datetime
+
+
+class ThreatAssessmentOut(BaseModel):
+    id: int
+    action_id: str | None
+    integration_id: str | None
+    detector_id: str
+    owasp_ref: str
+    level: Literal["info", "warn", "critical"]
+    signals: list[dict[str, Any]]
+    created_at: datetime
+
+
+class ThreatCatalogEntry(BaseModel):
+    id: str
+    title: str
+    owasp_ref: str
+    one_liner: str
+    severity: Literal["info", "warn", "critical"]
+    remediation: str
+    sample_attack: dict[str, Any]
+
+
+class SimulatedAttackOut(BaseModel):
+    threat_id: str
+    decision: DecisionOut
+    threats: list[ThreatSignalOut]
 
 
 class WebhookDeliveryOut(BaseModel):

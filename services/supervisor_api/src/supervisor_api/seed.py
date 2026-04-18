@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC
 
 from sqlalchemy import select
 
@@ -77,13 +78,13 @@ def main() -> None:
             secret = cc_secret or integration.shared_secret
         finally:
             db.close()
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         token = auth.sign_jwt(
             {
                 "sub": cc_id,
                 "scopes": ["*"],
-                "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+                "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
             },
             secret,
         )

@@ -99,6 +99,19 @@ class WebhookDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class ThreatAssessmentRow(Base):
+    __tablename__ = "threat_assessments"
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    action_id: Mapped[str | None] = mapped_column(ForeignKey("actions.id"), nullable=True, index=True)
+    integration_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    detector_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owasp_ref: Mapped[str] = mapped_column(String(16), nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    signals: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class EvidenceEvent(Base):
     __tablename__ = "evidence_log"
     __table_args__ = (UniqueConstraint("action_id", "seq", name="uq_evidence_action_seq"),)

@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import SessionLocal
 from .models import WebhookDelivery, WebhookSubscription
+from .telemetry import get_tracer
+
+_tracer = get_tracer(__name__)
 
 EventType = str  # "decision.made" | "review.resolved" | "action.denied"
 
@@ -78,7 +81,7 @@ def _deliver_one(sub: WebhookSubscription, event_type: str, payload: dict[str, A
         db.close()
 
 
-def dispatch(event_type: str, payload: dict[str, Any]) -> None:
+def _dispatch_impl(event_type: str, payload: dict[str, Any]) -> None:
     """Fetch active subs for this event and deliver to each. Blocks on HTTP.
 
     Intended to be invoked via FastAPI BackgroundTasks so it runs after the
@@ -96,3 +99,9 @@ def dispatch(event_type: str, payload: dict[str, Any]) -> None:
 
     for sub in targets:
         _deliver_one(sub, event_type, payload)
+
+
+def dispatch(event_type: str, payload: dict[str, Any]) -> None:
+    with _tracer.start_as_current_span("webhooks.dispatch") as span:
+        span.set_attribute("webhook.event_type", event_type)
+        _dispatch_impl(event_type, payload)

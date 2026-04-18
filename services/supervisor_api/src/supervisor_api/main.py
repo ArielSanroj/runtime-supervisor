@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .bootstrap import seed_policies_from_yaml
 from .routes import actions, catalog, integrations, metrics, policies, review, threats, webhooks
+from .telemetry import setup_telemetry
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(threats.router)
     app.include_router(metrics.router)
+
+    setup_telemetry(app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

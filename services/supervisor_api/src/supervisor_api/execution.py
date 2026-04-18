@@ -22,6 +22,9 @@ from . import evidence
 from .config import get_settings
 from .db import SessionLocal
 from .models import Action, ActionExecution, Decision, Integration, ReviewItem
+from .telemetry import get_tracer
+
+_tracer = get_tracer(__name__)
 
 _TIMEOUT_SECONDS = 5.0
 _MAX_ATTEMPTS = 2
@@ -53,6 +56,11 @@ def _build_body(action: Action, decision: Decision | None, review: ReviewItem | 
 
 def execute(action_id: str, *, triggered_by: str, integration_id: str | None = None) -> None:
     """Runs in BackgroundTasks after the request completes."""
+    span = _tracer.start_span("execution.execute")
+    span.set_attribute("supervisor.action_id", action_id)
+    span.set_attribute("supervisor.triggered_by", triggered_by)
+    if integration_id:
+        span.set_attribute("supervisor.integration_id", integration_id)
     db = SessionLocal()
     try:
         action = db.get(Action, action_id)
@@ -124,8 +132,12 @@ def execute(action_id: str, *, triggered_by: str, integration_id: str | None = N
             "attempts": attempts, "triggered_by": triggered_by,
         })
         db.commit()
+        span.set_attribute("supervisor.execution_state", row.state)
+        if status_code is not None:
+            span.set_attribute("http.status_code", status_code)
     finally:
         db.close()
+        span.end()
 
 
 def build_execution_out(row: ActionExecution) -> dict[str, Any]:

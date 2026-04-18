@@ -72,6 +72,27 @@ class Integration(Base):
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # action_proxy: where to POST approved actions for downstream execution
+    execute_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    execute_method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+
+
+class ActionExecution(Base):
+    __tablename__ = "action_executions"
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)
+    action_id: Mapped[str] = mapped_column(ForeignKey("actions.id"), nullable=False, unique=True, index=True)
+    integration_id: Mapped[str | None] = mapped_column(ForeignKey("integrations.id"), nullable=True, index=True)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+    status_code: Mapped[int | None] = mapped_column(nullable=True)
+    response_body: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    triggered_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WebhookSubscription(Base):

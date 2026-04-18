@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import auth, evidence, webhooks
+from .. import auth, evidence, execution, webhooks
 from ..db import get_db
 from ..models import Action, ReviewItem
 from ..schemas import ReviewItemOut, ReviewResolveRequest
@@ -110,5 +110,14 @@ def resolve_review(
             "notes": body.notes,
         },
     )
+
+    # Execute downstream only when the review is approved.
+    # Look up the originating integration from the action's JWT principal is not
+    # available here; use the integration attached to the current principal.
+    if body.decision == "approved":
+        background_tasks.add_task(
+            execution.execute, action.id,
+            triggered_by="review", integration_id=_.integration_id,
+        )
 
     return _to_out(item, action)

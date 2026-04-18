@@ -94,6 +94,8 @@ class IntegrationOut(BaseModel):
     active: bool
     created_at: datetime
     revoked_at: datetime | None = None
+    execute_url: str | None = None
+    execute_method: str = "POST"
 
 
 class IntegrationCreated(IntegrationOut):
@@ -103,6 +105,35 @@ class IntegrationCreated(IntegrationOut):
 class IntegrationRotate(BaseModel):
     # empty body; kept for future knobs like "set expiry"
     pass
+
+
+class ExecuteConfigRequest(BaseModel):
+    url: str | None = Field(default=None, max_length=1024)
+    method: Literal["POST", "PUT", "PATCH"] = "POST"
+
+    @field_validator("url")
+    @classmethod
+    def _http(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+
+class ActionExecutionOut(BaseModel):
+    id: int
+    action_id: str
+    integration_id: str | None
+    url: str
+    method: str
+    status_code: int | None
+    error: str | None
+    attempts: int
+    state: Literal["pending", "success", "failed"]
+    triggered_by: Literal["allow", "review"]
+    queued_at: datetime
+    executed_at: datetime | None
 
 
 class WebhookSubscriptionCreate(BaseModel):

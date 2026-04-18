@@ -10,6 +10,7 @@ from .. import auth
 from ..db import get_db
 from ..models import Integration
 from ..schemas import (
+    ExecuteConfigRequest,
     IntegrationCreate,
     IntegrationCreated,
     IntegrationOut,
@@ -26,6 +27,8 @@ def _to_out(i: Integration) -> IntegrationOut:
         active=i.active,
         created_at=i.created_at,
         revoked_at=i.revoked_at,
+        execute_url=i.execute_url,
+        execute_method=i.execute_method or "POST",
     )
 
 
@@ -67,6 +70,22 @@ def rotate_secret(integration_id: str, db: Session = Depends(get_db)) -> Integra
     db.commit()
     db.refresh(i)
     return IntegrationCreated(**_to_out(i).model_dump(), shared_secret=new_secret)
+
+
+@router.put("/{integration_id}/execute-config", response_model=IntegrationOut)
+def set_execute_config(
+    integration_id: str,
+    body: ExecuteConfigRequest,
+    db: Session = Depends(get_db),
+) -> IntegrationOut:
+    i = db.get(Integration, integration_id)
+    if i is None:
+        raise HTTPException(status_code=404, detail="integration not found")
+    i.execute_url = body.url
+    i.execute_method = body.method
+    db.commit()
+    db.refresh(i)
+    return _to_out(i)
 
 
 @router.post("/{integration_id}/revoke", response_model=IntegrationOut)

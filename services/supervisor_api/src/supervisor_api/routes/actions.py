@@ -6,7 +6,7 @@ from functools import lru_cache
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .. import auth, evidence, registry, webhooks
+from .. import auth, evidence, execution, registry, webhooks
 from ..config import get_settings
 from ..db import get_db
 from ..engines import decision as decision_engine
@@ -198,6 +198,11 @@ def evaluate_action(
             "threat_level": threat_assessment.level,
         },
     )
+    if dec.decision == "allow":
+        background_tasks.add_task(
+            execution.execute, action.id,
+            triggered_by="allow", integration_id=principal.integration_id,
+        )
     if threat_assessment.signals:
         background_tasks.add_task(
             webhooks.dispatch, "threat.detected",
@@ -219,6 +224,20 @@ def evaluate_action(
         threat_level=threat_assessment.level,
         threats=threats_out,
     )
+
+
+@router.get("/actions/{action_id}/execution")
+def get_action_execution(
+    action_id: str,
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> dict:
+    from ..models import ActionExecution
+
+    row = db.query(ActionExecution).filter_by(action_id=action_id).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="no execution recorded for this action")
+    return execution.build_execution_out(row)
 
 
 @router.get("/decisions/{action_id}", response_model=DecisionOut)

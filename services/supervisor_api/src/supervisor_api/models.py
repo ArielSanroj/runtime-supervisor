@@ -133,6 +133,8 @@ class WebhookDelivery(Base):
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="success")  # pending|success|failed|dead
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class ThreatAssessmentRow(Base):

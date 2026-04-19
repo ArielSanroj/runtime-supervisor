@@ -49,8 +49,8 @@ def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
         try:
-            tree = ast.parse(path.read_text())
-        except SyntaxError:
+            tree = ast.parse(path.read_text(errors="ignore"))
+        except (SyntaxError, ValueError, UnicodeDecodeError):
             continue
         if not _has_llm_import_py(tree):
             continue

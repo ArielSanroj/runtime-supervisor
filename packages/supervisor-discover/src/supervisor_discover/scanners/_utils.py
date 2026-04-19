@@ -8,8 +8,17 @@ _PY_GLOB = "**/*.py"
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
 
 _SKIP_DIRS = {
-    "node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build",
-    ".next", "target", ".tox", ".pytest_cache", ".mypy_cache", "coverage",
+    # build + package dirs
+    "node_modules", ".venv", "venv", "env", "__pycache__", ".git", "dist", "build",
+    ".next", "target", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache", "coverage",
+    "htmlcov", ".nox", ".turbo", ".parcel-cache",
+    # language-specific
+    ".npm", ".gem", ".cargo", ".rustup", ".pnpm-store", ".yarn",
+    # macOS / OS dirs — critical when someone accidentally scans $HOME
+    "Library", "Applications", ".Trash", ".cache", ".local", ".rbenv",
+    ".pyenv", ".nvm", ".docker", ".android", ".gradle", ".m2",
+    "Downloads", "Movies", "Music", "Pictures",
+    "site-packages", "node_modules.bak",
 }
 
 

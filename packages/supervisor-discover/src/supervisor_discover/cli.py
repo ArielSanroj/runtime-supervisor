@@ -41,6 +41,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: path not found: {root}", file=sys.stderr)
         return 2
 
+    # Refuse to scan $HOME — the user almost certainly meant a specific project.
+    home = Path.home().resolve()
+    if root == home:
+        print(
+            f"refusing to scan your home directory ({root}).\n"
+            "cd into the project you want to supervise and re-run, or pass --path /abs/path/to/repo.",
+            file=sys.stderr,
+        )
+        return 2
+
     findings = validate(scan_all(root))
 
     if dry_run:

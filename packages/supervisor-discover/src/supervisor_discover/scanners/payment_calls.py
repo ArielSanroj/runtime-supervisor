@@ -1,4 +1,9 @@
-"""Find payment SDK calls (Stripe / PayPal / Plaid)."""
+"""Find payment SDK calls (Stripe / PayPal / Plaid).
+
+Tracks Python import aliases so `import stripe as _stripe` +
+`_stripe.Refund.create(...)` gets detected the same as
+`stripe.Refund.create(...)`.
+"""
 from __future__ import annotations
 
 import ast
@@ -6,32 +11,25 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
+from ._imports import build_alias_map, resolve_call_name, root_module
 from ._utils import python_files, ts_js_files
 
-_REFUND_METHODS = {
+# Canonical dotted paths (post-alias-resolution) that indicate money movement.
+_REFUND_SIGNATURES = {
     "stripe.Refund.create", "stripe.refunds.create",
-    "Stripe.refunds.create",  # TS stripe-node variant
-    "paypal.refunds.create",
+    "stripe.Refund.Refund.create",  # asymmetric stripe-python artifact
+    "paypal.refunds.create", "paypalrestsdk.Refund.create",
 }
-_PAYMENT_METHODS = {
+_PAYMENT_SIGNATURES = {
     "stripe.Charge.create", "stripe.charges.create",
     "stripe.PaymentIntent.create", "stripe.paymentIntents.create",
     "stripe.Payout.create", "stripe.payouts.create",
     "stripe.Transfer.create", "stripe.transfers.create",
     "paypal.payouts.create", "paypal.orders.create",
-    "plaid.transfer.create", "plaid.Transfer.create",
+    "paypalrestsdk.Payout.create", "paypalrestsdk.Payment.create",
+    "plaid.Transfer.create", "plaid.transfer.create",
 }
-
-
-def _py_call_name(node: ast.Call) -> str:
-    fn = node.func
-    parts: list[str] = []
-    while isinstance(fn, ast.Attribute):
-        parts.append(fn.attr)
-        fn = fn.value
-    if isinstance(fn, ast.Name):
-        parts.append(fn.id)
-    return ".".join(reversed(parts))
+_PAYMENT_ROOTS = {"stripe", "paypal", "paypalrestsdk", "plaid"}
 
 
 def _scan_python(root: Path) -> list[Finding]:
@@ -41,41 +39,40 @@ def _scan_python(root: Path) -> list[Finding]:
             tree = ast.parse(path.read_text(errors="ignore"))
         except (SyntaxError, ValueError, UnicodeDecodeError):
             continue
+        aliases = build_alias_map(tree)
+        if not any(root_module(v) in _PAYMENT_ROOTS for v in aliases.values()):
+            continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            name = _py_call_name(node)
-            if name in _REFUND_METHODS:
+            dotted = resolve_call_name(node, aliases)
+            if dotted in _REFUND_SIGNATURES:
                 findings.append(Finding(
-                    scanner="payment-calls",
-                    file=str(path),
-                    line=node.lineno,
-                    snippet=f"{name}(...)",
+                    scanner="payment-calls", file=str(path), line=node.lineno,
+                    snippet=f"{dotted}(...)",
                     suggested_action_type="refund",
                     confidence="high",
-                    rationale=f"Money movement via `{name}`. Must be gated by a refund policy before execution.",
-                    extra={"method": name, "vendor": name.split(".")[0]},
+                    rationale=f"Money movement via `{dotted}`. Must be gated by a refund policy before execution.",
+                    extra={"method": dotted, "vendor": root_module(dotted)},
                 ))
-            elif name in _PAYMENT_METHODS:
+            elif dotted in _PAYMENT_SIGNATURES:
                 findings.append(Finding(
-                    scanner="payment-calls",
-                    file=str(path),
-                    line=node.lineno,
-                    snippet=f"{name}(...)",
+                    scanner="payment-calls", file=str(path), line=node.lineno,
+                    snippet=f"{dotted}(...)",
                     suggested_action_type="payment",
                     confidence="high",
-                    rationale=f"Outgoing payment via `{name}`. Must be gated by a payment policy with approval chain.",
-                    extra={"method": name, "vendor": name.split(".")[0]},
+                    rationale=f"Outgoing payment via `{dotted}`. Must be gated by a payment policy with approval chain.",
+                    extra={"method": dotted, "vendor": root_module(dotted)},
                 ))
     return findings
 
 
 _TS_REFUND_RE = re.compile(
-    r"""\b(stripe|Stripe)\.refunds\.create\s*\(|\bpaypal\.refunds\.create\s*\("""
+    r"""\b(?:stripe|Stripe)\.refunds\.create\s*\(|\bpaypal\.refunds\.create\s*\("""
 )
 _TS_PAYMENT_RE = re.compile(
-    r"""\b(stripe|Stripe)\.(charges|paymentIntents|payouts|transfers)\.create\s*\("""
-    r"""|\bpaypal\.(payouts|orders)\.create\s*\("""
+    r"""\b(?:stripe|Stripe)\.(?:charges|paymentIntents|payouts|transfers)\.create\s*\("""
+    r"""|\bpaypal\.(?:payouts|orders)\.create\s*\("""
     r"""|\bplaid\.transfer\.create\s*\("""
 )
 
@@ -88,12 +85,8 @@ def _scan_ts_js(root: Path) -> list[Finding]:
             line = text[: m.start()].count("\n") + 1
             snippet = m.group(0).rstrip("(")
             findings.append(Finding(
-                scanner="payment-calls",
-                file=str(path),
-                line=line,
-                snippet=snippet,
-                suggested_action_type="refund",
-                confidence="high",
+                scanner="payment-calls", file=str(path), line=line, snippet=snippet,
+                suggested_action_type="refund", confidence="high",
                 rationale=f"Money movement via `{snippet}`. Must be gated by a refund policy.",
                 extra={"method": snippet, "vendor": snippet.split(".")[0].lower()},
             ))
@@ -101,12 +94,8 @@ def _scan_ts_js(root: Path) -> list[Finding]:
             line = text[: m.start()].count("\n") + 1
             snippet = m.group(0).rstrip("(")
             findings.append(Finding(
-                scanner="payment-calls",
-                file=str(path),
-                line=line,
-                snippet=snippet,
-                suggested_action_type="payment",
-                confidence="high",
+                scanner="payment-calls", file=str(path), line=line, snippet=snippet,
+                suggested_action_type="payment", confidence="high",
                 rationale=f"Outgoing payment via `{snippet}`. Must be gated by a payment policy.",
                 extra={"method": snippet, "vendor": snippet.split(".")[0].lower()},
             ))

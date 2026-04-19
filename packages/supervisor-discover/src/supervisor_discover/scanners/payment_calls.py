@@ -21,10 +21,22 @@ _REFUND_SIGNATURES = {
     "paypal.refunds.create", "paypalrestsdk.Refund.create",
 }
 _PAYMENT_SIGNATURES = {
+    # one-off charges / transfers
     "stripe.Charge.create", "stripe.charges.create",
     "stripe.PaymentIntent.create", "stripe.paymentIntents.create",
     "stripe.Payout.create", "stripe.payouts.create",
     "stripe.Transfer.create", "stripe.transfers.create",
+    # recurring billing — each of these moves / schedules money
+    "stripe.Subscription.create", "stripe.subscriptions.create",
+    "stripe.Subscription.modify", "stripe.subscriptions.update",
+    "stripe.Subscription.cancel", "stripe.subscriptions.cancel",
+    "stripe.SubscriptionItem.create", "stripe.SubscriptionItem.update",
+    # hosted checkout — initiates a payment flow
+    "stripe.checkout.Session.create",
+    # invoice + customer billing state
+    "stripe.Invoice.create", "stripe.invoices.create",
+    "stripe.Invoice.pay", "stripe.invoices.pay",
+    # other vendors
     "paypal.payouts.create", "paypal.orders.create",
     "paypalrestsdk.Payout.create", "paypalrestsdk.Payment.create",
     "plaid.Transfer.create", "plaid.transfer.create",

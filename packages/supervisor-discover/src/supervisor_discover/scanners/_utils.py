@@ -13,6 +13,10 @@ _SKIP_DIRS = {
     ".next", "target", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     "coverage", "htmlcov", ".nox", ".turbo", ".parcel-cache",
     "site-packages", "node_modules.bak",
+    # worktrees from git/claude — copies of the same source, cause duplicates
+    "worktrees",
+    # the scanner's own output — avoid re-scanning generated stubs on reruns
+    "runtime-supervisor",
     # language-specific caches
     ".npm", ".gem", ".cargo", ".rustup", ".pnpm-store", ".yarn",
     ".pyenv", ".nvm", ".rbenv",

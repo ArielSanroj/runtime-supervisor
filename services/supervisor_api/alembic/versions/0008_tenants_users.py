@@ -36,13 +36,13 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
 
-    op.add_column(
-        "integrations",
-        sa.Column("tenant_id", sa.String(length=36), sa.ForeignKey("tenants.id"), nullable=True),
-    )
+    # SQLite can't ALTER with inline FK; use batch mode which does copy-and-move.
+    with op.batch_alter_table("integrations") as batch:
+        batch.add_column(sa.Column("tenant_id", sa.String(length=36), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("integrations", "tenant_id")
+    with op.batch_alter_table("integrations") as batch:
+        batch.drop_column("tenant_id")
     op.drop_table("users")
     op.drop_table("tenants")

@@ -8,17 +8,20 @@ _PY_GLOB = "**/*.py"
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
 
 _SKIP_DIRS = {
-    # build + package dirs
-    "node_modules", ".venv", "venv", "env", "__pycache__", ".git", "dist", "build",
-    ".next", "target", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache", "coverage",
-    "htmlcov", ".nox", ".turbo", ".parcel-cache",
-    # language-specific
-    ".npm", ".gem", ".cargo", ".rustup", ".pnpm-store", ".yarn",
-    # macOS / OS dirs — critical when someone accidentally scans $HOME
-    "Library", "Applications", ".Trash", ".cache", ".local", ".rbenv",
-    ".pyenv", ".nvm", ".docker", ".android", ".gradle", ".m2",
-    "Downloads", "Movies", "Music", "Pictures",
+    # build + package dirs (safe: never project source)
+    "node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build",
+    ".next", "target", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "coverage", "htmlcov", ".nox", ".turbo", ".parcel-cache",
     "site-packages", "node_modules.bak",
+    # language-specific caches
+    ".npm", ".gem", ".cargo", ".rustup", ".pnpm-store", ".yarn",
+    ".pyenv", ".nvm", ".rbenv",
+    # macOS system dirs — only matter if someone scans $HOME, which the
+    # CLI already refuses separately. NOT including Downloads / Music /
+    # Pictures / etc because those are places where devs commonly clone
+    # repos and we'd over-exclude real project files.
+    "Library", "Applications", ".Trash", ".cache",
+    ".docker", ".android", ".gradle", ".m2",
 }
 
 

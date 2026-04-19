@@ -58,6 +58,22 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.9.0)(lightningcss@1.32.0)
 
+  packages/supervisor-guards-ts:
+    dependencies:
+      '@runtime-supervisor/client':
+        specifier: workspace:*
+        version: link:../supervisor-client-ts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.9.0
+      typescript:
+        specifier: ^5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.9.0)(lightningcss@1.32.0)
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

@@ -1,3 +1,4 @@
 packages:
   - "apps/*"
   - "packages/supervisor-client-ts"
+  - "packages/supervisor-guards-ts"

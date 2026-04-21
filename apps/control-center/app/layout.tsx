@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Agentic Internal Controls",
-  description: "Runtime supervision for enterprise AI agents. Observe, evaluate, intervene before risky actions execute.",
+  title: "Vibefixing — runtime-supervisor",
+  description: "Vibefixing · runtime-supervisor — guardrails for AI agents that ship. Intercept actions, evaluate risk, block or escalate in real time.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -301,9 +301,10 @@ function Header({ apiUp }: { apiUp: boolean }) {
   return (
     <header className="sticky top-0 z-10 border-b border-zinc-800 bg-black/70 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-2 font-mono text-sm">
+        <div className="flex items-baseline gap-2 font-mono text-sm">
           <span className="text-emerald-400">$</span>
-          <span>runtime-supervisor</span>
+          <span className="font-semibold text-zinc-100">vibefixing</span>
+          <span className="text-xs text-zinc-500">// runtime-supervisor</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <span
@@ -496,8 +497,10 @@ function Footer() {
     <footer className="border-t border-zinc-900 bg-black">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm text-zinc-600">
         <div className="font-mono">
-          <span className="text-emerald-400">$</span> runtime-supervisor{" "}
-          <span className="text-zinc-700">// guardrails for agents that ship</span>
+          <span className="text-emerald-400">$</span>{" "}
+          <span className="text-zinc-400">vibefixing</span>{" "}
+          <span className="text-zinc-600">// runtime-supervisor</span>{" "}
+          <span className="text-zinc-700">— guardrails for agents that ship</span>
         </div>
         <div className="flex gap-6 font-mono">
           <Link href="/dashboard" className="hover:text-zinc-300">

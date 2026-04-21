@@ -13,13 +13,11 @@ Auto-generado por `supervisor-discover scan`. Commit este archivo (y el
 resto de `runtime-supervisor/`) para que cada PR se pueda revisar contra
 lo que el supervisor debe gatear.
 
-El supervisor hace tres cosas con estos hallazgos:
+Cada sección abajo sigue la misma estructura:
 
-- **Observa** cada llamada que pasa por los call-sites listados abajo.
-- **Evalúa** el payload contra la política del `action_type` + el pipeline
-  de amenazas (prompt-injection, jailbreak, PII exfil — OWASP LLM Top 10).
-- **Interviene** cuando la política falla o el riesgo supera el umbral:
-  bloquea (deny), escala a humano (review), o deja pasar (allow).
+- 🔴 **Problema:** qué puede salir mal si no se supervisa.
+- 📍 **En tu repo:** dónde está detectado (archivos específicos).
+- ✅ **La solución:** el wrap pattern + la policy que aplica.
 
 ## Resumen
 
@@ -49,92 +47,127 @@ enforce, tasa estimada de falso-positivo, y latencia p50/p95/p99.
 """
 
 # Per-tier copy block. Substituted into _render_by_risk_tier in the generator.
+#
+# Each tier is rendered as three labelled sections + an optional technical
+# footnote (where OWASP refs, policy YAML names, and other jargon go):
+#
+#   🔴 **Problema:**   what can go wrong in plain dev English
+#   📍 **En tu repo:** count + top-3 files (injected dynamically)
+#   ✅ **La solución:** the concrete ask (wrap pattern + policy name)
+#   (footnote)         OWASP refs, policy name, compliance refs
+#
+# Keys:
+#   problem              prose, no OWASP / action_type jargon
+#   in_your_repo_prefix  leading sentence before the top-3 files
+#   solution             wrap pattern + policy ref
+#   technical_footnote   refs and policy YAML names — optional
 TIER_COPY = {
     "money": {
         "title": "Money movement",
-        "observa": (
-            "{total} punto(s) en tu código que pueden iniciar un refund, charge, "
-            "subscription o payout sin pasar por el supervisor."
+        "problem": (
+            "Tu agente puede iniciar refunds, charges, subscriptions o payouts. "
+            "Sin supervisión, un prompt injection puede disparar un movimiento de "
+            "plata que nadie autorizó."
         ),
-        "evalua": (
-            "El supervisor evaluaría cada llamada contra la política `payment.base.v1` "
-            "(hard-cap amount, velocity, customer-age) + detectores de prompt-injection "
-            "si el monto proviene de un LLM."
+        "in_your_repo_prefix": (
+            "{total} call-site(s) que mueven dinero sin pasar por el supervisor."
         ),
-        "intervendria": (
-            "Bloquearía la llamada si el payload falla la política. La mandaría a review "
-            "humano si el risk score es ≥50. En shadow mode, solo registra la decisión "
-            "sin interrumpir el flujo."
+        "solution": (
+            "Wrappear cada call-site con `@supervised('payment')` (o `refund`). "
+            "La policy `payment.base.v1` ya enforce-a hard-cap en amount, velocity "
+            "por customer, y bloquea si la cuenta bancaria cambió en las últimas 24h."
+        ),
+        "technical_footnote": (
+            "_Policies: `payment.base.v1` y `refund.base.v1`. Detectores activos: "
+            "prompt injection, jailbreak. Ref: OWASP LLM Top 10 (LLM01, LLM10)._"
         ),
     },
     "real_world_actions": {
         "title": "Real-world actions",
-        "observa": (
-            "{total} call-site(s) donde el agente actúa en el mundo real: llamadas "
-            "telefónicas, SMS, emails, posts en Slack/Discord, eventos de calendario, "
-            "escrituras a disco, exec shell, o generación de media sintética."
+        "problem": (
+            "Tu agente puede actuar en el mundo real: llamar por teléfono, mandar "
+            "SMS/email, postear en Slack, crear eventos de calendario, escribir o "
+            "borrar archivos, ejecutar comandos. Cada uno es una consecuencia "
+            "irreversible si un prompt injection controla los args."
         ),
-        "evalua": (
-            "El supervisor evaluaría cada llamada contra `tool_use.base.v1` (tool name "
-            "requerido, prompt length, namespace privilegiado) + detectores OWASP "
-            "(prompt-injection que manipule destinatarios, comandos, o contenido)."
+        "in_your_repo_prefix": (
+            "{total} call-site(s) donde el agente actúa en el mundo real."
         ),
-        "intervendria": (
-            "Bloquearía llamadas a tools prohibidas (shell, fs.delete, network.raw). "
-            "Escalaría a humano cualquier acción que envíe mensaje, llame, o agende con "
-            "contenido sospechoso. En shadow mode, solo registra — útil para construir "
-            "allowlist de destinatarios/tools reales antes de enforzar."
+        "solution": (
+            "Wrappear cada call-site con `@supervised('tool_use')`. Los stubs "
+            "copy-paste están en `stubs/py/` y `stubs/ts/`. La policy `tool_use.base.v1` "
+            "requiere tool name explícito, caps prompt length, y bloquea namespaces "
+            "privilegiados (shell, fs.delete, network.raw)."
+        ),
+        "technical_footnote": (
+            "_Policy: `tool_use.base.v1`. Detectores activos: prompt injection, "
+            "jailbreak, loops / prompts gigantes. Ref: OWASP LLM Top 10 (LLM01, LLM06, LLM10)._"
         ),
     },
     "customer_data": {
         "title": "Customer data",
-        "observa": (
-            "{total} mutación(es) sobre tablas con nombres tipo users / accounts / "
-            "customers / orders — datos sensibles desde perspectiva de cumplimiento."
+        "problem": (
+            "El agente puede modificar tablas de clientes directamente (users, "
+            "accounts, customers, orders). Un `DELETE FROM users` sin `WHERE`, "
+            "un `UPDATE` que cambie email + phone + password a la vez — ambos "
+            "son acciones irreversibles que hoy corren sin supervisión."
         ),
-        "evalua": (
-            "El supervisor evaluaría el DELETE/UPDATE/INSERT contra políticas de "
-            "`account_change` / `data_access` (quién, qué campos, scope), más detección "
-            "de PII exfil en el resultado."
+        "in_your_repo_prefix": (
+            "{total} mutación(es) sobre tablas con nombres de clientes (users / "
+            "accounts / customers / orders)."
         ),
-        "intervendria": (
-            "Bloquearía mutaciones fuera del scope autorizado. Emitiría evidence-log "
-            "con hash-chain para cumplimiento (GDPR/SOC2). En review, notificaría al "
-            "DPO antes de permitir."
+        "solution": (
+            "Wrappear cada mutación con `@supervised('account_change')` o "
+            "`data_access` según aplique. Las policies cap scope (tenant_id "
+            "requerido, row_limit, columnas PII bloqueadas) y dejan audit trail "
+            "con cadena hash para cumplimiento."
+        ),
+        "technical_footnote": (
+            "_Policies: `account_change.base.v1`, `data_access.base.v1`. Audit "
+            "trail con hash-chain. Ref: OWASP LLM Top 10 (LLM02), cumplimiento: GDPR, SOC2._"
         ),
     },
     "llm": {
         "title": "LLM tool-use",
-        "observa": (
+        "problem": (
+            "Tu agente llama al LLM sin gating. Prompt injection (alguien escribió "
+            "'ignore previous instructions' en un ticket), jailbreak del guardrail "
+            "del modelo, o un loop que quema tokens — hoy todo pasa sin intervención."
+        ),
+        "in_your_repo_prefix": (
             "{total} invocación(es) de LLM SDKs (openai / anthropic / langchain / "
-            "llama_index) — superficie primaria para prompt-injection y jailbreak."
+            "llama_index)."
         ),
-        "evalua": (
-            "El supervisor evaluaría el prompt + tool-call contra su pipeline de amenazas "
-            "OWASP LLM Top 10 (prompt-injection, sensitive-info-disclosure, "
-            "excessive-agency, unbounded-consumption)."
+        "solution": (
+            "Wrappear las llamadas con `@supervised('tool_use')`. El supervisor "
+            "valida que el prompt no supere 50k chars (loop de consumo), que el tool "
+            "name esté declarado (rate-limit + audit), y corre los detectores de "
+            "ataques típicos a LLMs."
         ),
-        "intervendria": (
-            "Bloquearía llamadas con prompts inyectados o que pidan acciones fuera del "
-            "scope del agente. Escalaría a review si detecta PII en el input. En shadow, "
-            "marca la llamada sin interrumpir."
+        "technical_footnote": (
+            "_Policy: `tool_use.base.v1`. Detectores: prompt injection, jailbreak, "
+            "fugas de datos, capacidades fuera del scope, loops / prompts gigantes. "
+            "Ref: OWASP LLM Top 10 (LLM01, LLM02, LLM06, LLM08, LLM10)._"
         ),
     },
     "general": {
         "title": "General / informational",
-        "observa": (
-            "{total} hallazgo(s) informativo(s) (HTTP routes, cron schedules, otros). "
-            "No mueven dinero ni tocan datos críticos directamente — pero son el "
-            "mapa de la superficie de ataque del repo."
+        "problem": (
+            "Estos hallazgos son informativos: HTTP routes y cron schedules que "
+            "mapean la superficie del repo pero no mueven dinero ni tocan datos "
+            "críticos directamente. No necesitan stub — pero importan para saber "
+            "qué lógica queda sin supervisar todavía."
         ),
-        "evalua": (
-            "No requieren stub en esta fase. Útiles para auditoría y para catalogar "
-            "qué partes del repo tienen lógica que el supervisor aún no gatea."
+        "in_your_repo_prefix": (
+            "{total} hallazgo(s) informativo(s) (HTTP routes, cron schedules, otros)."
         ),
-        "intervendria": (
-            "N/A en esta fase. Próximas iteraciones podrán gatear cron jobs con "
-            "ejecución idempotente y rate-limits por route."
+        "solution": (
+            "N/A en esta fase. El supervisor no gatea la route ni el cron — gatea "
+            "las tools que se ejecutan **adentro** de ellos. Una siguiente iteración "
+            "va a poder gatear cron jobs con ejecución idempotente y rate-limits "
+            "por route."
         ),
+        "technical_footnote": "",
     },
 }
 

@@ -315,6 +315,24 @@ def _render_by_risk_tier(findings: list[Finding]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _top_files_evidence(items: list[Finding], limit: int = 3) -> str:
+    """Render the top-N findings (by confidence desc) as backticked
+    `short-path:line` references joined with ` · `. Used in tier blocks'
+    '📍 En tu repo' line so the reader sees exactly which files matter."""
+    order = {"high": 0, "medium": 1, "low": 2}
+    sorted_items = sorted(items, key=lambda f: (order.get(f.confidence, 3), f.file))
+    top = sorted_items[:limit]
+    shorts = []
+    for f in top:
+        parts = f.file.rsplit("/", 2)
+        short = "/".join(parts[-2:]) if len(parts) > 1 else f.file
+        shorts.append(f"`{short}:{f.line}`")
+    rendered = " · ".join(shorts)
+    if len(items) > limit:
+        rendered += f" _+{len(items) - limit} más_"
+    return rendered
+
+
 def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> list[str]:
     copy = TIER_COPY[tier]
     high = [f for f in items if f.confidence == "high"]
@@ -328,12 +346,21 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         headline = f"## {copy['title']} — {len(high)} high / {len(medium)} medium / {len(low)} low"
         lines.append(headline)
         lines.append("")
-        lines.append(f"**Observa:** {copy['observa'].format(total=len(items))}")
+        # Tri-part block: 🔴 Problema · 📍 En tu repo · ✅ Solución · (footnote)
+        lines.append(f"🔴 **Problema:** {copy['problem']}")
         lines.append("")
-        lines.append(f"**Evalúa:** {copy['evalua']}")
+        top_files = _top_files_evidence(items, limit=3)
+        in_repo_prefix = copy["in_your_repo_prefix"].format(total=len(items))
+        lines.append(f"📍 **En tu repo:** {in_repo_prefix}")
+        if top_files:
+            lines.append(f"    Top call-sites: {top_files}.")
         lines.append("")
-        lines.append(f"**Intervendría:** {copy['intervendria']}")
+        lines.append(f"✅ **La solución:** {copy['solution']}")
         lines.append("")
+        footnote = copy.get("technical_footnote", "")
+        if footnote:
+            lines.append(footnote)
+            lines.append("")
 
     if collapse:
         # General tier: one simple table inside the <details>, no duplication.

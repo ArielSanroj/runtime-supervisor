@@ -56,10 +56,10 @@ def test_report_is_tiered_with_rollout_guidance(tmp_path):
     assert "/v1/metrics/enforcement" in report
     # Tier summary table at the top.
     assert "| Tier | High | Medium | Low | Total |" in report
-    # Observa/Evalúa/Intervendría framing.
-    assert "**Observa:**" in report
-    assert "**Evalúa:**" in report
-    assert "**Intervendría:**" in report
+    # Tri-part framing: 🔴 Problema / 📍 En tu repo / ✅ La solución.
+    assert "🔴 **Problema:**" in report
+    assert "📍 **En tu repo:**" in report
+    assert "✅ **La solución:**" in report
 
 
 def test_rollout_md_is_stack_aware_for_python_repo(tmp_path):

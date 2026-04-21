@@ -59,6 +59,45 @@ def _stub_name(f: Finding) -> str:
     return f"{safe}_L{f.line}.stub.{suffix}"
 
 
+def _intro_block(combo: Combo, evidence_lines: list[str] | None = None) -> list[str]:
+    """Standardized "what happens if you don't act" intro for every combo
+    playbook. Returns markdown lines.
+
+    Structure:
+      ## Qué pasa si no hacés nada
+      🔴 El problema: combo.narrative
+      📍 Dónde está en tu repo: evidence_lines (or combo.evidence)
+      ✅ Cómo se resuelve (pasos abajo): combo.mitigation
+
+    `evidence_lines` lets the caller pass richer evidence (e.g. provider +
+    path instead of just path). When None, falls back to `combo.evidence`.
+    """
+    lines = combo.evidence if evidence_lines is None else evidence_lines
+    # Auto-wrap with backticks only when the caller hasn't already formatted
+    # the line (detected by presence of a backtick). combo.evidence uses plain
+    # "file.py:123" strings; custom lines from specific handlers may already
+    # include their own markdown.
+    def _fmt(e: str) -> str:
+        return e if "`" in e else f"`{e}`"
+    ev = "\n".join(f"- {_fmt(e)}" for e in lines) if lines else "- (sin evidencia concreta en este scan)"
+    return [
+        "## Qué pasa si no hacés nada",
+        "",
+        "🔴 **El problema:**",
+        "",
+        combo.narrative,
+        "",
+        "📍 **Dónde está en tu repo:**",
+        "",
+        ev,
+        "",
+        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "",
+        combo.mitigation,
+        "",
+    ]
+
+
 # ── Per-combo playbook templates ───────────────────────────────────────
 
 def _voice_clone_plus_outbound_call(
@@ -97,23 +136,17 @@ rules:
       misma sesión, escalar a humano — vector clásico de vishing.
 """
 
+    ev_lines = [
+        f"**{f.extra.get('provider', '?')}** → `{_relative_path(f.file)}:{f.line}`"
+        for f in clone_sites + call_sites
+    ]
     md_lines: list[str] = [
         f"# Fix: {combo.title}",
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Ataque concreto (en tu repo)",
-        "",
-        combo.narrative,
-        "",
-        "Call-sites detectados:",
-        "",
     ]
-    for f in clone_sites + call_sites:
-        rel = _relative_path(f.file)
-        provider = f.extra.get("provider", "?")
-        md_lines.append(f"- **{provider}** → `{rel}:{f.line}`")
-    md_lines.append("")
+    md_lines.extend(_intro_block(combo, evidence_lines=ev_lines))
 
     md_lines.extend([
         "## Paso 1 — Policy combo-specific",
@@ -252,23 +285,18 @@ rules:
       args=[...] en vez de shell=True.
 """
 
+    ev_lines = [
+        f"`{_relative_path(f.file)}:{f.line}` — `{f.snippet[:60]}`"
+        for f in shell_sites[:5]
+    ]
     md_lines = [
         f"# Fix: {combo.title}",
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Ataque concreto",
-        "",
-        combo.narrative,
-        "",
-        "Call-sites shell-exec detectados:",
-        "",
     ]
-    for f in shell_sites[:5]:
-        rel = _relative_path(f.file)
-        md_lines.append(f"- `{rel}:{f.line}` — `{f.snippet[:60]}`")
+    md_lines.extend(_intro_block(combo, evidence_lines=ev_lines))
     md_lines.extend([
-        "",
         "## Paso 1 — Policy restrictiva",
         "",
         "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (ya escrita).",
@@ -324,15 +352,14 @@ rules:
       Entre 5 y 50 destinatarios: revisión humana. Cap bajo para que un
       prompt injection no pueda silenciosamente disparar un blast.
 """
-    md = f"""# Fix: {combo.title}
-
-**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`
-
-## Ataque concreto
-
-{combo.narrative}
-
-## Paso 1 — Policy con recipient caps
+    header = [
+        f"# Fix: {combo.title}",
+        "",
+        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        "",
+    ]
+    header.extend(_intro_block(combo))
+    body = f"""## Paso 1 — Policy con recipient caps
 
 En `runtime-supervisor/policies/tool_use.mass-email-plus-customer-db.v1.yaml`.
 
@@ -347,28 +374,20 @@ Envolver cada `sendgrid.send` / `resend.emails.send` / `ses.send_email` con `gua
 - [ ] Test: `{{\"to\": [\"1\", ..., \"100\"]}}` → deny
 - [ ] 7 días shadow sin false-positives en transactional sends legítimos
 """
+    md = "\n".join(header) + body
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=policy_yaml)
 
 
 # Generic fallback for combos that don't have a hand-written playbook yet.
 def _generic_playbook(combo: Combo, findings: list[Finding], summary: RepoSummary) -> Playbook:
-    md = f"""# Fix: {combo.title}
-
-**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`
-
-## Ataque concreto
-
-{combo.narrative}
-
-## Mitigación recomendada
-
-{combo.mitigation}
-
-## Evidencia
-
-{chr(10).join(f"- {e}" for e in combo.evidence)}
-
-## Pasos genéricos
+    header = [
+        f"# Fix: {combo.title}",
+        "",
+        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        "",
+    ]
+    header.extend(_intro_block(combo))
+    body = f"""## Pasos genéricos
 
 1. Revisa cada call-site listado arriba.
 2. Envuélvelo con `@supervised("tool_use")` usando los stubs generados.
@@ -380,6 +399,7 @@ def _generic_playbook(combo: Combo, findings: list[Finding], summary: RepoSummar
 _Este combo no tiene playbook hand-written todavía. Si te importa, abre un issue
 en github.com/ArielSanroj/runtime-supervisor con el combo_id `{combo.id}`._
 """
+    md = "\n".join(header) + body
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=None)
 
 
@@ -415,21 +435,37 @@ def _imports_only_playbook(
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Qué detecté",
+        "## Qué pasa si no hacés nada",
         "",
-        f"Tu repo importa `{framework}` en {len(import_files)} archivo(s). "
-        "El scanner confirma que estás usando un framework de agentes, pero los "
-        "imports por sí mismos no son wrap-points — el `guarded()` tiene que "
-        "envolver la **invocación** del framework, no la definición.",
+        "🔴 **El problema:**",
         "",
-        "Archivos con imports:",
+        f"Tu repo importa `{framework}` en {len(import_files)} archivo(s) — estás "
+        f"usando un framework de agentes. Cada vez que tu agente invoca `{entry}` "
+        f"pasa por un solo punto — si eso no está wrappeado, cualquier prompt "
+        f"injection controla qué tool se ejecuta sin supervisión.",
+        "",
+        "📍 **Dónde está en tu repo:**",
+        "",
+        "Archivos con imports del framework:",
         "",
     ]
     for p in import_samples:
         md.append(f"- `{p}`")
     if len(import_files) > 5:
         md.append(f"- _+{len(import_files) - 5} más_")
-    md.append("")
+    md.extend([
+        "",
+        "_El call-site exacto de wrap (`{entry}`) no está en estos archivos — el scanner "
+        "detecta la **presencia del framework** pero no la línea de invocación. El Paso 1 "
+        "abajo te dice cómo encontrarla._".replace("{entry}", entry),
+        "",
+        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "",
+        f"1. Encontrar el `{ctor}` en tu repo (grep).",
+        f"2. Envolver la llamada a `{entry}` con `guarded('tool_use', ...)`.",
+        f"3. Confirmar con re-escaneo que el scanner ahora detecta el wrap site.",
+        "",
+    ])
 
     md.extend([
         f"## Paso 1 — Encontrá tu `{ctor}` en el repo",
@@ -556,19 +592,34 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Por qué este playbook es el #1 a ejecutar",
+        "## Qué pasa si no hacés nada",
+        "",
+        "🔴 **El problema:**",
         "",
         "Tu repo tiene un **orquestador de agente** — una `Controller.handle()` / "
         "`Dispatcher.dispatch()` / `AgentExecutor` por donde pasa toda decisión que el "
-        "agente toma antes de ejecutar una tool.",
+        "agente toma antes de ejecutar una tool. Hoy no está gateado: cualquier prompt "
+        "injection controla qué se ejecuta.",
         "",
-        f"Eso te da apalancamiento real: **1 `guarded()` en `{primary_rel}` cubre los "
-        f"{len(tools) if tools else 'N'} tools actuales + cualquiera que agregues después**.",
+        "📍 **Dónde está en tu repo:**",
         "",
-        "Es estrictamente mejor que wrappear cada leaf call-site (no se olvidan tools "
-        "nuevos, el supervisor ve el intent/session/user, zero mantenimiento).",
-        "",
+        f"- `{primary_rel}` — chokepoint principal ({primary_label})",
     ]
+    # Include registered tools if present — they're the "superficie que protege
+    # este chokepoint".
+    if tools:
+        md.append(f"- Tools expuestos: {', '.join(f'`{t}`' for t in tools[:8])}"
+                  f"{'...' if len(tools) > 8 else ''}")
+    md.extend([
+        "",
+        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "",
+        f"**1 `guarded()` en `{primary_rel}` cubre los {len(tools) if tools else 'N'} "
+        "tools actuales + cualquiera que agregues después.** Estrictamente mejor que "
+        "wrappear cada leaf call-site (no se olvidan tools nuevos, el supervisor ve el "
+        "intent/session/user, zero mantenimiento).",
+        "",
+    ])
 
     if tools:
         md.extend([

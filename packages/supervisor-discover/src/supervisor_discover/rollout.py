@@ -211,19 +211,17 @@ def _exit_criteria(tier: Tier) -> str:
 
 
 def _metrics_block() -> str:
+    """Short pointer block — the tier-specific metrics live inside each phase
+    now. This just tells the reader where to look."""
     return (
-        "## Medición\n\n"
-        "- **Dashboard:** si instalaste con `ac start`, en `http://localhost:3099/dashboard`. "
-        "Entries recientes, decisiones por tier, casos pendientes de review. Refresh cada 5s.\n"
-        "- **API:** `GET ${SUPERVISOR_BASE_URL}/v1/metrics/enforcement?window=24h` — para CI, "
-        "dashboards externos, o cuando necesites la data programática.\n\n"
-        "Qué mirar en cada fase:\n"
-        "- `would_block_in_shadow`: cuántas llamadas habrían sido bloqueadas. "
-        "Si incluye paths legítimos → la política está demasiado estricta.\n"
-        "- `actually_blocked`: cuántas bloqueó enforce de verdad. Cero durante horas = "
-        "guard desconectado o sin tráfico.\n"
-        "- `estimated_false_positive_rate`: proxy de fricción. Target < 5%.\n"
-        "- `latency_ms.p95 / p99`: costo de evaluación. Target p95 < 200ms, p99 < 500ms.\n"
+        "## Dónde mirar las métricas\n\n"
+        "- **Dashboard local:** `http://localhost:3099/dashboard` si instalaste con "
+        "`ac start`. Entries recientes, decisiones por tier, casos pendientes de "
+        "review. Refresh cada 5s.\n"
+        "- **API programática:** `GET ${SUPERVISOR_BASE_URL}/v1/metrics/enforcement?window=24h` "
+        "para CI, dashboards externos, o cuando necesites la data en JSON.\n\n"
+        "Cada fase arriba define qué métricas mirar en ese momento específico "
+        "— mira el 📊 de cada fase activa.\n"
     )
 
 
@@ -253,17 +251,23 @@ def _phase_shadow(n: int, active: list[Tier], stack: Stack) -> str:
     exit_lines = "\n".join(f"  - {TIER_COPY[t]['title']}: {_exit_criteria(t)}" for t in active)
     return (
         f"## Fase {n} — Shadow\n\n"
-        f"{_CRITERIA_GATED_NOTE}\n\n"
-        "Setup: `SUPERVISOR_ENFORCEMENT_MODE=shadow`. Bootstrap en el arranque de la app:\n\n"
+        f"🎯 **Qué es esta fase:**\n"
+        f"El supervisor observa cada llamada y registra qué HABRÍA hecho, pero no "
+        f"bloquea. Seguro para deployar en day 1.\n\n"
+        f"🔧 **Qué hacés:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=shadow` en el env.\n"
+        f"2. Bootstrap en el arranque:\n\n"
         f"{_shadow_config_block(stack)}\n\n"
-        "Qué hacer:\n"
-        f"1. Pega los stubs de `stubs/` en tu código — cubren {tiers_label}.\n"
-        "2. Deploy normal. Nada bloquea.\n"
-        "3. Dashboard diario mientras acumula observaciones.\n"
-        "4. Si `would_block_in_shadow` incluye paths legítimos, ajusta el YAML "
-        "en `policies/` o excluye el call-site de la política.\n\n"
-        "Criterios de salida (todos deben cumplirse):\n"
-        f"{exit_lines}\n"
+        f"3. Pegá los stubs de `stubs/` en tu código — cubren {tiers_label}.\n"
+        f"4. Deploy normal. Nada bloquea.\n\n"
+        f"📊 **Qué medís:**\n"
+        f"- `would_block_in_shadow` — cuántas llamadas habría bloqueado (target: no incluir paths legítimos).\n"
+        f"- `estimated_false_positive_rate` — target < 5%.\n"
+        f"- Si `would_block_in_shadow` incluye paths legítimos → ajustar el YAML "
+        f"en `policies/` o excluir ese call-site de la policy.\n\n"
+        f"✅ **Cuándo avanzás a la fase siguiente** (todos deben cumplirse):\n"
+        f"{exit_lines}\n\n"
+        f"_{_CRITERIA_GATED_NOTE}_\n"
     )
 
 
@@ -271,15 +275,24 @@ def _phase_sample(n: int, primary: Tier) -> str:
     title = TIER_COPY[primary]["title"].lower()
     return (
         f"## Fase {n} — Sample 10% en {title}\n\n"
-        f"{_CRITERIA_GATED_NOTE}\n\n"
-        "Setup: `SUPERVISOR_ENFORCEMENT_MODE=sample` + `SUPERVISOR_SAMPLE_PERCENT=10`.\n\n"
-        f"Esto enforce-a 10% de las llamadas de {title}, el resto sigue shadow. "
-        "El resto de los tiers queda en shadow vía el override per-wrapper "
-        "`on_review=\"shadow\"` del stub.\n\n"
-        "Monitorear `actually_blocked` en el dashboard. Si aparecen falsos positivos, "
-        "pausar (volver a shadow) y ajustar política.\n\n"
-        f"Criterio de salida: `actually_blocked > 0`, FP rate < 5%, "
-        f"≥ {_MIN_CALLS_BY_TIER[primary]} sampled calls.\n"
+        f"🎯 **Qué es esta fase:**\n"
+        f"Enforce-a el 10% de las llamadas de {title}; el resto de los tiers sigue "
+        f"en shadow. Primera fase donde el supervisor puede bloquear tráfico real, "
+        f"pero acotado.\n\n"
+        f"🔧 **Qué hacés:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=sample` + `SUPERVISOR_SAMPLE_PERCENT=10` en el env.\n"
+        f"2. Reiniciar el proceso — los guards leen la env al arrancar.\n"
+        f"3. Los stubs de otros tiers mantienen `on_review=\"shadow\"` (no los toques).\n\n"
+        f"📊 **Qué medís:**\n"
+        f"- `actually_blocked` — cuántas bloqueó el supervisor de verdad.\n"
+        f"- `estimated_false_positive_rate` — target < 5%.\n"
+        f"- Si aparecen falsos positivos → volver a shadow (`SUPERVISOR_ENFORCEMENT_MODE=shadow`) "
+        f"y ajustar la policy antes de reintentar.\n\n"
+        f"✅ **Cuándo avanzás a enforce completo:**\n"
+        f"  - `actually_blocked > 0` (sabés que el guard está conectado)\n"
+        f"  - FP rate < 5%\n"
+        f"  - ≥ {_MIN_CALLS_BY_TIER[primary]} sampled calls\n\n"
+        f"_{_CRITERIA_GATED_NOTE}_\n"
     )
 
 
@@ -287,15 +300,24 @@ def _phase_enforce(n: int, active: list[Tier]) -> str:
     progression = " → ".join(TIER_COPY[t]["title"] for t in active)
     return (
         f"## Fase {n} — Enforce progresivo\n\n"
-        f"{_CRITERIA_GATED_NOTE}\n\n"
-        "Setup: `SUPERVISOR_ENFORCEMENT_MODE=enforce`.\n\n"
-        f"Progresión sugerida (en orden de severidad máxima detectada): **{progression}**.\n\n"
-        "Para cada tier, cambiar los stubs correspondientes a `on_review=\"block\"` "
-        "(poll por decisión de revisor humano). Los demás stubs mantienen `on_review=\"shadow\"` "
-        "hasta llegarles el turno. No se avanza al siguiente tier hasta que el actual "
-        "mantenga FP rate < 5% y cero bloqueos a paths legítimos.\n\n"
-        "Si en cualquier tier el FP rate sube a >5%, volver ese tier a shadow y ajustar "
-        "política antes de reintentar.\n"
+        f"🎯 **Qué es esta fase:**\n"
+        f"El supervisor bloquea por policy en los tiers activos. Progresión "
+        f"sugerida (mayor severidad primero): **{progression}**.\n\n"
+        f"🔧 **Qué hacés:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=enforce` en el env.\n"
+        f"2. Para el tier actual en la progresión, cambiar sus stubs a `on_review=\"block\"` "
+        f"(poll por decisión de revisor humano). Los demás tiers mantienen `on_review=\"shadow\"` "
+        f"hasta llegarles el turno.\n"
+        f"3. Esperar a que el tier actual mantenga FP rate < 5% antes de pasar al siguiente.\n\n"
+        f"📊 **Qué medís:**\n"
+        f"- `actually_blocked` por tier — estable durante 48h antes de pasar al siguiente.\n"
+        f"- `estimated_false_positive_rate` por tier — target < 5%.\n"
+        f"- `latency_ms.p95 / p99` — target p95 < 200ms, p99 < 500ms.\n\n"
+        f"✅ **Rollback si algo sale mal:**\n"
+        f"Si en cualquier tier el FP rate supera 5% → `SUPERVISOR_ENFORCEMENT_MODE=shadow` "
+        f"ese tier, ajustar la policy, y retomar desde Fase 1 o 2 para ese tier específico. "
+        f"Los demás tiers ya enforzados quedan como están.\n\n"
+        f"_{_CRITERIA_GATED_NOTE}_\n"
     )
 
 

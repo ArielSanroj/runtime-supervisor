@@ -10,6 +10,11 @@ Priorization (the whole value of this file):
   ⚠️  Confirm         — medium findings or high findings on install/setup paths
   🗑️  Discardable     — test fixtures, CI scripts, tutorial code
 
+Each priority item carries three labelled lines:
+  🔴 Problema: what can go wrong (vibe-coder-ese, no OWASP jargon)
+  📍 Archivos: file:line references
+  ✅ Solución: how to fix it + link to the combo playbook if applicable
+
 Also emits "Lo que NO me preocupa" so the reader sees what was checked and
 ruled out — without that, they don't know if 0-findings in a tier means
 "nothing there" or "scanner didn't look".
@@ -61,9 +66,10 @@ def _short_path(file: str) -> str:
 @dataclass(frozen=True)
 class PriorityItem:
     priority: Priority
-    label: str              # short human title
-    detail: str             # one-line explanation
-    evidence: list[str]     # file:line references
+    label: str              # short human title (the 🎯/🔒/⚠️/🗑️ headline)
+    problem: str            # 🔴 "por qué importa" — what can go wrong in plain dev English
+    solution: str           # ✅ concrete fix (may include a link to a combo playbook)
+    evidence: list[str]     # 📍 file:line references
     minutes_to_apply: int   # rough effort estimate
 
 
@@ -136,6 +142,76 @@ _SCANNER_LABEL: dict[str, str] = {
 }
 
 
+# ── Per-scanner "problema" copy ─────────────────────────────────────
+# Keep plain-dev English; no OWASP refs. The severity of the language
+# should match the severity of the risk (RCE gets "eso es RCE", a
+# write that might be a legit cache gets "depende del path destino").
+_PROBLEM_BY_SCANNER: dict[str, str] = {
+    "payment-calls": "el agente puede mover plata — sin supervisión un prompt injection puede disparar refunds/charges.",
+    "llm-calls": "el agente llama al LLM sin gating — prompt injection y loops infinitos quedan libres.",
+    "db-mutations": "el agente puede modificar tablas directamente — un `DELETE FROM users` sin `WHERE` borra todo.",
+    "cron-schedules": "hay jobs programados que pueden amplificar una inyección persistida a lo largo del tiempo.",
+    "voice-actions": "el agente puede llamar por teléfono o clonar voz — combo clásico de vishing.",
+    "messaging": "el agente puede postear en canales de mensajería — spray phishing desde tu bot.",
+    "email-sends": "el agente puede mandar emails desde tu dominio autenticado — phishing desde tu cuenta.",
+    "calendar-actions": "el agente puede crear/editar eventos en calendarios ajenos — ghost invites, phishing via evento.",
+    "media-gen": "el agente puede generar imagen/video sintético — pipeline de distribución de deepfakes si además postea.",
+}
+
+# Family-specific overrides for fs-shell (shell-exec is RCE-equivalent,
+# fs-delete is destructive, fs-write depends on path).
+_PROBLEM_FS_SHELL_BY_FAMILY: dict[str, str] = {
+    "shell-exec": "el agente puede ejecutar comandos en el host — si un arg viene del LLM, eso es RCE.",
+    "fs-delete": "el agente puede borrar archivos del host — logs, configs, datos de usuarios.",
+    "fs-write": "el agente puede escribir archivos — riesgo depende del path destino (config overwrite, payload planting).",
+}
+
+# Agent-orchestrators: by kind (class vs method vs tool-registration).
+_PROBLEM_BY_ORCHESTRATOR_KIND: dict[str, str] = {
+    "agent-class": "tu agente invoca tools vía este orquestador sin supervisión — cualquier prompt injection controla qué ejecuta.",
+    "agent-method": "este método es el chokepoint del agente — toda decisión pasa por acá, hoy sin gating.",
+    "tool-registration": "este tool queda expuesto al agente — si el LLM lo invoca con args inyectados, corre sin gating.",
+}
+
+
+# ── Per-scanner "solución" copy ─────────────────────────────────────
+
+# Each (scanner, bucket) → one-line solution. Link to combo playbook
+# when the combo detector would fire on this scanner.
+_SOLUTION_BY_SCANNER: dict[str, str] = {
+    "payment-calls": "wrap con `@supervised('payment')`. Policy: hard-cap en amount + velocity por customer.",
+    "llm-calls": "wrap con `@supervised('tool_use')`. Policy base gatea prompt length + tool name requerido.",
+    "db-mutations": "wrap con `@supervised('data_access')` o `account_change` según la tabla. Stubs en `stubs/`.",
+    "cron-schedules": "wrap el handler del cron con `@supervised('tool_use')`. Cada ejecución queda en audit trail.",
+    "voice-actions": "wrap con `@supervised('tool_use')`. Allowlist de números destino + voces autorizadas.",
+    "messaging": "wrap con `@supervised('tool_use')`. Policy: cap de destinatarios por llamada.",
+    "email-sends": "wrap con `@supervised('tool_use')`. Policy: `deny if len(to) > 50`, `review if > 5`.",
+    "calendar-actions": "wrap con `@supervised('tool_use')`. Policy: allowlist de dominios invitados.",
+    "media-gen": "wrap con `@supervised('tool_use')`. Review humano si el output va a un canal público.",
+}
+
+_SOLUTION_FS_SHELL_BY_FAMILY: dict[str, str] = {
+    "shell-exec": "wrap con `@supervised('tool_use')` + allowlist estricta de comandos en la policy.",
+    "fs-delete": "wrap con `@supervised('tool_use')`. Policy deny fuera de una allowlist de directorios.",
+    "fs-write": "wrap con `@supervised('tool_use')`. Allowlist de paths permitidos (ej. `/tmp`, data-dir específico).",
+}
+
+_SOLUTION_BY_ORCHESTRATOR_KIND: dict[str, str] = {
+    "agent-class": "`@supervised('tool_use')` sobre el método del orquestador cubre todos los tools — actuales y futuros.",
+    "agent-method": "`@supervised('tool_use')` acá — 1 wrap gatea cada decisión del agente sin tocar el resto del código.",
+    "tool-registration": "policy por-tool en `tool_use.base.v1`, o wrap el dispatcher completo.",
+}
+
+# When a scanner's findings would trigger a combo, point at the playbook.
+# The narrator doesn't re-detect combos — it just knows which scanners
+# typically fire which combo, and appends a pointer to the solution text.
+_COMBO_LINK_BY_SCANNER: dict[str, str] = {
+    "voice-actions": "combos/voice-clone-plus-outbound-call.md",
+    "fs-shell": "combos/llm-plus-shell-exec.md",  # when shell-exec family, only
+    "agent-orchestrators": "combos/agent-orchestrator.md",
+}
+
+
 def _minutes_for(scanner: str, count: int) -> int:
     """Rough effort estimate: how long it takes to wrap N call-sites of one
     kind. Values come from actual walkthroughs — wrapping smtplib takes
@@ -150,6 +226,42 @@ def _minutes_for(scanner: str, count: int) -> int:
     return max(5, per_site.get(scanner, 5) * count)
 
 
+def _scanner_problem(f: Finding, count: int) -> str:
+    """Pick the right 'problema' copy for a finding. Handles per-family
+    overrides (fs-shell) and per-kind overrides (agent-orchestrators)."""
+    scanner = f.scanner
+    if scanner == "fs-shell":
+        family = str(f.extra.get("family") or "")
+        return _PROBLEM_FS_SHELL_BY_FAMILY.get(family, _PROBLEM_BY_SCANNER.get(scanner, f"{count} call-sites detectados."))
+    if scanner == "agent-orchestrators":
+        kind = str(f.extra.get("kind") or "")
+        return _PROBLEM_BY_ORCHESTRATOR_KIND.get(kind, "chokepoint del agente detectado.")
+    return _PROBLEM_BY_SCANNER.get(scanner, f"{count} call-sites en {scanner}.")
+
+
+def _scanner_solution(f: Finding, with_combo_link: bool = True) -> str:
+    """Pick the right 'solución' copy and append a combo-playbook pointer
+    when applicable."""
+    scanner = f.scanner
+    if scanner == "fs-shell":
+        family = str(f.extra.get("family") or "")
+        sol = _SOLUTION_FS_SHELL_BY_FAMILY.get(family) or _SOLUTION_BY_SCANNER.get(scanner)
+        sol = sol or "wrap con `@supervised('tool_use')`."
+        if with_combo_link and family == "shell-exec":
+            sol += " → ver `combos/llm-plus-shell-exec.md`."
+        return sol
+    if scanner == "agent-orchestrators":
+        kind = str(f.extra.get("kind") or "")
+        sol = _SOLUTION_BY_ORCHESTRATOR_KIND.get(kind, "wrap el orquestador con `@supervised('tool_use')`.")
+        if with_combo_link:
+            sol += " → ver `combos/agent-orchestrator.md`."
+        return sol
+    sol = _SOLUTION_BY_SCANNER.get(scanner, "wrap con `@supervised('tool_use')`. Stub copy-paste en `stubs/`.")
+    if with_combo_link and scanner in _COMBO_LINK_BY_SCANNER and scanner != "fs-shell":
+        sol += f" → ver `{_COMBO_LINK_BY_SCANNER[scanner]}`."
+    return sol
+
+
 def _wrap_item(f: Finding) -> PriorityItem:
     kind = f.extra.get("kind", "")
     label = (
@@ -159,16 +271,11 @@ def _wrap_item(f: Finding) -> PriorityItem:
         or f.extra.get("framework")
         or "agent"
     )
-    if kind == "agent-class":
-        detail = f"wrap `{label}` → 1 decoration cubre todos los tools del agente (actuales y futuros)"
-    elif kind == "agent-method":
-        detail = f"método `{label}()` en path de orquestador → chokepoint, 1 wrap cubre todos los tools"
-    else:  # tool-registration
-        detail = f"tool registration `{label}` → policy por-tool sin tocar código del agente"
     return PriorityItem(
         priority="wrap",
         label=f"Wrap `{label}`",
-        detail=detail,
+        problem=_PROBLEM_BY_ORCHESTRATOR_KIND.get(kind, "chokepoint del agente detectado."),
+        solution=_scanner_solution(f),
         evidence=[f"{_short_path(f.file)}:{f.line}"],
         minutes_to_apply=10,
     )
@@ -185,20 +292,35 @@ def _group_item(
     if count > 3:
         evidence.append(f"+{count - 3} más")
 
+    primary = findings[0]
+
     if priority == "prod":
         label = f"Gate {count} {capability} call-site(s)"
-        detail = f"high-confidence, prod paths → `@supervised('{findings[0].suggested_action_type}')`"
+        problem = _scanner_problem(primary, count)
+        solution = _scanner_solution(primary)
     elif priority == "confirm":
         label = f"Confirma {count} {capability} call-site(s)"
-        detail = "install/setup path o medium confidence → ¿corren en prod o solo build-time?"
+        # For confirm items, the "problema" depends on WHY they're in confirm:
+        # install-path uncertainty vs medium-confidence signal.
+        if _classify_path(primary.file) == "install":
+            problem = "está en `setup.py` / scripts de install — ¿corre en prod o solo build-time?"
+            solution = (
+                f"si corre en prod → wrappear como los prod items. Si es build-only → ignorar. "
+                f"({_scanner_solution(primary, with_combo_link=False)})"
+            )
+        else:
+            problem = f"{_scanner_problem(primary, count)} Confianza media — revisá si el call-site aplica en tu flow."
+            solution = _scanner_solution(primary)
     else:  # discard
         label = f"{count} {capability} en tests"
-        detail = "test fixtures → ignorables salvo que apunten a tu DB de prod"
+        problem = "son tests, no corren en prod."
+        solution = "ignorables salvo que los tests apunten a tu base de datos de prod real."
 
     return PriorityItem(
         priority=priority,
         label=label,
-        detail=detail,
+        problem=problem,
+        solution=solution,
         evidence=evidence,
         minutes_to_apply=_minutes_for(scanner, count),
     )
@@ -235,7 +357,8 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
         items.append(PriorityItem(
             priority="wrap",
             label=f"Wrap `{method_name}()` en `{_short_path(file)}`",
-            detail="chokepoint del orquestador — 1 wrap cubre todos los tools que pase por aquí",
+            problem=_PROBLEM_BY_ORCHESTRATOR_KIND["agent-method"],
+            solution=_SOLUTION_BY_ORCHESTRATOR_KIND["agent-method"] + " → ver `combos/agent-orchestrator.md`.",
             evidence=evidence,
             minutes_to_apply=15,
         ))
@@ -245,10 +368,16 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
     if reg_wraps:
         unique_tools = sorted({f.extra.get("tool_name") for f in reg_wraps if f.extra.get("tool_name")})
         if len(unique_tools) > 3:
+            primary = reg_wraps[0]
             items.append(PriorityItem(
                 priority="wrap",
                 label=f"Policies por-tool ({len(unique_tools)} tools)",
-                detail=f"tools expuestos: {', '.join(str(t) for t in unique_tools[:5])}{'...' if len(unique_tools) > 5 else ''}",
+                problem=f"el agente expone {len(unique_tools)} tools distintas — cada una puede ejecutarse con args inyectados.",
+                solution=(
+                    f"wrap el dispatcher o escribí rules por-tool en `tool_use.base.v1`. "
+                    f"Tools expuestos: {', '.join(str(t) for t in unique_tools[:5])}"
+                    f"{'...' if len(unique_tools) > 5 else ''}."
+                ),
                 evidence=[f"{_short_path(f.file)}:{f.line}" for f in reg_wraps[:3]],
                 minutes_to_apply=max(15, 3 * len(unique_tools)),
             ))
@@ -274,7 +403,8 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
         items.append(PriorityItem(
             priority="discard",
             label=f"{len(discard_findings)} findings en tests/fixtures",
-            detail=f"scanners: {', '.join(scanners_seen)} — paths de test, no corren en prod",
+            problem=f"son paths de test ({', '.join(scanners_seen)}) — no corren en prod.",
+            solution="ignorables salvo que los tests apunten a tu base de datos de prod real.",
             evidence=evidence,
             minutes_to_apply=0,
         ))
@@ -339,14 +469,21 @@ def _emoji(p: Priority) -> str:
 
 
 def _render_item(item: PriorityItem) -> str:
+    """Render one PriorityItem as a 4-line block:
+      🎯/🔒/⚠️/🗑️  **title**  (~N min)
+          🔴 Problema: ...
+          📍 Archivos: ...
+          ✅ Solución: ...
+    """
     ev = " · ".join(f"`{e}`" for e in item.evidence) if item.evidence else ""
     mins = f"  _(~{item.minutes_to_apply} min)_" if item.minutes_to_apply > 0 else ""
     lines = [
         f"{_emoji(item.priority)}  **{item.label}**{mins}",
-        f"    {item.detail}",
+        f"    🔴 **Problema:** {item.problem}",
     ]
     if ev:
-        lines.append(f"    {ev}")
+        lines.append(f"    📍 **Archivos:** {ev}")
+    lines.append(f"    ✅ **Solución:** {item.solution}")
     return "\n".join(lines)
 
 

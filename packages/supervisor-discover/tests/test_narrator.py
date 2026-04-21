@@ -118,6 +118,56 @@ def test_render_summary_emits_priority_emojis():
     assert "🗑️" in md  # discard (test)
 
 
+def test_render_summary_every_item_has_tri_part_labels():
+    """Each priority item must emit 🔴 Problema / 📍 Archivos / ✅ Solución."""
+    findings = [
+        _f("/repo/handler.py", scanner="email-sends", confidence="high"),
+    ]
+    summary = build_summary(findings)
+    md = render_summary(summary, findings)
+    assert "🔴 **Problema:**" in md
+    assert "📍 **Archivos:**" in md
+    assert "✅ **Solución:**" in md
+
+
+def test_render_summary_problem_copy_is_scanner_specific():
+    """email-sends ítem menciona phishing; fs-shell shell-exec menciona RCE."""
+    email_finding = _f("/repo/mail.py", scanner="email-sends", confidence="high")
+    shell_finding = _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec")
+
+    summary = build_summary([email_finding])
+    md_email = render_summary(summary, [email_finding])
+    assert "phishing" in md_email.lower()
+
+    summary2 = build_summary([shell_finding])
+    md_shell = render_summary(summary2, [shell_finding])
+    assert "rce" in md_shell.lower()
+
+
+def test_render_summary_solution_links_to_combo_playbook_when_applicable():
+    """shell-exec finding debe mencionar el combo playbook."""
+    shell_finding = _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec")
+    summary = build_summary([shell_finding])
+    md = render_summary(summary, [shell_finding])
+    assert "combos/llm-plus-shell-exec.md" in md
+
+
+def test_render_summary_no_owasp_in_visible_headlines():
+    """OWASP refs belong in footnotes (report.md), NOT in SUMMARY.md priority
+    items. The SUMMARY should be 100% plain-dev English."""
+    findings = [
+        _f("/repo/handler.py", scanner="email-sends", confidence="high"),
+        _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec"),
+    ]
+    summary = build_summary(findings)
+    md = render_summary(summary, findings)
+    # Inspect the priority-items block only (stop at the "Lo que NO me preocupa" or "##"):
+    priority_block = md.split("## Lo que NO me preocupa")[0]
+    assert "OWASP" not in priority_block
+    assert "LLM01" not in priority_block
+    assert "action_type" not in priority_block
+
+
 def test_render_summary_empty_repo_says_nothing_to_do():
     summary = build_summary([])
     md = render_summary(summary, [])

@@ -39,7 +39,11 @@ export default function ResolveForm({
       }
       const res = await fetch(`${API}${path}`, {
         method: "POST",
-        headers: { "content-type": "application/json", "X-Approver": approver },
+        headers: {
+          "content-type": "application/json",
+          "X-Approver": approver,
+          "ngrok-skip-browser-warning": "true",
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);

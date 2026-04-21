@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     admin_bootstrap_token: str = Field(default="", alias="ADMIN_BOOTSTRAP_TOKEN")
     webhook_secret: str = Field(default="dev-webhook-secret-change-me", alias="WEBHOOK_SECRET")
     max_payload_bytes: int = Field(default=65536, alias="MAX_PAYLOAD_BYTES")
+    # Comma-separated list. Defaults cover both the old :3000 layout and the CLI's :3099.
+    cors_origins_raw: str = Field(
+        default="http://localhost:3000,http://localhost:3099",
+        alias="CORS_ORIGINS",
+    )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins_raw.split(",") if o.strip()]
 
     @property
     def resolved_policy_path(self) -> Path:

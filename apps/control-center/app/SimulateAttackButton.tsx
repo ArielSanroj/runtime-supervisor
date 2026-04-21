@@ -42,7 +42,10 @@ export default function SimulateAttackButton({ threatId, title }: { threatId: st
     setErr(null);
     setResult(null);
     try {
-      const r = await fetch(`${API}/v1/simulate/attack?type=${encodeURIComponent(threatId)}`, { method: "POST" });
+      const r = await fetch(`${API}/v1/simulate/attack?type=${encodeURIComponent(threatId)}`, {
+        method: "POST",
+        headers: { "ngrok-skip-browser-warning": "true" },
+      });
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       setResult((await r.json()) as SimResult);
       setOpen(true);

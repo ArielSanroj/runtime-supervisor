@@ -200,6 +200,90 @@ def test_generated_output_has_no_rioplatense_voseo(tmp_path):
                 )
 
 
+def test_rollout_exit_criteria_include_repo_context(tmp_path):
+    """El 'por qué' de cada criterio de salida debe mencionar el count real
+    de findings del tier (no el umbral genérico hardcodeado)."""
+    # Fixture con 5 findings de real_world_actions
+    findings_small = validate([
+        Finding(
+            scanner="email-sends", file=f"/repo/mail_{i}.py", line=i * 10,
+            snippet="smtplib.SMTP(", suggested_action_type="tool_use",
+            confidence="high", rationale="test",
+            extra={"family": "smtplib", "provider": "smtplib"},
+        )
+        for i in range(1, 6)
+    ])
+    out = tmp_path / "small"
+    generate(findings_small, out)
+    rollout_small = (out / "ROLLOUT.md").read_text()
+
+    # Debe mencionar "5 call-sites" en algún "Por qué"
+    assert "5 call-sites" in rollout_small, (
+        "el rationale de repo pequeño debe citar su count real (5), no 20 genérico"
+    )
+
+    # Fixture con 50 findings
+    findings_big = validate([
+        Finding(
+            scanner="email-sends", file=f"/repo/mail_{i}.py", line=i,
+            snippet="smtplib.SMTP(", suggested_action_type="tool_use",
+            confidence="high", rationale="test",
+            extra={"family": "smtplib", "provider": "smtplib"},
+        )
+        for i in range(1, 51)
+    ])
+    out2 = tmp_path / "big"
+    generate(findings_big, out2)
+    rollout_big = (out2 / "ROLLOUT.md").read_text()
+
+    assert "50 call-sites" in rollout_big, (
+        "repo grande debe citar su count real (50)"
+    )
+
+
+def test_rollout_por_que_is_not_identical_between_repos(tmp_path):
+    """Dos fixtures distintas → los _Por qué:_ generados no son idénticos
+    byte-a-byte. Si lo fueran, el rationale seguiría hardcoded."""
+    findings_a = validate([
+        Finding(
+            scanner="email-sends", file="/repo_a/mailer.py", line=42,
+            snippet="smtplib.SMTP(", suggested_action_type="tool_use",
+            confidence="high", rationale="test",
+            extra={"family": "smtplib", "provider": "smtplib"},
+        ),
+    ])
+    findings_b = validate([
+        Finding(
+            scanner="voice-actions", file="/repo_b/phone.ts", line=99,
+            snippet="twilio.calls.create", suggested_action_type="tool_use",
+            confidence="high", rationale="test",
+            extra={"provider": "twilio"},
+        ),
+    ])
+    out_a = tmp_path / "a"
+    out_b = tmp_path / "b"
+    generate(findings_a, out_a)
+    generate(findings_b, out_b)
+
+    por_que_a = [l for l in (out_a / "ROLLOUT.md").read_text().splitlines() if "_Por qué:" in l]
+    por_que_b = [l for l in (out_b / "ROLLOUT.md").read_text().splitlines() if "_Por qué:" in l]
+
+    # Ambas superficies son reales — deben tener "Por qué" lines.
+    assert por_que_a and por_que_b
+
+    # El set de rationales debe diferir (si todos son iguales, copy hardcoded).
+    assert set(por_que_a) != set(por_que_b), (
+        "dos repos con findings distintos generaron idénticos '_Por qué:_' — "
+        "el rationale sigue hardcoded"
+    )
+
+    # Spot-check: el rationale de A menciona smtplib o mailer; el de B menciona twilio o phone.
+    body_a = "\n".join(por_que_a).lower()
+    body_b = "\n".join(por_que_b).lower()
+    assert "mailer" in body_a or "smtplib" in body_a
+    assert "phone" in body_b or "twilio" in body_b
+
+
 def test_rollout_md_surface_block_only_lists_active_tiers(tmp_path):
     # Construct findings that touch only customer_data (no money, no LLM).
     findings = validate([

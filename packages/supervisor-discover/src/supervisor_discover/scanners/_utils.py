@@ -4,6 +4,20 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+
+def safe_read(path: Path) -> str | None:
+    """Read text, returning None on any filesystem or decode error.
+
+    macOS TCC blocks reads under ~/Downloads/Documents/Desktop unless the
+    terminal has Full Disk Access, and raises PermissionError. Broken
+    symlinks and unreadable special files raise OSError. The scanner must
+    skip a single unreadable file, not crash the whole scan.
+    """
+    try:
+        return path.read_text(errors="ignore")
+    except (OSError, UnicodeDecodeError):
+        return None
+
 _PY_GLOB = "**/*.py"
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
 

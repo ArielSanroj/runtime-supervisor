@@ -4,7 +4,11 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# `datetime.UTC` is Python 3.11+. Alias for 3.10 compatibility so the
+# client can run from user repos on older Pythons (Clio is on 3.10).
+UTC = timezone.utc
 from typing import Any
 
 

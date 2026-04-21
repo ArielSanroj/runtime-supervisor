@@ -26,6 +26,10 @@ class Action(Base):
     action_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="received")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # When True, the call was evaluated but the decision was NOT enforced on
+    # the caller (no deny, no review-block). The real decision is still on
+    # the joined Decision row for metrics/replay.
+    shadow: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     decision: Mapped[Decision | None] = relationship(back_populates="action", uselist=False)
@@ -43,6 +47,9 @@ class Decision(Base):
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     risk_breakdown: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # End-to-end evaluate latency (threat pipeline + policy + risk). Null on
+    # rows created before this column existed; populated going forward.
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     action: Mapped[Action] = relationship(back_populates="decision")
@@ -54,6 +61,11 @@ class ReviewItem(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     action_id: Mapped[str] = mapped_column(ForeignKey("actions.id"), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # Priority buckets for routing: `low` = self-serve ops, `normal` = default,
+    # `high` = paged compliance. Escalation bumps priority.
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+    # Role queue target. Null = anyone with review scope can pick up.
+    assigned_to: Mapped[str | None] = mapped_column(String(64), nullable=True)
     approver: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approver_notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

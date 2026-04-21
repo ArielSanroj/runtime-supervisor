@@ -141,3 +141,116 @@ def metrics_summary(
         "active_policies_by_type": active_policies_by_type,
         "volume_by_action_type": volume_by_type,
     }
+
+
+def _percentile(values: list[int], p: float) -> int | None:
+    """Nearest-rank percentile on a pre-sorted list; None when empty."""
+    if not values:
+        return None
+    values_sorted = sorted(values)
+    k = max(0, min(len(values_sorted) - 1, int(round((p / 100.0) * (len(values_sorted) - 1)))))
+    return values_sorted[k]
+
+
+@router.get("/metrics/enforcement")
+def metrics_enforcement(
+    window: str = Query(default="7d", pattern="^(24h|7d|30d)$"),
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> dict[str, Any]:
+    """Shadow-vs-enforce diff for the rollout playbook.
+
+    Numbers an operator needs to decide when to flip `enforcement_mode` from
+    shadow to enforce:
+
+    - `would_block_in_shadow`: deny/review decisions that shadow calls made
+      but were NOT surfaced to the caller. Non-zero here means enforce mode
+      would start blocking that many calls.
+    - `actually_blocked`: deny decisions on enforced calls.
+    - `blocks_later_approved_by_reviewer`: of the enforced review cases,
+      how many a human later approved. Proxy for false-positive rate on
+      escalations.
+    - `latency_ms`: p50/p95/p99 of the evaluate call itself. Upper bound on
+      friction added per guarded call (real overhead includes network RTT
+      to the supervisor, not just server time).
+    """
+    since = _since(window)
+
+    totals = db.execute(
+        select(Action.shadow, func.count())
+        .where(Action.created_at >= since)
+        .group_by(Action.shadow)
+    ).all()
+    shadow_evaluations = 0
+    enforced_evaluations = 0
+    for is_shadow, n in totals:
+        if is_shadow:
+            shadow_evaluations = n
+        else:
+            enforced_evaluations = n
+
+    # Shadow decisions that would have blocked (deny or review).
+    would_block_in_shadow = db.execute(
+        select(func.count())
+        .select_from(Decision)
+        .join(Action, Action.id == Decision.action_id)
+        .where(Action.created_at >= since)
+        .where(Action.shadow.is_(True))
+        .where(Decision.decision.in_(("deny", "review")))
+    ).scalar_one()
+
+    actually_blocked = db.execute(
+        select(func.count())
+        .select_from(Decision)
+        .join(Action, Action.id == Decision.action_id)
+        .where(Action.created_at >= since)
+        .where(Action.shadow.is_(False))
+        .where(Decision.decision == "deny")
+    ).scalar_one()
+
+    # Review outcomes only exist on enforced calls (shadow never creates a
+    # ReviewItem). Approvals of escalated calls are the closest proxy for
+    # "we escalated, but turns out it was fine" — i.e. false positive.
+    review_outcomes = db.execute(
+        select(ReviewItem.status, func.count())
+        .join(Action, Action.id == ReviewItem.action_id)
+        .where(Action.created_at >= since)
+        .group_by(ReviewItem.status)
+    ).all()
+    review_counts = {"pending": 0, "approved": 0, "rejected": 0}
+    for s, n in review_outcomes:
+        review_counts[s] = n
+    resolved = review_counts["approved"] + review_counts["rejected"]
+    estimated_fp_rate = (review_counts["approved"] / resolved) if resolved else None
+
+    # Latency — pull the last N rows' latency_ms column, compute percentiles.
+    # O(N) is fine for N=10k; promote to a histogram when we outgrow this.
+    latencies = db.execute(
+        select(Decision.latency_ms)
+        .join(Action, Action.id == Decision.action_id)
+        .where(Action.created_at >= since)
+        .where(Decision.latency_ms.is_not(None))
+        .order_by(Decision.created_at.desc())
+        .limit(10000)
+    ).scalars().all()
+    latencies_list = [int(x) for x in latencies if x is not None]
+
+    total_evaluations = shadow_evaluations + enforced_evaluations
+    return {
+        "window": window,
+        "since": since.isoformat(),
+        "total_evaluations": total_evaluations,
+        "shadow_evaluations": shadow_evaluations,
+        "enforced_evaluations": enforced_evaluations,
+        "would_block_in_shadow": would_block_in_shadow,
+        "actually_blocked": actually_blocked,
+        "reviews": review_counts,
+        "blocks_later_approved_by_reviewer": review_counts["approved"],
+        "estimated_false_positive_rate": estimated_fp_rate,
+        "latency_ms": {
+            "p50": _percentile(latencies_list, 50),
+            "p95": _percentile(latencies_list, 95),
+            "p99": _percentile(latencies_list, 99),
+            "samples": len(latencies_list),
+        },
+    }

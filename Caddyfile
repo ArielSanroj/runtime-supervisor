@@ -1,0 +1,17 @@
+# Caddy routes HTTPS traffic to the supervisor API and the UI.
+# Automatic cert management via Let's Encrypt — make sure the A records
+# of $API_DOMAIN and $APP_DOMAIN point to this server before `docker compose up`.
+
+{$API_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy supervisor:8000
+    # Keep request size generous — evidence exports can be large.
+    request_body {
+        max_size 10MB
+    }
+}
+
+{$APP_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy control-center:3000
+}

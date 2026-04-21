@@ -1,0 +1,19 @@
+name: compliance.base
+version: 1
+description: >
+  Placeholder policy for custom compliance workflows (GDPR data-delete,
+  SOC2 approval gates, AML alert closures). Sin reglas hardcodeadas — el
+  operador define qué requiere aprobación en su jurisdicción.
+  Por default TODO va a review humano hasta que se promueva una política
+  con reglas reales.
+rules:
+  - id: default-review
+    when: "True"
+    action: review
+    reason: compliance-default-review-everything
+    explanation: >
+      Política placeholder. Sin reglas específicas, toda acción de
+      compliance va a humano. Cuando la organización defina su matriz
+      de aprobación (qué monto, qué tipo de alerta, qué jurisdicción
+      requiere quién), reemplazar esta regla con las reales vía
+      POST /v1/policies con promote=true.

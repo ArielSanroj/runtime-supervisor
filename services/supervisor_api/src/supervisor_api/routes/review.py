@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import auth, evidence, execution, webhooks
 from ..db import get_db
 from ..models import Action, ReviewItem
-from ..schemas import ReviewItemOut, ReviewResolveRequest
+from ..schemas import ReviewEscalateRequest, ReviewItemOut, ReviewResolveRequest
 
 router = APIRouter(prefix="/v1", tags=["review"])
 
@@ -29,6 +29,8 @@ def _to_out(item: ReviewItem, action: Action) -> ReviewItemOut:
         resolved_at=item.resolved_at,
         approver=item.approver,
         approver_notes=item.approver_notes,
+        priority=item.priority,  # type: ignore[arg-type]
+        assigned_to=item.assigned_to,
     )
 
 
@@ -120,4 +122,38 @@ def resolve_review(
             triggered_by="review", integration_id=_.integration_id,
         )
 
+    return _to_out(item, action)
+
+
+@router.post("/review-cases/{review_id}/escalate", response_model=ReviewItemOut)
+def escalate_review(
+    review_id: str,
+    body: ReviewEscalateRequest,
+    x_approver: str = Header(default="anonymous", alias="X-Approver"),
+    db: Session = Depends(get_db),
+    principal: auth.Principal = Depends(auth.require_any_scope),
+) -> ReviewItemOut:
+    """Bump priority and route to the compliance queue. Idempotent — a
+    second escalation on an already-high case just updates assigned_to and
+    logs another evidence event."""
+    item = db.get(ReviewItem, review_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="review not found")
+    if item.status != "pending":
+        raise HTTPException(status_code=409, detail=f"cannot escalate: review already {item.status}")
+    action = db.get(Action, item.action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail="action not found")
+
+    prev_priority = item.priority
+    item.priority = "high"
+    item.assigned_to = "compliance"
+    evidence.append(db, action_id=action.id, event_type="review.escalated", payload={
+        "from_priority": prev_priority,
+        "to_priority": "high",
+        "assigned_to": "compliance",
+        "by": x_approver,
+        "notes": body.notes,
+    })
+    db.commit()
     return _to_out(item, action)

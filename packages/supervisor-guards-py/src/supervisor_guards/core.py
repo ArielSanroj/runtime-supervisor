@@ -12,21 +12,49 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from .config import (
     OnReview,
+    get_app_id,
     get_client,
     get_default_on_review,
+    get_enforcement_mode,
     get_review_poll_interval,
     get_review_timeout,
+    get_sample_percent,
 )
+from .context import current_context
 from .errors import SupervisorBlocked, SupervisorReviewPending
 from .polling import wait_for_review_resolution
 
 log = logging.getLogger(__name__)
+
+
+def _should_shadow(action_type: str) -> bool:
+    """Return True if this call should run in shadow mode. Based on the
+    global enforcement_mode + sample_percent. Deterministic per-call via a
+    random token so the sample decision is stable across retries and can
+    be logged for debugging."""
+    mode = get_enforcement_mode()
+    if mode == "shadow":
+        return True
+    if mode == "enforce":
+        return False
+    # mode == "sample": enforce on sample_percent % of calls, shadow on the rest.
+    pct = get_sample_percent()
+    if pct <= 0:
+        return True
+    if pct >= 100:
+        return False
+    token = f"{get_app_id()}:{action_type}:{uuid.uuid4()}"
+    bucket = int(hashlib.sha256(token.encode()).hexdigest(), 16) % 100
+    # bucket < pct → enforce (not shadow)
+    return bucket >= pct
 
 F = TypeVar("F", bound=Callable[..., Any])
 AF = TypeVar("AF", bound=Callable[..., Awaitable[Any]])
@@ -43,10 +71,31 @@ def _pre_check(
 ) -> str | None:
     """Runs the sync pre-call. Returns the action_id to attach to the result
     (None when dry-flow isn't needed). Raises on deny or review timeout.
+
+    Enforcement:
+      - `on_review="shadow"` (per-wrapper) → always shadow; evaluate + return,
+        never raise.
+      - Else consult global `enforcement_mode`:
+          * "shadow" → every call is shadow.
+          * "sample" → `sample_percent`% of calls enforce; the rest are shadow.
+          * "enforce" → regular block/review semantics.
     """
     client = get_client()
     mode: OnReview = on_review or get_default_on_review()
-    dec = client.evaluate(action_type, payload)
+    shadow = True if mode == "shadow" else _should_shadow(action_type)
+    agent_context = current_context()
+
+    dec = client.evaluate(action_type, payload, shadow=shadow, agent_context=agent_context)
+
+    if shadow:
+        # Server returns allow in shadow mode regardless of real decision.
+        # Log the would-have so ops can trace spurious blocks before flipping
+        # enforcement on.
+        would = getattr(dec, "shadow_would_have", None)
+        if would and would != "allow":
+            log.info("supervisor shadow would have %s for %s (action_id=%s)",
+                     would, action_type, dec.action_id)
+        return dec.action_id
 
     if dec.allowed:
         return dec.action_id

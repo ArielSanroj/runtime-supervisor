@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { api, type ReviewCase } from "@/lib/api";
+import { AutoRefresh } from "./AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,9 @@ export default async function ReviewQueue({
 
   return (
     <div>
+      {/* Only poll the pending list — approved/rejected don't change often
+          and operators browsing history don't need auto-refresh. */}
+      <AutoRefresh intervalMs={5000} enabled={status === "pending"} />
       <h1>Review queue</h1>
       <div className="row" style={{ marginBottom: 16 }}>
         {(["pending", "approved", "rejected"] as const).map((s) => (

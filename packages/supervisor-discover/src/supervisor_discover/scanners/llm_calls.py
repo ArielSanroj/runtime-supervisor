@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..findings import Finding
 from ._imports import build_alias_map, resolve_call_name, root_module
-from ._utils import python_files, ts_js_files
+from ._utils import python_files, safe_read, ts_js_files
 
 # Canonical module names the scanner recognizes as LLM SDKs.
 _LLM_ROOTS = {"openai", "anthropic", "langchain", "langchain_core", "langchain_community",
@@ -54,9 +54,12 @@ _VENDOR_SPECIFIC_METHODS = (
 def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
         try:
-            tree = ast.parse(path.read_text(errors="ignore"))
-        except (SyntaxError, ValueError, UnicodeDecodeError):
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
             continue
         aliases = build_alias_map(tree)
         # Fast exit: if the file imports none of the LLM SDKs, skip it.
@@ -105,7 +108,9 @@ _TS_CALL_RE = re.compile(r"""\b(?:chat\.completions\.create|messages\.(?:create|
 def _scan_ts_js(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in ts_js_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         if not _TS_IMPORT_RE.search(text):
             continue
         for m in _TS_CALL_RE.finditer(text):

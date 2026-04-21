@@ -10,7 +10,7 @@ describe("Client.evaluate", () => {
     const fetchSpy = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe("http://test/v1/actions/evaluate");
       expect((init?.headers as Record<string, string>)["authorization"]).toMatch(/^Bearer ey/);
-      expect(JSON.parse(init?.body as string)).toEqual({ action_type: "refund", payload: { amount: 50 } });
+      expect(JSON.parse(init?.body as string)).toEqual({ action_type: "refund", payload: { amount: 50 }, shadow: false });
       return jsonResponse(200, {
         action_id: "a-1",
         decision: "allow",
@@ -39,6 +39,24 @@ describe("Client.evaluate", () => {
     });
     const c = new Client({ baseUrl: "http://test", appId: "a", sharedSecret: "s", fetchImpl: fetchSpy as unknown as typeof fetch });
     await c.evaluate("refund", {}, { dryRun: true });
+  });
+
+  it("sends shadow flag + reads shadow_would_have off the response", async () => {
+    const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(init?.body as string).shadow).toBe(true);
+      return jsonResponse(200, {
+        action_id: "a-shadow",
+        decision: "allow",
+        reasons: [],
+        risk_score: 0,
+        policy_version: "v1",
+        shadow_would_have: "deny",
+      });
+    });
+    const c = new Client({ baseUrl: "http://test", appId: "a", sharedSecret: "s", fetchImpl: fetchSpy as unknown as typeof fetch });
+    const d = await c.evaluate("refund", { amount: 999 }, { shadow: true });
+    expect(d.decision).toBe("allow");
+    expect(d.shadow_would_have).toBe("deny");
   });
 
   it("throws SupervisorError on 4xx with detail", async () => {

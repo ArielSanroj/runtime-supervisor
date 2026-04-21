@@ -1,0 +1,46 @@
+[project]
+name = "agentic-controls"
+version = "0.1.0"
+description = "Observe, evaluate and intervene AI-agent actions in real time. One command, runs locally."
+requires-python = ">=3.10"
+dependencies = [
+    # The supervisor backend runs in-process when `ac start` spawns it.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0.35",
+    "alembic>=1.13",
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "asteval>=1.0",
+    "httpx>=0.27",
+    "python-json-logger>=2.0",
+    "psycopg[binary]>=3.2",
+    # Scanner + guards are consolidated in this package directly.
+    "supervisor-guards",
+    "supervisor-client",
+    "supervisor-discover",
+    "supervisor-api",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ac = "agentic_controls.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_controls"]
+
+[tool.uv.sources]
+supervisor-guards = { workspace = true }
+supervisor-client = { workspace = true }
+supervisor-discover = { workspace = true }
+supervisor-api = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

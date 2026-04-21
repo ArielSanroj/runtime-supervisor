@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import config_files, python_files, ts_js_files
+from ._utils import config_files, python_files, safe_read, ts_js_files
 
 _PY_CELERY_BEAT = re.compile(r"beat_schedule\s*=|@periodic_task|@shared_task")
 _PY_APSCHEDULER = re.compile(r"BackgroundScheduler\(|add_job\s*\(")
@@ -19,7 +19,9 @@ _GHA_SCHEDULE = re.compile(r"^\s*-?\s*cron:\s*['\"]")
 def scan(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         for pattern, label in ((_PY_CELERY_BEAT, "celery-beat"), (_PY_APSCHEDULER, "apscheduler")):
             for m in pattern.finditer(text):
                 line = text[: m.start()].count("\n") + 1
@@ -35,7 +37,9 @@ def scan(root: Path) -> list[Finding]:
                     extra={"scheduler": label},
                 ))
     for path in ts_js_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         for m in _TS_NODE_CRON.finditer(text):
             line = text[: m.start()].count("\n") + 1
             findings.append(Finding(
@@ -49,7 +53,9 @@ def scan(root: Path) -> list[Finding]:
                 extra={"scheduler": "node-cron"},
             ))
     for path in config_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _CRONTAB_LINE.match(line) or _GHA_SCHEDULE.match(line):
                 findings.append(Finding(

@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, ts_js_files
+from ._utils import python_files, safe_read, ts_js_files
 
 _ACCOUNT_HINTS = re.compile(r"\b(users?|accounts?|customers?|profiles?|identities)\b", re.IGNORECASE)
 _PII_HINTS = re.compile(r"\b(emails?|phones?|ssn|addresses?|payments?|cards?)\b", re.IGNORECASE)
@@ -45,7 +45,9 @@ def _suggest(table_or_path: str) -> str:
 def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         # Raw SQL
         for m in _PY_RAW_SQL.finditer(text):
             line = text[: m.start()].count("\n") + 1
@@ -82,7 +84,9 @@ def _scan_python(root: Path) -> list[Finding]:
 def _scan_ts_js(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in ts_js_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         for m in _TS_PRISMA.finditer(text):
             line = text[: m.start()].count("\n") + 1
             model = m.group(1)

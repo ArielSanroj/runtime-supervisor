@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_tier
+from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .rollout import render_rollout_md
 from .summary import build_summary, render_markdown as render_summary_md
@@ -52,10 +53,14 @@ def generate(findings: list[Finding], out_dir: Path) -> None:
     }
     (out_dir / "findings.json").write_text(json.dumps(payload, indent=2) + "\n")
 
-    # report.md — repo summary first, then tier-by-risk.
+    # report.md — summary first, then critical combos (if any), then guardrails, then tier-by-risk.
     by_type = Counter(f.suggested_action_type for f in findings)
     tier_summary_table, headline_note = _tier_summary(findings)
+    combos = detect_combos(findings)
     report = render_summary_md(summary)
+    if combos:
+        report += "\n---\n\n"
+        report += render_combos_md(combos)
     report += _render_applicable_guardrails(findings)
     report += "\n---\n\n"
     report += REPORT_HEADER.format(

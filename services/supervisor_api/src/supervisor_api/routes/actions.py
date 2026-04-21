@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import auth, evidence, execution, ratelimit, registry, webhooks
@@ -16,6 +18,7 @@ from ..schemas import (
     EvaluateRequest,
     EvidenceBundle,
     EvidenceExportResult,
+    RecentActionOut,
     ThreatSignalOut,
 )
 from ..threats import assess as assess_threats
@@ -84,7 +87,8 @@ def evaluate_action(
             threats=threats_out,
         )
 
-    action = Action(action_type=body.action_type, status="received", payload=body.payload)
+    eval_started_at = time.perf_counter()
+    action = Action(action_type=body.action_type, status="received", payload=body.payload, shadow=body.shadow)
     db.add(action)
     db.flush()
 
@@ -92,6 +96,12 @@ def evaluate_action(
         "action_type": body.action_type,
         "payload": body.payload,
     })
+
+    # Attach the agent's session context (identity, goal, tools, sources) when
+    # the caller supplies it. Separate event so the audit trail distinguishes
+    # the action itself from the metadata around it.
+    if body.agent_context:
+        evidence.append(db, action_id=action.id, event_type="agent.context", payload=body.agent_context)
 
     # Persist threat assessment rows + evidence event when signals were raised
     if threat_assessment.signals:
@@ -114,13 +124,9 @@ def evaluate_action(
 
     if threat_assessment.is_blocking:
         from .. import alerting
-        alerting.emit("threat.critical", {
-            "action_type": body.action_type,
-            "integration_id": principal.integration_id,
-            "signals": [{"detector_id": s.detector_id, "owasp_ref": s.owasp_ref} for s in threat_assessment.signals],
-        })
         # Short-circuit: deny before policy/risk runs.
         reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "critical"]
+        latency_ms = int((time.perf_counter() - eval_started_at) * 1000)
         db.add(Decision(
             action_id=action.id,
             decision="deny",
@@ -128,9 +134,27 @@ def evaluate_action(
             risk_score=0,
             risk_breakdown=[],
             policy_version="threat-pipeline",
+            latency_ms=latency_ms,
         ))
         evidence.append(db, action_id=action.id, event_type="decision.made", payload={
             "decision": "deny", "reasons": reasons, "policy_version": "threat-pipeline",
+            "shadow": body.shadow,
+        })
+        # In shadow mode we still record the would-have-denied for metrics
+        # but do NOT alert, webhook, or surface deny to the caller.
+        if body.shadow:
+            action.status = "shadow_deny"
+            db.commit()
+            return DecisionOut(
+                action_id=action.id, decision="allow", reasons=[],
+                risk_score=0, policy_version="threat-pipeline",
+                threat_level=threat_assessment.level, threats=threats_out,
+                shadow_would_have="deny",
+            )
+        alerting.emit("threat.critical", {
+            "action_type": body.action_type,
+            "integration_id": principal.integration_id,
+            "signals": [{"detector_id": s.detector_id, "owasp_ref": s.owasp_ref} for s in threat_assessment.signals],
         })
         action.status = "denied"
         db.commit()
@@ -171,13 +195,18 @@ def evaluate_action(
             policy_version=dec.policy_version,
         )
 
+    latency_ms = int((time.perf_counter() - eval_started_at) * 1000)
     db.add(Decision(
         action_id=action.id,
         decision=dec.decision,
-        policy_hits=[{"rule_id": h.rule_id, "action": h.action, "reason": h.reason} for h in dec.hits],
+        policy_hits=[
+            {"rule_id": h.rule_id, "action": h.action, "reason": h.reason, "explanation": h.explanation}
+            for h in dec.hits
+        ],
         risk_score=dec.risk_score,
         risk_breakdown=dec.risk_breakdown,
         policy_version=dec.policy_version,
+        latency_ms=latency_ms,
     ))
 
     evidence.append(db, action_id=action.id, event_type="decision.made", payload={
@@ -185,7 +214,37 @@ def evaluate_action(
         "reasons": dec.reasons,
         "risk_score": dec.risk_score,
         "policy_version": dec.policy_version,
+        "shadow": body.shadow,
     })
+
+    # Shadow mode: record everything for metrics, but don't create a review
+    # case, don't execute downstream, don't webhook deny events, and always
+    # return "allow" with shadow_would_have populated.
+    if body.shadow:
+        action.status = f"shadow_{dec.decision}"
+        db.commit()
+        if threat_assessment.signals:
+            background_tasks.add_task(
+                webhooks.dispatch, "threat.detected",
+                {
+                    "action_id": action.id, "level": threat_assessment.level,
+                    "signals": [
+                        {"detector_id": s.detector_id, "owasp_ref": s.owasp_ref, "level": s.level, "message": s.message}
+                        for s in threat_assessment.signals
+                    ],
+                    "shadow": True,
+                },
+            )
+        return DecisionOut(
+            action_id=action.id,
+            decision="allow",
+            reasons=[],
+            risk_score=dec.risk_score,
+            policy_version=dec.policy_version,
+            threat_level=threat_assessment.level,
+            threats=threats_out,
+            shadow_would_have=dec.decision,  # type: ignore[arg-type]
+        )
 
     if dec.decision == "allow":
         action.status = "allowed"
@@ -307,6 +366,49 @@ def get_evidence(
     final = evidence.bundle(db, action_id)
     final["exported_at"] = datetime.now(UTC)
     return EvidenceBundle(**final)
+
+
+@router.get("/actions/recent", response_model=list[RecentActionOut])
+def list_recent_actions(
+    decision: str | None = Query(default=None, pattern="^(allow|deny|review)$"),
+    limit: int = Query(default=20, ge=1, le=50),
+    include_shadow: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: auth.Principal = Depends(auth.require_any_scope),
+) -> list[RecentActionOut]:
+    """Most recent actions with their decisions. Feeds the dashboard's
+    'Recent blocks' card. `decision=deny` gives blocks only; omit to get
+    all. By default excludes shadow-mode calls so operators see real
+    enforcement events."""
+    q = (
+        select(Decision, Action)
+        .join(Action, Action.id == Decision.action_id)
+    )
+    if decision:
+        q = q.where(Decision.decision == decision)
+    if not include_shadow:
+        q = q.where(Action.shadow.is_(False))
+    q = q.order_by(Action.created_at.desc()).limit(limit)
+
+    rows = db.execute(q).all()
+    out: list[RecentActionOut] = []
+    for dec, action in rows:
+        reasons = [h.get("reason") for h in (dec.policy_hits or [])] or ([
+            "passes-policy-and-risk" if dec.decision == "allow"
+            else (f"risk-score-{dec.risk_score}" if dec.decision == "review" else "denied")
+        ])
+        out.append(RecentActionOut(
+            action_id=action.id,
+            action_type=action.action_type,
+            decision=dec.decision,  # type: ignore[arg-type]
+            reasons=[r for r in reasons if r],
+            risk_score=dec.risk_score,
+            policy_version=dec.policy_version,
+            created_at=action.created_at,
+            latency_ms=dec.latency_ms,
+            shadow=action.shadow,
+        ))
+    return out
 
 
 @router.post("/decisions/{action_id}/evidence/export", response_model=EvidenceExportResult)

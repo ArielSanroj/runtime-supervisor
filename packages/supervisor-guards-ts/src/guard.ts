@@ -1,5 +1,28 @@
-import { getClient, getDefaultOnReview, getPollIntervalMs, getTimeoutMs, type OnReview } from "./config.js";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  getAppId,
+  getClient,
+  getDefaultOnReview,
+  getEnforcementMode,
+  getPollIntervalMs,
+  getSamplePercent,
+  getTimeoutMs,
+  type OnReview,
+} from "./config.js";
 import { SupervisorBlocked, SupervisorReviewPending } from "./errors.js";
+
+function shouldShadow(actionType: string): boolean {
+  const mode = getEnforcementMode();
+  if (mode === "shadow") return true;
+  if (mode === "enforce") return false;
+  const pct = getSamplePercent();
+  if (pct <= 0) return true;
+  if (pct >= 100) return false;
+  const token = `${getAppId()}:${actionType}:${randomUUID()}`;
+  const hex = createHash("sha256").update(token).digest("hex");
+  const bucket = Number(BigInt("0x" + hex) % 100n);
+  return bucket >= pct;
+}
 
 async function pollReview(actionId: string): Promise<"allow" | "deny"> {
   const client = getClient();
@@ -26,8 +49,21 @@ async function preCheck(
   onReview: OnReview | undefined,
 ): Promise<string | undefined> {
   const mode: OnReview = onReview ?? getDefaultOnReview();
+  const shadow = mode === "shadow" ? true : shouldShadow(actionType);
   const client = getClient();
-  const dec = await client.evaluate(actionType, payload);
+  const dec = await client.evaluate(actionType, payload, { shadow });
+
+  if (shadow) {
+    // Server always returns allow in shadow mode; log the would-have so
+    // ops can trace blocks before flipping enforcement on.
+    if (dec.shadow_would_have && dec.shadow_would_have !== "allow") {
+      // eslint-disable-next-line no-console
+      console.info(
+        `[supervisor-guards] shadow would have ${dec.shadow_would_have} for ${actionType} (action_id=${dec.action_id})`,
+      );
+    }
+    return dec.action_id;
+  }
 
   if (dec.decision === "allow") return dec.action_id;
   if (dec.decision === "deny") {

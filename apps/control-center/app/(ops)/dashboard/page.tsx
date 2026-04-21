@@ -1,7 +1,31 @@
 import Link from "next/link";
 import { getMetrics, type MetricsSummary } from "@/lib/metrics";
+import { api, type RecentAction, type ReviewCase } from "@/lib/api";
+import { threatsApi, type ThreatAssessmentRow } from "@/lib/threats";
+import { AutoRefresh } from "../review/AutoRefresh";
 
 export const dynamic = "force-dynamic";
+
+function age(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+function payloadOneLiner(c: ReviewCase): string {
+  const amt = c.action_payload["amount"];
+  const cur = c.action_payload["currency"] ?? "USD";
+  const cust = c.action_payload["customer_id"];
+  const reason = c.action_payload["reason"];
+  const bits: string[] = [c.action_type];
+  if (typeof amt === "number") bits.push(`${amt.toLocaleString()} ${cur}`);
+  if (cust) bits.push(`to ${cust}`);
+  if (reason) bits.push(`· ${String(reason).slice(0, 40)}`);
+  return bits.join(" ");
+}
 
 type Window = "24h" | "7d" | "30d";
 
@@ -57,8 +81,16 @@ export default async function Dashboard({
   const win = (sp.window as Window) ?? "24h";
   let m: MetricsSummary | null = null;
   let err: string | null = null;
+  let blocks: RecentAction[] = [];
+  let pending: ReviewCase[] = [];
+  let threats: ThreatAssessmentRow[] = [];
   try {
-    m = await getMetrics(win);
+    [m, blocks, pending, threats] = await Promise.all([
+      getMetrics(win),
+      api.listRecentActions({ decision: "deny", limit: 10 }).catch(() => []),
+      api.listReviews("pending").catch(() => []),
+      threatsApi.list(10).catch(() => []),
+    ]);
   } catch (e) {
     err = (e as Error).message;
   }
@@ -78,6 +110,7 @@ export default async function Dashboard({
 
   return (
     <div>
+      <AutoRefresh intervalMs={5000} />
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
         <h1 style={{ margin: 0 }}>Dashboard</h1>
         <div className="row" style={{ gap: 6 }}>
@@ -86,6 +119,94 @@ export default async function Dashboard({
               {w}
             </Link>
           ))}
+        </div>
+      </div>
+
+      <h2>Qué está pasando ahora</h2>
+      <div className="grid cols-3">
+        {/* Card 1 — Recent blocks */}
+        <div className="card">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Bloqueos recientes</h3>
+            <span className="muted mono">{blocks.length}</span>
+          </div>
+          {blocks.length === 0 ? (
+            <p className="muted" style={{ marginTop: 8 }}>
+              Sin bloqueos todavía. Cuando el supervisor frene una acción real, aparece acá con razón + latencia.
+            </p>
+          ) : (
+            <table style={{ marginTop: 8 }}>
+              <tbody>
+                {blocks.slice(0, 8).map((b) => (
+                  <tr key={b.action_id}>
+                    <td className="muted mono" style={{ width: 52 }}>{age(b.created_at)}</td>
+                    <td><span className="mono">{b.action_type}</span></td>
+                    <td className="muted">{b.reasons.slice(0, 2).join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Card 2 — Pending reviews */}
+        <div className="card">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Esperan humano</h3>
+            <Link href="/review?status=pending" className="muted mono">{pending.length} →</Link>
+          </div>
+          {pending.length === 0 ? (
+            <p className="muted" style={{ marginTop: 8 }}>
+              Nada en review. Cuando el supervisor escale a humano, aparece acá con resumen + botón para abrir.
+            </p>
+          ) : (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+              {pending.slice(0, 5).map((c) => (
+                <Link key={c.id} href={`/review/${c.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                  <div className="row" style={{ justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div>
+                      <div>{payloadOneLiner(c)}</div>
+                      <div className="muted mono" style={{ fontSize: 11 }}>
+                        {age(c.created_at)} · {c.policy_hits[0]?.reason ?? "—"}
+                        {c.priority !== "normal" && ` · priority: ${c.priority}`}
+                      </div>
+                    </div>
+                    <span className="muted">open →</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Card 3 — Recent threats */}
+        <div className="card">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Threats detectados</h3>
+            <Link href="/threats" className="muted mono">{threats.length} →</Link>
+          </div>
+          {threats.length === 0 ? (
+            <p className="muted" style={{ marginTop: 8 }}>
+              Pipeline OWASP LLM Top 10 corriendo, sin hits. Si el agente recibe un prompt-injection, jailbreak o PII exfil, aparece acá.
+            </p>
+          ) : (
+            <table style={{ marginTop: 8 }}>
+              <tbody>
+                {threats.slice(0, 8).map((t) => (
+                  <tr key={t.id}>
+                    <td className="muted mono" style={{ width: 52 }}>{age(t.created_at)}</td>
+                    <td>
+                      <span className={`badge ${t.level === "critical" ? "" : ""}`} style={{ background: t.level === "critical" ? "var(--danger)" : t.level === "warn" ? "var(--warn, #b48a00)" : "var(--border)", color: "white" }}>
+                        {t.level}
+                      </span>
+                    </td>
+                    <td className="mono">{t.owasp_ref}</td>
+                    <td className="muted">{t.detector_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 

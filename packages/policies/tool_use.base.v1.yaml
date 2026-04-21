@@ -1,0 +1,32 @@
+name: tool_use.base
+version: 1
+description: >
+  Base policy for LLM tool-use invocations. Catches obvious abuse patterns
+  before the tool runs — the supervisor's OWASP LLM Top 10 threat pipeline
+  does the heavier lifting (prompt-injection, jailbreak, PII exfil). These
+  rules are the guardrails the pipeline doesn't cover.
+rules:
+  - id: missing-tool-name
+    when: "not payload.get('tool')"
+    action: deny
+    reason: missing-tool-identifier
+    explanation: >
+      Toda llamada al LLM debe declarar qué tool pretende invocar. Sin ese
+      campo no podemos auditar qué intentó hacer el agente ni rate-limitear
+      por tool. El payload debe incluir `tool: "<nombre>"`.
+  - id: excessive-prompt-length
+    when: "len(str(payload.get('prompt', ''))) > 50000"
+    action: review
+    reason: prompt-over-50k-chars
+    explanation: >
+      Prompts de más de 50k caracteres son típicos de ataques de consumo no
+      acotado (LLM10) o de data-exfil por context-stuffing. Un humano debe
+      confirmar el caso de uso antes de permitirlo.
+  - id: denied-tools
+    when: "payload.get('tool') in ('system.exec', 'fs.delete', 'network.raw')"
+    action: deny
+    reason: denied-tool-invoked
+    explanation: >
+      El agente intentó invocar una herramienta que la organización prohíbe
+      ejecutar vía LLM (shell, filesystem destructivo, socket raw). Si
+      realmente hace falta, levantar la restricción con ticket de seguridad.

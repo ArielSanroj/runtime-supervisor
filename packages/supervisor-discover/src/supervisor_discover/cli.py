@@ -28,6 +28,12 @@ def _build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--path", default=".", help="Repo root to scan (default: cwd)")
     scan_p.add_argument("--out", default="runtime-supervisor", help="Output directory (default: ./runtime-supervisor)")
     scan_p.add_argument("--dry-run", action="store_true", help="Don't write files; print findings.json to stdout")
+    scan_p.add_argument(
+        "--refine",
+        action="store_true",
+        help="Pass top findings to Claude for repo-specific narratives. "
+             "Requires ANTHROPIC_API_KEY. Falls back silently if unavailable.",
+    )
 
     sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
 
@@ -57,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
     findings = validate(scan_all(root))
     elapsed = time.perf_counter() - t0
+
+    # Optional --refine: per-finding narrative enrichment via Claude.
+    # No-ops gracefully when ANTHROPIC_API_KEY is missing so the CLI stays
+    # usable in CI and offline without extra checks.
+    if getattr(args, "refine", False):
+        from .combos import detect_combos
+        from .refine import refine_findings
+        print("  refining narratives via Claude…", file=sys.stderr)
+        findings = refine_findings(findings, build_summary(findings), detect_combos(findings))
 
     if dry_run:
         # Mirror the on-disk findings.json shape so CI diffs line up.

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ..findings import Finding
 from ._imports import build_alias_map, resolve_call_name, root_module
-from ._utils import python_files, ts_js_files
+from ._utils import python_files, safe_read, ts_js_files
 
 # Canonical dotted paths (post-alias-resolution) that indicate money movement.
 _REFUND_SIGNATURES = {
@@ -47,9 +47,12 @@ _PAYMENT_ROOTS = {"stripe", "paypal", "paypalrestsdk", "plaid"}
 def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
         try:
-            tree = ast.parse(path.read_text(errors="ignore"))
-        except (SyntaxError, ValueError, UnicodeDecodeError):
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
             continue
         aliases = build_alias_map(tree)
         if not any(root_module(v) in _PAYMENT_ROOTS for v in aliases.values()):
@@ -92,7 +95,9 @@ _TS_PAYMENT_RE = re.compile(
 def _scan_ts_js(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in ts_js_files(root):
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
         for m in _TS_REFUND_RE.finditer(text):
             line = text[: m.start()].count("\n") + 1
             snippet = m.group(0).rstrip("(")

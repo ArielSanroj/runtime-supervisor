@@ -82,8 +82,9 @@ REGISTRY: list[ActionTypeSpec] = [
         id="tool_use",
         title="Tool-use abuse detection",
         one_liner="Detect out-of-scope or abusive tool calls — rate spikes, argument anomalies, scope drift.",
-        status="planned",
+        status="live",
         intercepted_signals=["tool_name", "arg_hash", "call_rate_60s", "scope_match"],
+        policy_ref="tool_use.base@v1",
     ),
     ActionTypeSpec(
         id="compliance",

@@ -38,6 +38,9 @@ class Decision:
     reasons: list[str]
     risk_score: int
     policy_version: str
+    # In shadow mode the server returns decision="allow" but reports the
+    # real decision here, so metrics + logs can tell the difference.
+    shadow_would_have: Literal["allow", "deny", "review"] | None = None
 
     @property
     def allowed(self) -> bool:
@@ -108,15 +111,31 @@ class Client:
 
     # ---------- high-level helpers ----------
 
-    def evaluate(self, action_type: str, payload: dict[str, Any], *, dry_run: bool = False) -> Decision:
+    def evaluate(
+        self,
+        action_type: str,
+        payload: dict[str, Any],
+        *,
+        dry_run: bool = False,
+        shadow: bool = False,
+        agent_context: dict[str, Any] | None = None,
+    ) -> Decision:
         path = "/v1/actions/evaluate" + ("?dry_run=true" if dry_run else "")
-        data = self._req("POST", path, json={"action_type": action_type, "payload": payload})
+        body: dict[str, Any] = {
+            "action_type": action_type,
+            "payload": payload,
+            "shadow": shadow,
+        }
+        if agent_context:
+            body["agent_context"] = agent_context
+        data = self._req("POST", path, json=body)
         return Decision(
             action_id=data["action_id"],
             decision=data["decision"],
             reasons=data["reasons"],
             risk_score=data["risk_score"],
             policy_version=data["policy_version"],
+            shadow_would_have=data.get("shadow_would_have"),
         )
 
     def list_action_types(self) -> list[dict[str, Any]]:
@@ -134,6 +153,11 @@ class Client:
             )
             for i in items
         ]
+
+    def get_review(self, review_id: str) -> dict[str, Any]:
+        """Full review with payload + policy_hits. Summary-only clients
+        should use `list_reviews`; callback HITL flows want this."""
+        return self._req("GET", f"/v1/review-cases/{review_id}")
 
     def resolve_review(self, review_id: str, decision: Literal["approved", "rejected"], notes: str | None = None, approver: str | None = None) -> dict[str, Any]:
         headers = {}

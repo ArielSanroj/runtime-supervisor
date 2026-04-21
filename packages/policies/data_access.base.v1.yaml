@@ -1,0 +1,37 @@
+name: data_access.base
+version: 1
+description: >
+  Base policy for read/write access to data tables. The supervisor cannot
+  read your schema — it enforces at the query-shape level: unbounded
+  scopes, sensitive projections, and cross-tenant bleed.
+rules:
+  - id: sensitive-projection
+    when: >
+      ('credit_card' in str(payload.get('projection', '')).lower())
+      or ('card_number' in str(payload.get('projection', '')).lower())
+      or ('ssn' in str(payload.get('projection', '')).lower())
+      or ('social_security' in str(payload.get('projection', '')).lower())
+      or ('cvv' in str(payload.get('projection', '')).lower())
+      or ('pin_code' in str(payload.get('projection', '')).lower())
+    action: deny
+    reason: sensitive-column-in-projection
+    explanation: >
+      El agente intentó leer columnas de datos sensibles (tarjetas, SSN,
+      CVV). Estos nunca deben viajar por un LLM. Si hace falta cruzar data
+      de pagos, consultar al processor directamente, no via agente.
+  - id: unbounded-scope
+    when: "payload.get('row_limit', 0) == 0 or payload.get('row_limit', 0) > 1000"
+    action: review
+    reason: query-scope-over-1000-rows
+    explanation: >
+      Queries sin límite o que piden >1000 filas suelen ser data-exfil
+      (el agente "resume la base de clientes"). Un humano debe confirmar
+      que el scope es necesario.
+  - id: cross-tenant-scan
+    when: "payload.get('tenant_id') is None and payload.get('operation') in ('read', 'update', 'delete')"
+    action: deny
+    reason: missing-tenant-scope
+    explanation: >
+      Operaciones sin tenant_id rompen el aislamiento multi-tenant. El
+      agente debe siempre operar dentro del tenant de la sesión; queries
+      globales requieren rol admin humano.

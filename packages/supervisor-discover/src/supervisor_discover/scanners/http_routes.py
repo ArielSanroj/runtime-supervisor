@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, ts_js_files
+from ._utils import python_files, safe_read, ts_js_files
 
 _PY_HTTP_DECORATORS = {"route", "get", "post", "put", "patch", "delete"}
 _TS_EXPRESS_PATTERN = re.compile(r"\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(", re.IGNORECASE)
@@ -23,9 +23,12 @@ _TS_NEXT_API_PATH = re.compile(r"(?:app/.*?/route\.(?:ts|js)|pages/api/.+\.(?:ts
 def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in python_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
         try:
-            tree = ast.parse(path.read_text(errors="ignore"))
-        except (SyntaxError, ValueError, UnicodeDecodeError):
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
             continue
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -81,7 +84,9 @@ def _scan_ts_js(root: Path) -> list[Finding]:
     for path in ts_js_files(root):
         rel = str(path).replace(str(root) + "/", "")
         is_next_api = bool(_TS_NEXT_API_PATH.search(rel))
-        text = path.read_text(errors="ignore")
+        text = safe_read(path)
+        if text is None:
+            continue
 
         if is_next_api:
             # Next.js app router: export async function GET/POST/... at top level

@@ -15,8 +15,11 @@ def test_cli_dry_run_prints_findings_json(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr().out
     data = json.loads(captured)
-    assert isinstance(data, list)
-    assert any(f["scanner"] == "payment-calls" for f in data)
+    # New shape: { "repo_summary": {...}, "findings": [...] }
+    assert set(data.keys()) == {"repo_summary", "findings"}
+    assert isinstance(data["findings"], list)
+    assert any(f["scanner"] == "payment-calls" for f in data["findings"])
+    assert "frameworks" in data["repo_summary"]
     assert not (tmp_path / "rs").exists()  # dry-run didn't write
 
 

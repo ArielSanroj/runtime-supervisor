@@ -1,4 +1,5 @@
 from .config import configure, get_client
+from .context import observe, observing
 from .core import guarded, supervised, supervised_async
 from .errors import SupervisorBlocked, SupervisorReviewPending
 
@@ -8,6 +9,8 @@ __all__ = [
     "supervised",
     "supervised_async",
     "guarded",
+    "observe",
+    "observing",
     "SupervisorBlocked",
     "SupervisorReviewPending",
 ]

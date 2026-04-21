@@ -1,0 +1,89 @@
+# Production docker-compose for runtime-supervisor.
+#
+# Spin-up order:
+#   1. caddy reads Caddyfile + acquires HTTPS cert
+#   2. postgres boots, initializes volume
+#   3. supervisor runs `alembic upgrade head` then serves on :8000
+#   4. control-center builds + serves on :3000
+#   5. caddy proxies api.* → supervisor, app.* → control-center
+#
+# All services restart on failure; evidence log persists in `supervisor_data`
+# volume. See DEPLOY.md for the step-by-step.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-supervisor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-supervisor}
+    volumes:
+      - supervisor_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-supervisor} -d ${POSTGRES_DB:-supervisor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  supervisor:
+    build:
+      context: ./services/supervisor_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-supervisor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-supervisor}
+      EVIDENCE_HMAC_SECRET: ${EVIDENCE_HMAC_SECRET}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
+      REQUIRE_AUTH: "true"
+      APP_ENV: production
+      LOG_JSON: "true"
+      # Mount-path fallback if no policy is promoted to DB yet.
+      POLICY_PATH: /app/policies/refund.base.v1.yaml
+    volumes:
+      # Read-only mount of shipped policies so the supervisor can fall back
+      # to disk when the DB has no active record yet.
+      - ./packages/policies:/app/policies:ro
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn supervisor_api.main:app --host 0.0.0.0 --port 8000"
+
+  control-center:
+    build:
+      context: ./apps/control-center
+    restart: unless-stopped
+    depends_on:
+      - supervisor
+    environment:
+      # The UI talks to the supervisor over the internal docker network.
+      SUPERVISOR_API_URL: http://supervisor:8000
+      SUPERVISOR_APP_ID: ${UI_SUPERVISOR_APP_ID}
+      SUPERVISOR_SECRET: ${UI_SUPERVISOR_SECRET}
+      # Used by LoginForm.tsx to sign the session JWT — same secret as supervisor.
+      SESSION_SECRET: ${WEBHOOK_SECRET}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - supervisor
+      - control-center
+    environment:
+      # Subdomains exposed. See Caddyfile for the mapping.
+      API_DOMAIN: ${API_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  supervisor_data:
+  caddy_data:
+  caddy_config:

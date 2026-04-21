@@ -13,6 +13,9 @@ class PolicyHit:
     rule_id: str
     action: str  # allow|deny|review
     reason: str
+    # Optional plain-language explanation authored in the policy YAML. Used
+    # by the review UI so operators don't have to interpret rule_ids.
+    explanation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +82,12 @@ def evaluate(policy: Policy, payload: dict[str, Any]) -> list[PolicyHit]:
             msgs = "; ".join(str(err.get_error()) for err in interp.error)
             raise ValueError(f"rule {rule['id']} eval error: {msgs}")
         if bool(result):
-            hits.append(PolicyHit(rule_id=rule["id"], action=rule["action"], reason=rule["reason"]))
+            hits.append(PolicyHit(
+                rule_id=rule["id"],
+                action=rule["action"],
+                reason=rule["reason"],
+                explanation=rule.get("explanation"),
+            ))
     return hits
 
 

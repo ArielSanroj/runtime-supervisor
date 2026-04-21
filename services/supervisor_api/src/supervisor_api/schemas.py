@@ -1,9 +1,26 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PlainSerializer, field_validator
+
+
+def _serialize_utc_iso(dt: datetime) -> str:
+    """Emit every datetime as an ISO-8601 string with a `Z` UTC marker.
+
+    SQLite + SQLAlchemy's DateTime(timezone=True) round-trip drops tzinfo on
+    read, so the browser that parses the returned ISO string thinks it's in
+    local time — ages land negative or hours off. Forcing UTC here fixes
+    every downstream consumer in one place.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+# Type alias — swap for `datetime` in any schema field that rides over JSON.
+UTCDateTime = Annotated[datetime, PlainSerializer(_serialize_utc_iso, return_type=str)]
 
 
 class EvaluateRequest(BaseModel):
@@ -11,6 +28,15 @@ class EvaluateRequest(BaseModel):
     # Keeps the schema stable as new supervisors ship.
     action_type: str
     payload: dict[str, Any]
+    # Shadow mode: evaluate + record, but always return allow to the caller.
+    # The real decision lands in DecisionOut.shadow_would_have so operators
+    # can measure the would-block rate before flipping enforcement on.
+    shadow: bool = False
+    # Optional identity/task context from the agent framework. Reviewers see
+    # this in the UI so they know WHO asked for this action and WHY. Common
+    # keys: session_id, user_id, role, goal, available_tools, sources.
+    # Persisted to the evidence log as an "agent.context" event.
+    agent_context: dict[str, Any] | None = None
 
 
 class ThreatSignalOut(BaseModel):
@@ -29,6 +55,10 @@ class DecisionOut(BaseModel):
     policy_version: str
     threat_level: Literal["none", "info", "warn", "critical"] = "none"
     threats: list[ThreatSignalOut] = Field(default_factory=list)
+    # Populated only on shadow calls: the decision that WOULD have been
+    # returned if shadow=False. `decision` itself is always "allow" in
+    # shadow mode so the caller never blocks.
+    shadow_would_have: Literal["allow", "deny", "review"] | None = None
 
 
 class PolicyHit(BaseModel):
@@ -48,7 +78,7 @@ class EvidenceEventOut(BaseModel):
     event_payload: dict[str, Any]
     prev_hash: str
     hash: str
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class EvidenceBundle(BaseModel):
@@ -60,7 +90,7 @@ class EvidenceBundle(BaseModel):
     broken_at_seq: int | None = None
     bundle_hash: str
     bundle_signature: str
-    exported_at: datetime
+    exported_at: UTCDateTime
 
 
 class ReviewItemOut(BaseModel):
@@ -71,10 +101,29 @@ class ReviewItemOut(BaseModel):
     action_type: str
     risk_score: int
     policy_hits: list[dict[str, Any]]
-    created_at: datetime
-    resolved_at: datetime | None = None
+    created_at: UTCDateTime
+    resolved_at: UTCDateTime | None = None
     approver: str | None = None
     approver_notes: str | None = None
+    priority: Literal["low", "normal", "high"] = "normal"
+    assigned_to: str | None = None
+
+
+class ReviewEscalateRequest(BaseModel):
+    # Optional notes explaining why the reviewer escalated.
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class RecentActionOut(BaseModel):
+    action_id: str
+    action_type: str
+    decision: Literal["allow", "deny", "review"]
+    reasons: list[str]
+    risk_score: int
+    policy_version: str
+    created_at: UTCDateTime
+    latency_ms: int | None = None
+    shadow: bool = False
 
 
 class ReviewResolveRequest(BaseModel):
@@ -92,8 +141,8 @@ class IntegrationOut(BaseModel):
     name: str
     scopes: list[str]
     active: bool
-    created_at: datetime
-    revoked_at: datetime | None = None
+    created_at: UTCDateTime
+    revoked_at: UTCDateTime | None = None
     execute_url: str | None = None
     execute_method: str = "POST"
 
@@ -121,8 +170,8 @@ class PolicyOut(BaseModel):
     yaml_source: str
     is_active: bool
     created_by: str | None
-    created_at: datetime
-    deactivated_at: datetime | None
+    created_at: UTCDateTime
+    deactivated_at: UTCDateTime | None
 
 
 class PolicyTestRequest(BaseModel):
@@ -137,7 +186,7 @@ class PolicyTestResult(BaseModel):
 
 class ReplayDivergence(BaseModel):
     action_id: str
-    created_at: datetime
+    created_at: UTCDateTime
     from_decision: Literal["allow", "deny", "review"]
     to_decision: Literal["allow", "deny", "review"]
     to_reasons: list[str]
@@ -160,7 +209,7 @@ class PolicyExportEntry(BaseModel):
     is_active: bool
     yaml_source: str
     created_by: str | None
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class PolicyImportItem(BaseModel):
@@ -182,7 +231,7 @@ class EvidenceExportResult(BaseModel):
     url: str
     bundle_hash: str
     bundle_signature: str
-    exported_at: datetime
+    exported_at: UTCDateTime
     size_bytes: int
 
 
@@ -227,8 +276,8 @@ class ActionExecutionOut(BaseModel):
     attempts: int
     state: Literal["pending", "success", "failed"]
     triggered_by: Literal["allow", "review"]
-    queued_at: datetime
-    executed_at: datetime | None
+    queued_at: UTCDateTime
+    executed_at: UTCDateTime | None
 
 
 class WebhookSubscriptionCreate(BaseModel):
@@ -249,7 +298,7 @@ class WebhookSubscriptionOut(BaseModel):
     url: str
     events: list[str]
     active: bool
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class ThreatAssessmentOut(BaseModel):
@@ -260,7 +309,7 @@ class ThreatAssessmentOut(BaseModel):
     owasp_ref: str
     level: Literal["info", "warn", "critical"]
     signals: list[dict[str, Any]]
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class ThreatCatalogEntry(BaseModel):
@@ -286,5 +335,5 @@ class WebhookDeliveryOut(BaseModel):
     status_code: int | None
     error: str | None
     attempts: int
-    delivered_at: datetime | None
-    created_at: datetime
+    delivered_at: UTCDateTime | None
+    created_at: UTCDateTime

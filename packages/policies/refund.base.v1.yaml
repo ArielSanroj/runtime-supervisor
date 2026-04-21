@@ -6,11 +6,22 @@ rules:
     when: "payload['amount'] > 10000"
     action: deny
     reason: amount-exceeds-hard-cap
+    explanation: >
+      Refunds por más de 10,000 USD exceden el cap de política y se bloquean
+      automáticamente. Si hace falta, pedí excepción por el canal manual.
   - id: negative-amount
     when: "payload['amount'] <= 0"
     action: deny
     reason: invalid-amount
+    explanation: >
+      Un refund con monto cero o negativo es un error de llamada — el agente
+      probablemente calculó mal un reembolso parcial. Se bloquea para evitar
+      corromper el ledger.
   - id: fraud-dispute
     when: "payload.get('reason') == 'fraud_dispute'"
     action: review
     reason: fraud-dispute-requires-human
+    explanation: >
+      Refunds declarados como `fraud_dispute` se escalan a humano porque
+      pueden estar ocultando chargebacks reales. Revisar el historial del
+      cliente y confirmar con el equipo de riesgo antes de aprobar.

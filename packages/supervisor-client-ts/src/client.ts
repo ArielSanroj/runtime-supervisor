@@ -8,6 +8,8 @@ export interface Decision {
   reasons: string[];
   risk_score: number;
   policy_version: string;
+  // In shadow mode `decision` is always "allow"; the real decision is here.
+  shadow_would_have?: DecisionKind | null;
 }
 
 export interface ActionTypeSpec {
@@ -79,9 +81,17 @@ export class Client {
     return (await r.json()) as T;
   }
 
-  evaluate(actionType: string, payload: Record<string, unknown>, opts: { dryRun?: boolean } = {}): Promise<Decision> {
+  evaluate(
+    actionType: string,
+    payload: Record<string, unknown>,
+    opts: { dryRun?: boolean; shadow?: boolean } = {},
+  ): Promise<Decision> {
     const path = "/v1/actions/evaluate" + (opts.dryRun ? "?dry_run=true" : "");
-    return this.req<Decision>("POST", path, { action_type: actionType, payload });
+    return this.req<Decision>("POST", path, {
+      action_type: actionType,
+      payload,
+      shadow: opts.shadow ?? false,
+    });
   }
 
   async listActionTypes(): Promise<ActionTypeSpec[]> {

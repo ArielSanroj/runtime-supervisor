@@ -226,25 +226,86 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         return
 
 
+# Fallback one-line descriptions when the summary has nothing specific to
+# add. Keeps the terminal output useful on repos with surfaces the scanner
+# hasn't mapped yet.
+_TIER_FALLBACK: dict[str, str] = {
+    "money": "stripe · paypal · plaid (nada detectado)",
+    "real_world_actions": "voice · email · slack · shell (nada detectado)",
+    "customer_data": "UPDATE/DELETE users/customers/orders",
+    "llm": "anthropic · openai (nada detectado)",
+    "general": "http routes · cron schedules · informativo",
+}
+
+
+def _tier_hint(tier: str, items: list, summary) -> str:
+    """Repo-specific one-line hint for what each tier actually found here.
+
+    Prefer real providers from the summary (e.g. 'twilio, elevenlabs') over
+    the generic fallback. Keeps the terminal output accurate to THIS repo."""
+    if tier == "money" and summary.payment_integrations:
+        parts: list[str] = []
+        for vendor, caps in summary.payment_integrations.items():
+            parts.append(f"{vendor} ({', '.join(caps)})" if caps else vendor)
+        return ", ".join(parts)[:60]
+
+    if tier == "real_world_actions" and summary.real_world_actions:
+        # One capability → "voice (twilio, elevenlabs)". Many → first 2 capabilities.
+        entries = list(summary.real_world_actions.items())
+        parts = [f"{cap.split(' ')[0]} ({', '.join(providers)})" for cap, providers in entries[:2]]
+        more = f" +{len(entries) - 2}" if len(entries) > 2 else ""
+        return ", ".join(parts)[:55] + more
+
+    if tier == "llm" and summary.llm_providers:
+        return ", ".join(summary.llm_providers)[:60]
+
+    if tier == "customer_data":
+        if summary.sensitive_tables:
+            sample = ", ".join(summary.sensitive_tables[:4])
+            more = f" +{len(summary.sensitive_tables) - 4}" if len(summary.sensitive_tables) > 4 else ""
+            return f"tablas: {sample}{more}"[:60]
+        return _TIER_FALLBACK[tier]
+
+    if tier == "general":
+        bits: list[str] = []
+        if summary.http_routes:
+            bits.append(f"{summary.http_routes} routes")
+        if summary.scheduled_jobs:
+            bits.append(f"{summary.scheduled_jobs} crons")
+        return " · ".join(bits) if bits else _TIER_FALLBACK[tier]
+
+    return _TIER_FALLBACK.get(tier, "")
+
+
 def _print_tier_summary(root: Path, findings: list, elapsed: float, out: Path) -> None:
-    """Repo summary + tier-by-risk on stderr. Replaces the old 'wrote N findings'
-    dump so the reader sees what the repo IS and its risk surface counts."""
+    """Repo summary + tier-by-risk on stderr, with a repo-specific hint
+    column so a vibe coder reading this for the first time understands WHAT
+    each tier actually means in their codebase."""
     buckets = group_by_risk_tier(findings)
+    summary = build_summary(findings)
+
     print(f"scanned {root} in {elapsed:.1f}s", file=sys.stderr)
     print("", file=sys.stderr)
-    for line in render_cli_stdout(build_summary(findings)):
+    for line in render_cli_stdout(summary):
         print(line, file=sys.stderr)
     print("", file=sys.stderr)
+
+    # Column layout: title (22) · counts (24) · hint (flex)
     for tier in TIER_ORDER:
         items = buckets[tier]
         title = TIER_COPY[tier]["title"]
+        hint = _tier_hint(tier, items, summary)
+
         if tier == "general":
-            print(f"  {title:<22s} {len(items)} informational", file=sys.stderr)
-            continue
-        high = sum(1 for f in items if f.confidence == "high")
-        med = sum(1 for f in items if f.confidence == "medium")
-        low = sum(1 for f in items if f.confidence == "low")
-        print(f"  {title:<22s} {high} high / {med} medium / {low} low", file=sys.stderr)
+            counts = f"{len(items)} informational"
+        else:
+            high = sum(1 for f in items if f.confidence == "high")
+            med = sum(1 for f in items if f.confidence == "medium")
+            low = sum(1 for f in items if f.confidence == "low")
+            counts = f"{high} high / {med} medium / {low} low"
+
+        print(f"  {title:<22s}  {counts:<24s}  {hint}", file=sys.stderr)
+
     print("", file=sys.stderr)
     print(f"-> wrote {out}", file=sys.stderr)
     print(f"-> next: open {out / 'ROLLOUT.md'} for the deploy playbook tailored to this repo", file=sys.stderr)

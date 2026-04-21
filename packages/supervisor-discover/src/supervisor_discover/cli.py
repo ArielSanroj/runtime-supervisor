@@ -4,12 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
-from .classifier import validate
+from .classifier import TIER_ORDER, group_by_risk_tier, validate
 from .generator import generate
 from .scanners import scan_all
+from .summary import build_summary, render_cli_stdout
+from .templates import TIER_COPY
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -51,17 +54,51 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    t0 = time.perf_counter()
     findings = validate(scan_all(root))
+    elapsed = time.perf_counter() - t0
 
     if dry_run:
-        json.dump([f.to_dict() for f in findings], sys.stdout, indent=2)
+        # Mirror the on-disk findings.json shape so CI diffs line up.
+        summary = build_summary(findings)
+        payload = {
+            "repo_summary": summary.to_dict(),
+            "findings": sorted(
+                (f.to_dict() for f in findings),
+                key=lambda d: (d["file"], d["line"], d["scanner"]),
+            ),
+        }
+        json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0
 
     generate(findings, out)
-    print(f"wrote {len(findings)} findings to {out}", file=sys.stderr)
-    print(f"see {out / 'report.md'} for next steps", file=sys.stderr)
+    _print_tier_summary(root, findings, elapsed, out)
     return 0
+
+
+def _print_tier_summary(root: Path, findings: list, elapsed: float, out: Path) -> None:
+    """Repo summary + tier-by-risk on stderr. Replaces the old 'wrote N findings'
+    dump so the reader sees what the repo IS and its risk surface counts."""
+    buckets = group_by_risk_tier(findings)
+    print(f"scanned {root} in {elapsed:.1f}s", file=sys.stderr)
+    print("", file=sys.stderr)
+    for line in render_cli_stdout(build_summary(findings)):
+        print(line, file=sys.stderr)
+    print("", file=sys.stderr)
+    for tier in TIER_ORDER:
+        items = buckets[tier]
+        title = TIER_COPY[tier]["title"]
+        if tier == "general":
+            print(f"  {title:<22s} {len(items)} informational", file=sys.stderr)
+            continue
+        high = sum(1 for f in items if f.confidence == "high")
+        med = sum(1 for f in items if f.confidence == "medium")
+        low = sum(1 for f in items if f.confidence == "low")
+        print(f"  {title:<22s} {high} high / {med} medium / {low} low", file=sys.stderr)
+    print("", file=sys.stderr)
+    print(f"-> wrote {out}", file=sys.stderr)
+    print(f"-> next: open {out / 'ROLLOUT.md'} for the deploy playbook tailored to this repo", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -309,7 +309,7 @@ def _group_item(
                 f"({_scanner_solution(primary, with_combo_link=False)})"
             )
         else:
-            problem = f"{_scanner_problem(primary, count)} Confianza media — revisá si el call-site aplica en tu flow."
+            problem = f"{_scanner_problem(primary, count)} Confianza media — revisa si el call-site aplica en tu flow."
             solution = _scanner_solution(primary)
     else:  # discard
         label = f"{count} {capability} en tests"
@@ -374,7 +374,7 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
                 label=f"Policies por-tool ({len(unique_tools)} tools)",
                 problem=f"el agente expone {len(unique_tools)} tools distintas — cada una puede ejecutarse con args inyectados.",
                 solution=(
-                    f"wrap el dispatcher o escribí rules por-tool en `tool_use.base.v1`. "
+                    f"wrap el dispatcher o escribe rules por-tool en `tool_use.base.v1`. "
                     f"Tools expuestos: {', '.join(str(t) for t in unique_tools[:5])}"
                     f"{'...' if len(unique_tools) > 5 else ''}."
                 ),
@@ -502,7 +502,7 @@ def render_summary(
     if not findings:
         intro = [
             "Escaneé el repo y no encontré call-sites que necesiten supervisión hoy.",
-            "Instalá el supervisor en shadow de todos modos — el próximo scan "
+            "Instala el supervisor en shadow de todos modos — el próximo scan "
             "detectará integraciones nuevas automáticamente.",
         ]
     else:
@@ -513,13 +513,13 @@ def render_summary(
             intro = [
                 f"Escaneé {summary.one_liner}.",
                 "Nada crítico en prod. Los findings son install-time o test fixtures "
-                "— revisá la lista para confirmar que no hay falsos negativos.",
+                "— revisa la lista para confirmar que no hay falsos negativos.",
             ]
         else:
             intro = [
                 f"Escaneé {summary.one_liner}.",
                 f"**{priority_count} acciones** en orden de prioridad — "
-                "empezá arriba, cada una es independiente.",
+                "empieza arriba, cada una es independiente.",
             ]
 
     title_bits = []

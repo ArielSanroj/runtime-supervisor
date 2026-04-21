@@ -64,7 +64,7 @@ def _intro_block(combo: Combo, evidence_lines: list[str] | None = None) -> list[
     playbook. Returns markdown lines.
 
     Structure:
-      ## Qué pasa si no hacés nada
+      ## Qué pasa si no haces nada
       🔴 El problema: combo.narrative
       📍 Dónde está en tu repo: evidence_lines (or combo.evidence)
       ✅ Cómo se resuelve (pasos abajo): combo.mitigation
@@ -81,7 +81,7 @@ def _intro_block(combo: Combo, evidence_lines: list[str] | None = None) -> list[
         return e if "`" in e else f"`{e}`"
     ev = "\n".join(f"- {_fmt(e)}" for e in lines) if lines else "- (sin evidencia concreta en este scan)"
     return [
-        "## Qué pasa si no hacés nada",
+        "## Qué pasa si no haces nada",
         "",
         "🔴 **El problema:**",
         "",
@@ -165,7 +165,7 @@ rules:
         "",
         "## Paso 2 — Wrappear los 2 tipos de call-site",
         "",
-        "El scanner ya generó stubs. Copiá el contenido a cada archivo original:",
+        "El scanner ya generó stubs. Copia el contenido a cada archivo original:",
         "",
     ])
     for f in clone_sites + call_sites:
@@ -281,7 +281,7 @@ rules:
     reason: shell-metacharacters-detected
     explanation: >
       Pipes, subcomandos, o backticks en los args son la forma clásica de
-      inyección. Si realmente necesitás un pipe, ejecutalo con subprocess
+      inyección. Si realmente necesitas un pipe, ejecútalo con subprocess
       args=[...] en vez de shell=True.
 """
 
@@ -435,7 +435,7 @@ def _imports_only_playbook(
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Qué pasa si no hacés nada",
+        "## Qué pasa si no haces nada",
         "",
         "🔴 **El problema:**",
         "",
@@ -470,7 +470,7 @@ def _imports_only_playbook(
     md.extend([
         f"## Paso 1 — Encontrá tu `{ctor}` en el repo",
         "",
-        f"Grepeá donde se construye el `{ctor}`:",
+        f"Usa grep para encontrar dónde se construye el `{ctor}`:",
         "",
         "```bash",
         f"rg '{ctor}' --type py --type ts",
@@ -478,7 +478,7 @@ def _imports_only_playbook(
         "",
         "Típicamente vive en un archivo tipo `main.py`, `app.py`, `crew_factory.py`, "
         "`orchestrator.py`, o dentro del entry-point de tu API (Flask route / FastAPI "
-        f"endpoint). Lo que buscás es la **línea que llama a `{entry}`** — ese es tu "
+        f"endpoint). Lo que buscas es la **línea que llama a `{entry}`** — ese es tu "
         "wrap point.",
         "",
         f"## Paso 2 — Envolver la llamada a `{entry}`",
@@ -538,8 +538,8 @@ def _imports_only_playbook(
         "namespaces. Suficiente para arrancar.",
         "",
         "Cuando identifiques los tools concretos que tu agente expone (revisar en tu "
-        f"definición de `{framework}` — las tools que le pasás al Agent/Crew/Graph), "
-        "agregás reglas específicas por tool en el mismo YAML.",
+        f"definición de `{framework}` — las tools que le pasas al Agent/Crew/Graph), "
+        "agregas reglas específicas por tool en el mismo YAML.",
         "",
         "## ✅ Done when",
         "",
@@ -552,7 +552,7 @@ def _imports_only_playbook(
         "",
         "---",
         "",
-        f"_Tip: si el framework no detectado acá te parece raro para tu stack, o si sabés "
+        f"_Tip: si el framework no detectado aquí te parece raro para tu stack, o si sabes "
         f"cuál es tu wrap point pero el scanner no lo vio, [abrí un issue]"
         "(https://github.com/ArielSanroj/runtime-supervisor/issues) con el path exacto — "
         "ampliamos los patrones del scanner._",
@@ -592,7 +592,7 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
         "",
         f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Qué pasa si no hacés nada",
+        "## Qué pasa si no haces nada",
         "",
         "🔴 **El problema:**",
         "",

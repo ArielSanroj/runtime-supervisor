@@ -360,7 +360,7 @@ def render_markdown(summary: RepoSummary) -> str:
             lines.append(f"**Tools que el agente expone:** {tools_str}{more}.")
             lines.append("")
         lines.append(
-            "> _El supervisor recibe el nombre del tool en cada decisión → podés "
+            "> _El supervisor recibe el nombre del tool en cada decisión → puedes "
             "escribir políticas por tool sin tocar el código del agente. "
             "Ver `runtime-supervisor/combos/agent-orchestrator.md` para el playbook._"
         )

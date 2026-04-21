@@ -162,6 +162,8 @@ def test_generated_output_has_no_rioplatense_voseo(tmp_path):
         "corré", "mandá", "Preferí", "Revisá", "Re-escaneá",
         "regenerá", "excluí", "envolvelo", "promové", "verificá",
         "abrilo", "elegí", "por vos", "abrí ", "Abrí ",
+        "Editá", "editá", "Copiá", "copiá", "Pasá", "pasá",
+        "probá", "Probá", "Escribí", "escribí", "Definí", "definí",
     ]
     for doc in ("ROLLOUT.md", "report.md"):
         content = (out / doc).read_text()

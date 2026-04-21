@@ -120,7 +120,7 @@ rules:
         "",
         "Ya escrita en `runtime-supervisor/policies/tool_use.voice-clone-plus-outbound-call.v1.yaml`.",
         "",
-        "Editá la constante `ALLOWED_NUMBERS` con tus números válidos (ej. números de emergencia, support line) y promovela:",
+        "Edita la constante `ALLOWED_NUMBERS` con tus números válidos (ej. números de emergencia, support line) y promuévela:",
         "",
         "```bash",
         "POLICY=$(cat runtime-supervisor/policies/tool_use.voice-clone-plus-outbound-call.v1.yaml | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')",
@@ -273,7 +273,7 @@ rules:
         "",
         "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (ya escrita).",
         "",
-        "Editá `ALLOWED_COMMANDS` con los comandos exactos que el agente necesita correr (ej: `['ls', 'git', 'pytest']`). Promovela vía `POST /v1/policies`.",
+        "Edita `ALLOWED_COMMANDS` con los comandos exactos que el agente necesita correr (ej: `['ls', 'git', 'pytest']`). Promuévela vía `POST /v1/policies`.",
         "",
         "## Paso 2 — Wrappear shell calls",
         "",
@@ -483,7 +483,7 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
         "",
         "## Paso 2 — Policies por tool (sin tocar código)",
         "",
-        "Ventaja del wrap en orquestador: las reglas de negocio las escribís en YAML, no "
+        "Ventaja del wrap en orquestador: las reglas de negocio las escribes en YAML, no "
         "en código. El supervisor recibe `{tool: 'pay_order', ...}` y decide.",
         "",
         "Sugerencia de rules iniciales (editar `runtime-supervisor/policies/tool_use.base.v1.yaml`):",

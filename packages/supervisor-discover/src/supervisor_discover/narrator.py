@@ -73,17 +73,31 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
         "wrap": [], "prod": [], "confirm": [], "discard": [],
     }
     for f in findings:
-        # Chokepoints that are classes in factory/orchestrator files are
-        # wrap candidates — NOT framework imports (those aren't wrappable).
+        # Agent orchestrator findings have their own routing: class defs and
+        # tool registrations are wrap points (what the user should decorate);
+        # framework imports are signal only; method defs in orchestrator paths
+        # are ALSO wrap points (often `async execute()` / `handle()` — the
+        # chokepoint itself, even when the scanner only gives medium confidence).
         if f.scanner == "agent-orchestrators":
             kind = f.extra.get("kind", "")
-            if kind in ("agent-class", "tool-registration") and f.confidence == "high":
-                buckets["wrap"].append(f)
+            path_kind = _classify_path(f.file)
+            if path_kind == "test":
+                buckets["discard"].append(f)
                 continue
             if kind == "framework-import":
                 # Imports are signal, not action — surface in narrative prose,
                 # not as a priority item. Skip here.
                 continue
+            if kind in ("agent-class", "tool-registration", "agent-method"):
+                buckets["wrap"].append(f)
+                continue
+
+        # HTTP routes are informational (tier=general). They describe the
+        # traffic surface, but the supervisor doesn't gate the route itself —
+        # it gates the tools INSIDE the route handler. Skip from priority
+        # list; they're already in `report.md`'s General section.
+        if f.scanner == "http-routes":
+            continue
 
         path_kind = _classify_path(f.file)
         if path_kind == "test":
@@ -141,11 +155,14 @@ def _wrap_item(f: Finding) -> PriorityItem:
     label = (
         f.extra.get("class_name")
         or f.extra.get("tool_name")
+        or f.extra.get("method_name")
         or f.extra.get("framework")
         or "agent"
     )
     if kind == "agent-class":
         detail = f"wrap `{label}` → 1 decoration cubre todos los tools del agente (actuales y futuros)"
+    elif kind == "agent-method":
+        detail = f"método `{label}()` en path de orquestador → chokepoint, 1 wrap cubre todos los tools"
     else:  # tool-registration
         detail = f"tool registration `{label}` → policy por-tool sin tocar código del agente"
     return PriorityItem(
@@ -191,15 +208,38 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
     buckets = _bucket_findings(findings)
     items: list[PriorityItem] = []
 
-    # 🎯 Wrap — one item per chokepoint, preserve file order but factory files
-    # come first (summary already sorted them by rank, but we don't have that
-    # ordering here — the `summary` module does, but the bucket uses raw
-    # findings). Emit in `agent-class` order first, then tool registrations.
+    # 🎯 Wrap — one item per chokepoint. Order: classes first (strongest
+    # signal), then methods (same file often — collapse to 1 item per file),
+    # then tool registrations.
     wraps = buckets["wrap"]
     class_wraps = [f for f in wraps if f.extra.get("kind") == "agent-class"]
+    method_wraps = [f for f in wraps if f.extra.get("kind") == "agent-method"]
     reg_wraps = [f for f in wraps if f.extra.get("kind") == "tool-registration"]
+
     for f in class_wraps[:3]:
         items.append(_wrap_item(f))
+
+    # Collapse method findings by file — often the same `execute()` method
+    # gets flagged multiple lines in one file; show it once with all lines
+    # as evidence.
+    by_file: dict[str, list[Finding]] = {}
+    for f in method_wraps:
+        by_file.setdefault(f.file, []).append(f)
+    for file, fs in list(by_file.items())[:3]:
+        primary = fs[0]
+        method_name = primary.extra.get("method_name") or "execute"
+        lines = sorted({ff.line for ff in fs})
+        evidence = [f"{_short_path(file)}:{ln}" for ln in lines[:3]]
+        if len(lines) > 3:
+            evidence.append(f"+{len(lines) - 3} más")
+        items.append(PriorityItem(
+            priority="wrap",
+            label=f"Wrap `{method_name}()` en `{_short_path(file)}`",
+            detail="chokepoint del orquestador — 1 wrap cubre todos los tools que pase por aquí",
+            evidence=evidence,
+            minutes_to_apply=15,
+        ))
+
     # Tool registrations are usually many — collapse to one item if there are
     # several of the same scanner, one per unique tool name if few.
     if reg_wraps:
@@ -228,11 +268,14 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
     if buckets["discard"]:
         discard_findings = buckets["discard"]
         scanners_seen = sorted({f.scanner for f in discard_findings})
+        evidence = [f"{_short_path(f.file)}:{f.line}" for f in discard_findings[:3]]
+        if len(discard_findings) > 3:
+            evidence.append(f"+{len(discard_findings) - 3} más")
         items.append(PriorityItem(
             priority="discard",
             label=f"{len(discard_findings)} findings en tests/fixtures",
             detail=f"scanners: {', '.join(scanners_seen)} — paths de test, no corren en prod",
-            evidence=[f"{_short_path(f.file)}:{f.line}" for f in discard_findings[:3]],
+            evidence=evidence,
             minutes_to_apply=0,
         ))
 

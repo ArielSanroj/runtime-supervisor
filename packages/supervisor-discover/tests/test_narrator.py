@@ -164,6 +164,48 @@ def test_render_summary_includes_combos_section_when_passed():
     assert "runtime-supervisor/combos/" in md
 
 
+def test_bucket_agent_method_in_orchestrator_path_goes_to_wrap():
+    """A medium-confidence `execute()` in an orchestrator path is still a
+    chokepoint — the scanner can't upgrade confidence without more context,
+    but the narrator should still treat it as wrap-level."""
+    findings = [_f(
+        "/repo/supabase/functions/orchestrator/registry.ts",
+        scanner="agent-orchestrators",
+        confidence="medium",
+        kind="agent-method",
+        method_name="execute",
+    )]
+    buckets = _bucket_findings(findings)
+    assert len(buckets["wrap"]) == 1
+    assert buckets["confirm"] == []
+
+
+def test_bucket_skips_http_routes_entirely():
+    """HTTP routes are informational — the supervisor gates tools inside the
+    handler, not the route itself. Skip from priority list."""
+    findings = [_f(
+        "/repo/server/index.ts",
+        scanner="http-routes",
+        confidence="medium",
+    )]
+    buckets = _bucket_findings(findings)
+    assert all(len(v) == 0 for v in buckets.values())
+
+
+def test_bucket_agent_method_in_test_path_goes_to_discard():
+    """Don't let a test file's `execute()` method masquerade as a chokepoint."""
+    findings = [_f(
+        "/repo/orchestrator/__tests__/circuit-breaker.test.ts",
+        scanner="agent-orchestrators",
+        confidence="medium",
+        kind="agent-method",
+        method_name="execute",
+    )]
+    buckets = _bucket_findings(findings)
+    assert buckets["wrap"] == []
+    assert len(buckets["discard"]) == 1
+
+
 def test_render_summary_wrap_item_leads_priority_list():
     """Wrap items (agent chokepoints) should come before 🔒 prod items."""
     findings = [

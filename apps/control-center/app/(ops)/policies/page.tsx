@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { adminTokenConfigured, policiesApi, type Policy } from "@/lib/policies";
+import InfoTip from "../InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,14 @@ export default async function PoliciesPage({
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0 }}>Policies</h1>
+        <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+          Policies
+          <InfoTip>
+            <strong>Qué:</strong> las reglas YAML que el supervisor evalúa en cada llamada del agente. Agrupadas por <code>action_type</code> (refund, payment, account_change, tool_use, data_access, compliance). Cada policy tiene reglas <code>when</code> que deciden <code>allow / deny / review</code>.<br /><br />
+            <strong>Quién:</strong> security lead + dev que entiende el negocio. Compliance las revisa para auditar.<br /><br />
+            <strong>Acción:</strong> click en una policy → editá el YAML → <code>promote</code> nueva versión. El cambio aplica en la próxima llamada — <em>sin redeploy</em>. Para volver atrás, promové la versión anterior.
+          </InfoTip>
+        </h1>
         <Link href="/policies/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New policy</Link>
       </div>
 

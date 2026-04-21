@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { api, type ReviewCase } from "@/lib/api";
 import { AutoRefresh } from "./AutoRefresh";
+import InfoTip from "../InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,15 @@ export default async function ReviewQueue({
       {/* Only poll the pending list — approved/rejected don't change often
           and operators browsing history don't need auto-refresh. */}
       <AutoRefresh intervalMs={5000} enabled={status === "pending"} />
-      <h1>Review queue</h1>
+      <h1 style={{ display: "flex", alignItems: "center" }}>
+        Review queue
+        <InfoTip>
+          <strong>Qué:</strong> cola de casos que superaron el risk score y esperan decisión humana. Cada caso muestra el payload, la policy que lo escaló, y la edad.<br /><br />
+          <strong>Quién:</strong> operador on-call — dev de guardia, compliance, o el founder.<br /><br />
+          <strong>Acción:</strong> click en un caso → ver payload completo → <code>approve</code> o <code>reject</code>. Al resolverlo, el agente recibe la decisión y continúa (o timeout según policy).<br /><br />
+          <strong>Tabs:</strong> pending (actual), approved/rejected (historial para auditoría).
+        </InfoTip>
+      </h1>
       <div className="row" style={{ marginBottom: 16 }}>
         {(["pending", "approved", "rejected"] as const).map((s) => (
           <Link

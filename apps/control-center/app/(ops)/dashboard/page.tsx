@@ -3,6 +3,7 @@ import { getMetrics, type MetricsSummary } from "@/lib/metrics";
 import { api, type RecentAction, type ReviewCase } from "@/lib/api";
 import { threatsApi, type ThreatAssessmentRow } from "@/lib/threats";
 import { AutoRefresh } from "../review/AutoRefresh";
+import InfoTip from "../InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -112,7 +113,14 @@ export default async function Dashboard({
     <div>
       <AutoRefresh intervalMs={5000} />
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Dashboard</h1>
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <h1 style={{ margin: 0 }}>Dashboard</h1>
+          <InfoTip>
+            <strong>Para qué:</strong> ver el estado de salud del supervisor de un vistazo. Si el agente está siendo atacado o si tu policy está frenando pedidos legítimos, acá lo ves primero.<br /><br />
+            <strong>Quién:</strong> dev/founder (diario durante el rollout), compliance (semanal).<br /><br />
+            <strong>Refresh:</strong> auto cada 5s. Elegí ventana <code>24h</code>, <code>7d</code> o <code>30d</code> arriba a la derecha.
+          </InfoTip>
+        </div>
         <div className="row" style={{ gap: 6 }}>
           {(["24h", "7d", "30d"] as Window[]).map((w) => (
             <Link key={w} href={`/dashboard?window=${w}`} className={`badge ${win === w ? "approved" : ""}`}>
@@ -122,12 +130,19 @@ export default async function Dashboard({
         </div>
       </div>
 
-      <h2>Qué está pasando ahora</h2>
+      <h2>Qué está pasando ahora<InfoTip>Los 3 feeds en vivo: acciones frenadas, casos que esperan decisión humana, y amenazas detectadas por el pipeline OWASP.</InfoTip></h2>
       <div className="grid cols-3">
         {/* Card 1 — Recent blocks */}
         <div className="card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Bloqueos recientes</h3>
+            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+              Bloqueos recientes
+              <InfoTip>
+                <strong>Qué:</strong> las últimas acciones que el supervisor frenó (decisión <code>deny</code>) según la policy. Ej.: un refund sobre el hard-cap, un DELETE sin <code>WHERE</code>, un pago a país sancionado.<br /><br />
+                <strong>Quién:</strong> dev/founder — <em>¿rompió algo anoche?</em>.<br /><br />
+                <strong>Acción:</strong> si un bloqueo es falso positivo, ajustá la regla en <code>/policies</code> y promové nueva versión.
+              </InfoTip>
+            </h3>
             <span className="muted mono">{blocks.length}</span>
           </div>
           {blocks.length === 0 ? (
@@ -152,7 +167,14 @@ export default async function Dashboard({
         {/* Card 2 — Pending reviews */}
         <div className="card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Esperan humano</h3>
+            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+              Esperan humano
+              <InfoTip>
+                <strong>Qué:</strong> casos que superaron el umbral de risk score (≥50 por defecto) y la policy los mandó a review en vez de aprobar/bloquear automático.<br /><br />
+                <strong>Quién:</strong> operador on-call (dev de guardia o compliance). Uno por turno abre y decide.<br /><br />
+                <strong>Acción:</strong> click en el caso → ver payload + historial del cliente → <code>approve</code> o <code>reject</code>. El agente queda esperando (o timeout según policy).
+              </InfoTip>
+            </h3>
             <Link href="/review?status=pending" className="muted mono">{pending.length} →</Link>
           </div>
           {pending.length === 0 ? (
@@ -182,7 +204,14 @@ export default async function Dashboard({
         {/* Card 3 — Recent threats */}
         <div className="card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Threats detectados</h3>
+            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+              Threats detectados
+              <InfoTip>
+                <strong>Qué:</strong> detecciones del threat pipeline (prompt-injection, jailbreak, PII exfil, excessive agency, etc.) mapeadas al <strong>OWASP LLM Top 10</strong>. Son señales independientes de la policy.<br /><br />
+                <strong>Quién:</strong> security / CISO — <em>¿nos están atacando?</em>.<br /><br />
+                <strong>Acción:</strong> si hay un patrón (mismo detector disparando seguido), revisá el ángulo de ataque en <code>/threats</code>. Si son falsos positivos recurrentes, ajustá la sensibilidad del detector.
+              </InfoTip>
+            </h3>
             <Link href="/threats" className="muted mono">{threats.length} →</Link>
           </div>
           {threats.length === 0 ? (
@@ -210,7 +239,7 @@ export default async function Dashboard({
         </div>
       </div>
 
-      <h2>Volume</h2>
+      <h2>Volume<InfoTip>Totales agregados para la ventana elegida. Útil para ver tendencia (hoy vs. ayer) y detectar spikes. Si <code>Actions</code> cae a cero, el supervisor dejó de recibir tráfico — probable problema de conectividad del guard, no del agente.</InfoTip></h2>
       <div className="grid cols-3">
         <div className="card kpi">
           {m.actions_total}
@@ -226,14 +255,14 @@ export default async function Dashboard({
         </div>
       </div>
 
-      <h2>Decisions</h2>
+      <h2>Decisions<InfoTip><strong>Allow</strong> (verde) = la policy dejó pasar.<br /><strong>Review</strong> (amarillo) = el caso fue escalado a humano.<br /><strong>Deny</strong> (rojo) = la acción fue bloqueada.<br /><br /><strong>Señal:</strong> si deny&gt;20% sostenido, tu policy está demasiado estricta o estás bajo ataque. Si allow=100%, el supervisor no está haciendo nada — revisá que las reglas estén promovidas.</InfoTip></h2>
       <div className="card">
         <DecisionBar m={m} />
       </div>
 
       {m.threats.top_detectors.length > 0 && (
         <>
-          <h2>Top threat detectors</h2>
+          <h2>Top threat detectors<InfoTip>Ranking de qué detector del pipeline OWASP se disparó más. Te dice <strong>qué vector de ataque estás recibiendo</strong>: <code>LLM01</code> (prompt injection), <code>LLM02</code> (PII disclosure), <code>LLM06</code> (jailbreak), <code>LLM10</code> (unbounded consumption). Si uno domina, ajustá la policy para ese detector específico.</InfoTip></h2>
           <div className="card" style={{ padding: 0 }}>
             <table>
               <thead><tr><th>Detector</th><th>Hits</th></tr></thead>
@@ -250,7 +279,7 @@ export default async function Dashboard({
         </>
       )}
 
-      <h2>Executions (action_proxy)</h2>
+      <h2>Executions (action_proxy)<InfoTip>Solo aplica si usás <strong>action_proxy mode</strong> (el supervisor ejecuta la acción en tu nombre tras aprobarla, no solo te devuelve un <code>allow</code>). Acá ves si esas ejecuciones salieron OK o fallaron después del permit. En el modo normal (<code>guard</code>) estos números quedan en 0.</InfoTip></h2>
       <div className="grid cols-3">
         <div className="card kpi">
           {m.executions.success}

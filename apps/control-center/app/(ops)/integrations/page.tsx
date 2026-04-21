@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { adminTokenConfigured, integrationsApi, type Integration } from "@/lib/integrations";
+import InfoTip from "../InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,14 @@ export default async function IntegrationsPage() {
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0 }}>Integrations</h1>
+        <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+          Integrations
+          <InfoTip>
+            <strong>Qué:</strong> apps que hablan con el supervisor. Cada integration tiene su propio <code>APP_ID</code> + <code>SHARED_SECRET</code> con los que firma JWTs para autenticarse. Los scopes definen qué <code>action_type</code> puede evaluar.<br /><br />
+            <strong>Quién:</strong> tech lead al agregar un agente nuevo, o security para rotar secrets comprometidos.<br /><br />
+            <strong>Acción:</strong> <code>+ New integration</code> emite un secret. <em>Copialo al momento — no se vuelve a mostrar.</em> Para rotar, click en la integration existente → <code>rotate secret</code>.
+          </InfoTip>
+        </h1>
         <Link href="/integrations/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New integration</Link>
       </div>
 

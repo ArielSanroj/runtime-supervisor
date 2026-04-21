@@ -1,11 +1,19 @@
 import Link from "next/link";
+import InfoTip from "../InfoTip";
 
 export const dynamic = "force-static";
 
 export default function FindingsPage() {
   return (
     <div>
-      <h1>Findings</h1>
+      <h1 style={{ display: "flex", alignItems: "center" }}>
+        Findings
+        <InfoTip>
+          <strong>Qué:</strong> análisis estático — los call-sites que el scanner detectó en tu código como candidatos a gatear antes de ejecutarse. Complementa el resto del dashboard (que es runtime).<br /><br />
+          <strong>Quién:</strong> dev que está en fase de rollout, para ver la superficie total y el avance de wrapping.<br /><br />
+          <strong>Estado:</strong> placeholder. El scanner (<code>supervisor-discover scan</code>) hoy escribe a <code>runtime-supervisor/</code> local. Para renderizar acá falta un endpoint de ingest en el supervisor API — en roadmap.
+        </InfoTip>
+      </h1>
       <p className="muted" style={{ marginTop: -8, marginBottom: 20 }}>
         Static-analysis surface: what <code>supervisor-discover scan</code> found in your codebase.
       </p>

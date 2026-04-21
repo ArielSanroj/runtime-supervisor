@@ -78,3 +78,53 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 .ops-shell .chain-ok { color: var(--ok); }
 .ops-shell .chain-bad { color: var(--danger); }
 .ops-shell .mono { font-family: var(--mono); }
+
+/* Info tooltip — inline "?" badge that reveals explanatory copy on hover/focus.
+   Scoped to .ops-shell so it doesn't leak into the landing. */
+.ops-shell .info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--panel-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--sans);
+  cursor: help;
+  margin-left: 8px;
+  vertical-align: middle;
+  outline: none;
+}
+.ops-shell .info-tip:hover, .ops-shell .info-tip:focus { border-color: var(--accent); color: var(--accent); }
+.ops-shell .info-tip .tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 260px;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text);
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s, visibility 0.15s;
+  z-index: 30;
+  pointer-events: none;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.ops-shell .info-tip:hover .tip,
+.ops-shell .info-tip:focus .tip { visibility: visible; opacity: 1; }
+.ops-shell .info-tip .tip strong { color: var(--accent); font-weight: 600; }
+.ops-shell .info-tip .tip code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }

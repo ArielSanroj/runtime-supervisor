@@ -172,17 +172,17 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
     print("", file=sys.stderr)
     print(f"Combinaciones críticas detectadas: {len(combos)}", file=sys.stderr)
     print("", file=sys.stderr)
-    print("¿Cómo querés resolver los combos?", file=sys.stderr)
+    print("¿Cómo quieres resolver los combos?", file=sys.stderr)
     print("  [1] Ver playbooks markdown (default, no toca tu código)", file=sys.stderr)
     print("      → runtime-supervisor/combos/ con pasos copy-paste", file=sys.stderr)
     print("  [2] Auto-fix (experimental, stub)", file=sys.stderr)
-    print("      → el CLI aplica el playbook por vos. No implementado todavía.", file=sys.stderr)
+    print("      → el CLI aplica el playbook por ti. No implementado todavía.", file=sys.stderr)
     print("  [3] Tracking de estado (opt-in, stub)", file=sys.stderr)
     print("      → marca combos resueltos para que scans futuros no los re-reporten.", file=sys.stderr)
     print("", file=sys.stderr)
 
     try:
-        choice = input("  Elegí [1]: ").strip()
+        choice = input("  Elige [1]: ").strip()
     except (EOFError, KeyboardInterrupt):
         print("", file=sys.stderr)
         choice = ""
@@ -206,7 +206,7 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         if prompted:
             print("", file=sys.stderr)
         print(f"-> {readme.relative_to(out.parent) if out.parent in readme.parents else readme}  ({len(combos)} combos)", file=sys.stderr)
-        print(f"-> abrí primero: {first.name}  ← más crítico", file=sys.stderr)
+        print(f"-> abre primero: {first.name}  ← más crítico", file=sys.stderr)
         return
 
     if level == 2:
@@ -326,10 +326,10 @@ def _handle_fix(args: argparse.Namespace) -> int:
         print(f"Nivel 1 playbook (active, manual) disponible en:", file=sys.stderr)
         print(f"  {playbook}", file=sys.stderr)
         print("", file=sys.stderr)
-        print("Abrilo y seguí los pasos copy-paste. Cuando Nivel 2 shippee,", file=sys.stderr)
+        print("Ábrelo y sigue los pasos copy-paste. Cuando Nivel 2 shippee,", file=sys.stderr)
         print("este mismo comando lo aplicará automáticamente con --experimental.", file=sys.stderr)
     else:
-        print(f"No existe playbook para '{args.combo_id}'. Corré `supervisor-discover scan`", file=sys.stderr)
+        print(f"No existe playbook para '{args.combo_id}'. Corre `supervisor-discover scan`", file=sys.stderr)
         print("primero para generar el directorio runtime-supervisor/combos/.", file=sys.stderr)
         return 2
 

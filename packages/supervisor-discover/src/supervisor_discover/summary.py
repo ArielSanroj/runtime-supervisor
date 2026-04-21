@@ -66,6 +66,17 @@ _REAL_WORLD_CAPABILITY: dict[str, str] = {
 
 
 @dataclass(frozen=True)
+class AgentChokepoint:
+    """A single point where wrapping with @supervised gives total agent
+    coverage — a `Controller.handle()`, a `Dispatcher.dispatch()`, or
+    the entry-point of an agent framework executor."""
+    file: str
+    line: int
+    kind: str           # "agent-class" | "tool-registration" | "framework-import"
+    label: str          # class/tool/framework name
+
+
+@dataclass(frozen=True)
 class RepoSummary:
     frameworks: list[str] = field(default_factory=list)
     http_routes: int = 0
@@ -75,6 +86,10 @@ class RepoSummary:
     #   {"voice / telephony": ["twilio", "elevenlabs"],
     #    "calendar events": ["google"]}
     real_world_actions: dict[str, list[str]] = field(default_factory=dict)
+    # Agent orchestration chokepoints — wrap ONE of these for total coverage.
+    agent_chokepoints: list[AgentChokepoint] = field(default_factory=list)
+    # Tool names the agent exposes (from dispatcher.register etc). Order-preserving.
+    agent_tools: list[str] = field(default_factory=list)
     db_tables_touched: list[str] = field(default_factory=list)
     sensitive_tables: list[str] = field(default_factory=list)
     scheduled_jobs: int = 0
@@ -102,6 +117,9 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     scheduled = 0
     # capability label → set of providers detected for that capability
     rwa: dict[str, set[str]] = {}
+    chokepoints: list[AgentChokepoint] = []
+    tools: list[str] = []
+    tools_seen: set[str] = set()
 
     for f in findings:
         scanner = f.scanner
@@ -140,6 +158,27 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
         elif scanner == "cron-schedules":
             scheduled += 1
 
+        elif scanner == "agent-orchestrators":
+            kind = extra.get("kind", "")
+            # Tool-registration findings carry the tool name in extra. Collect
+            # them separately so the report can show "agent exposes N tools".
+            if kind == "tool-registration":
+                name = extra.get("tool_name") or ""
+                if name and name not in tools_seen:
+                    tools.append(name)
+                    tools_seen.add(name)
+            # Every HIGH-confidence orchestrator finding is a candidate chokepoint.
+            if f.confidence == "high" and kind in ("agent-class", "framework-import"):
+                label = (
+                    extra.get("class_name")
+                    or extra.get("framework")
+                    or extra.get("tool_name")
+                    or "agent"
+                )
+                chokepoints.append(AgentChokepoint(
+                    file=f.file, line=f.line, kind=kind, label=str(label),
+                ))
+
         elif scanner in _REAL_WORLD_CAPABILITY:
             capability = _REAL_WORLD_CAPABILITY[scanner]
             # `provider` for SDK-based scanners; `family` for fs-shell (fs-delete/
@@ -155,17 +194,32 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     # Pick the most common framework as primary; keep others as extras.
     primary_fw = [fw for fw, _ in frameworks_seen.most_common()]
 
+    # Dedup chokepoints by (file, label) — Controller often matches both a
+    # plain `class` regex and `export class` regex at the same line.
+    seen_cp: set[tuple[str, str]] = set()
+    unique_chokepoints: list[AgentChokepoint] = []
+    for cp in chokepoints:
+        key = (cp.file, cp.label)
+        if key not in seen_cp:
+            unique_chokepoints.append(cp)
+            seen_cp.add(key)
+
     return RepoSummary(
         frameworks=primary_fw,
         http_routes=http_count,
         payment_integrations=payment_integrations,
         llm_providers=sorted(llms),
         real_world_actions=real_world_actions,
+        agent_chokepoints=unique_chokepoints,
+        agent_tools=tools,
         db_tables_touched=all_tables,
         sensitive_tables=sensitive,
         scheduled_jobs=scheduled,
         total_findings=len(findings),
-        one_liner=_one_liner(primary_fw, payment_integrations, llms, real_world_actions, sensitive),
+        one_liner=_one_liner(
+            primary_fw, payment_integrations, llms, real_world_actions, sensitive,
+            has_agent=bool(unique_chokepoints or tools),
+        ),
     )
 
 
@@ -207,6 +261,8 @@ def _one_liner(
     llms: set[str],
     real_world_actions: dict[str, list[str]],
     sensitive_tables: list[str],
+    *,
+    has_agent: bool = False,
 ) -> str:
     """Human-readable headline, derived — not LLM-written."""
     fw_label: str | None = None
@@ -215,6 +271,12 @@ def _one_liner(
         fw_label = _FRAMEWORK_LABELS.get(key, frameworks[0].capitalize())
 
     features: list[str] = []
+
+    # Agent orchestration is the most important feature when present —
+    # calling out "este repo tiene un agente" changes the reader's whole
+    # interpretation of the rest of the surface.
+    if has_agent:
+        features.append("orquestador de agente")
 
     if real_world_actions:
         caps = sorted(real_world_actions.keys())
@@ -225,8 +287,10 @@ def _one_liner(
         vendors = sorted(v.capitalize() for v in payments.keys())
         features.append(f"cobros vía {_es_join(vendors)}")
 
-    if llms:
+    if llms and not has_agent:  # "LLM" is implied if we already said "agente"
         features.append("agentes LLM")
+    elif llms:
+        features.append("LLM explícito")
 
     if sensitive_tables:
         features.append("datos de clientes")
@@ -277,6 +341,30 @@ def render_markdown(summary: RepoSummary) -> str:
             parts.append(f"**{capability}** ({providers_str})")
         lines.append(f"Acciones reales del agente: {'; '.join(parts)}.")
 
+    if summary.agent_chokepoints or summary.agent_tools:
+        lines.append("")
+        lines.append("### 🎯 Agent orchestration detectada")
+        lines.append("")
+        if summary.agent_chokepoints:
+            lines.append("**Chokepoints** (wrappear UNO de estos con `@supervised('tool_use')` = cobertura total del agente):")
+            for cp in summary.agent_chokepoints[:5]:
+                file_short = cp.file.rsplit("/", 2)
+                file_display = "/".join(file_short[-2:]) if len(file_short) > 1 else cp.file
+                lines.append(f"- `{file_display}:{cp.line}` — {cp.kind} `{cp.label}`")
+            if len(summary.agent_chokepoints) > 5:
+                lines.append(f"- _+{len(summary.agent_chokepoints) - 5} más_")
+            lines.append("")
+        if summary.agent_tools:
+            tools_str = ", ".join(f"`{t}`" for t in summary.agent_tools[:10])
+            more = f" _+{len(summary.agent_tools) - 10} más_" if len(summary.agent_tools) > 10 else ""
+            lines.append(f"**Tools que el agente expone:** {tools_str}{more}.")
+            lines.append("")
+        lines.append(
+            "> _El supervisor recibe el nombre del tool en cada decisión → podés "
+            "escribir políticas por tool sin tocar el código del agente. "
+            "Ver `runtime-supervisor/combos/agent-orchestrator.md` para el playbook._"
+        )
+
     if summary.scheduled_jobs:
         lines.append(f"Scheduled jobs: {summary.scheduled_jobs} crons/tareas programadas.")
 
@@ -297,9 +385,10 @@ def render_markdown(summary: RepoSummary) -> str:
 
 
 def render_cli_stdout(summary: RepoSummary) -> list[str]:
-    """Short lines for the CLI, printed before the tier summary. 3 lines when
-    the repo has no real-world actions; 4 when it does — we always want the
-    operator to see what kind of side-effects the agent can produce."""
+    """Short lines for the CLI, printed before the tier summary. Extra lines
+    when the repo has real-world actions or an agent orchestrator — always
+    surface the agentic signal before the tier counts so the reader sees
+    the headline before scrolling."""
     out: list[str] = []
     fw = " + ".join(summary.frameworks) if summary.frameworks else "framework no reconocido"
     pay = (
@@ -317,4 +406,14 @@ def render_cli_stdout(summary: RepoSummary) -> list[str]:
             for cap, providers in summary.real_world_actions.items()
         ]
         out.append(f"  actions: {' · '.join(parts)}")
+    if summary.agent_tools or summary.agent_chokepoints:
+        # 🎯 headline — agent orchestration is the highest-leverage signal.
+        bits: list[str] = []
+        if summary.agent_chokepoints:
+            bits.append(f"chokepoint: {summary.agent_chokepoints[0].label}")
+        if summary.agent_tools:
+            tools_preview = ", ".join(summary.agent_tools[:4])
+            more = f" +{len(summary.agent_tools) - 4}" if len(summary.agent_tools) > 4 else ""
+            bits.append(f"{len(summary.agent_tools)} tools ({tools_preview}{more})")
+        out.append(f"  🎯 agent: {' · '.join(bits)}")
     return out

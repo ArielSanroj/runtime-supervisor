@@ -189,7 +189,7 @@ rules:
     md_lines.extend([
         "## Paso 3 — Test de verificación",
         "",
-        "Con el supervisor corriendo local (`ac start`), corré este test:",
+        "Con el supervisor corriendo local (`ac start`), corre este test:",
         "",
         "```bash",
         "# debería DENEGAR: número fuera del allowlist",
@@ -202,7 +202,7 @@ rules:
         "",
         "## Paso 4 — Métricas a mirar post-deploy",
         "",
-        "Una vez en producción, abrí `$SUPERVISOR_BASE_URL/v1/metrics/enforcement?window=7d`:",
+        "Una vez en producción, abre `$SUPERVISOR_BASE_URL/v1/metrics/enforcement?window=7d`:",
         "",
         "- `would_block_in_shadow` → si incluye números legítimos, expandí `ALLOWED_NUMBERS`.",
         "- `actually_blocked` → >0 cuando llegue un intento real. 0 durante días = guard desconectado o sin tráfico.",
@@ -370,22 +370,182 @@ def _generic_playbook(combo: Combo, findings: list[Finding], summary: RepoSummar
 
 ## Pasos genéricos
 
-1. Revisá cada call-site listado arriba.
-2. Envolvelo con `@supervised("tool_use")` usando los stubs generados.
-3. Promové la policy `tool_use.base.v1` si no está ya activa.
-4. Verificá en shadow mode durante 7 días antes de enforce.
+1. Revisa cada call-site listado arriba.
+2. Envuélvelo con `@supervised("tool_use")` usando los stubs generados.
+3. Promueve la policy `tool_use.base.v1` si no está ya activa.
+4. Verifica en shadow mode durante 7 días antes de enforce.
 
 ---
 
-_Este combo no tiene playbook hand-written todavía. Si te importa, abrí un issue
+_Este combo no tiene playbook hand-written todavía. Si te importa, abre un issue
 en github.com/ArielSanroj/runtime-supervisor con el combo_id `{combo.id}`._
 """
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=None)
 
 
+def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSummary) -> Playbook:
+    """Playbook for repos with an agent orchestrator chokepoint. The #1
+    recommendation is to wrap the orchestrator, not every leaf call-site —
+    this file generates the specific code + policy snippets."""
+    orch = [f for f in findings if f.scanner == "agent-orchestrators"]
+    classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
+    tools = sorted({
+        f.extra.get("tool_name") for f in orch
+        if f.extra.get("kind") == "tool-registration" and f.extra.get("tool_name")
+    })
+
+    primary = classes[0] if classes else (orch[0] if orch else None)
+    primary_rel = _relative_path(primary.file) if primary else "<no chokepoint>"
+    primary_label = (primary.extra.get("class_name") if primary else None) or "agent"
+    stack_is_ts = any(f.file.endswith((".ts", ".tsx", ".js")) for f in orch)
+
+    md = [
+        f"# Fix: {combo.title}",
+        "",
+        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        "",
+        "## Por qué este playbook es el #1 a ejecutar",
+        "",
+        "Tu repo tiene un **orquestador de agente** — una `Controller.handle()` / "
+        "`Dispatcher.dispatch()` / `AgentExecutor` por donde pasa toda decisión que el "
+        "agente toma antes de ejecutar una tool.",
+        "",
+        f"Eso te da apalancamiento real: **1 `guarded()` en `{primary_rel}` cubre los "
+        f"{len(tools) if tools else 'N'} tools actuales + cualquiera que agregues después**.",
+        "",
+        "Es estrictamente mejor que wrappear cada leaf call-site (no se olvidan tools "
+        "nuevos, el supervisor ve el intent/session/user, zero mantenimiento).",
+        "",
+    ]
+
+    if tools:
+        md.extend([
+            "## Tools que el agente expone hoy",
+            "",
+        ])
+        for t in tools:
+            md.append(f"- `{t}`")
+        md.append("")
+
+    md.extend([
+        "## Paso 1 — Wrappear el orquestador",
+        "",
+        f"En `{primary_rel}` (el método `handle` / `dispatch` / `execute`):",
+        "",
+    ])
+
+    if stack_is_ts:
+        md.extend([
+            "```typescript",
+            "import { guarded } from \"@runtime-supervisor/guards\";",
+            "",
+            f"// dentro de {primary_label}.handle(input)",
+            "async handle(input: AgentInput): Promise<AgentResult> {",
+            "  const tool = this.mapIntentToTool(input.intent);",
+            "  return guarded(",
+            "    \"tool_use\",",
+            "    {",
+            f"      tool,  // '{tools[0] if tools else 'pay_order'}', '{tools[1] if len(tools) > 1 else 'send_sms'}', ...",
+            "      intent: input.intent,",
+            "      user_id: input.userId,",
+            "      session_id: input.sessionId,",
+            "      message_preview: input.message?.slice(0, 200),",
+            "      ...(input.entities ?? {}),",
+            "    },",
+            "    async () => {",
+            "      // ... tu lógica actual de handle() sin cambios",
+            "    },",
+            "  );",
+            "}",
+            "```",
+        ])
+    else:
+        md.extend([
+            "```python",
+            "from supervisor_guards import guarded",
+            "",
+            f"# dentro de {primary_label}.handle(input)",
+            "def handle(self, input):",
+            "    tool = self._map_intent_to_tool(input.intent)",
+            "    payload = {",
+            f"        'tool': tool,  # '{tools[0] if tools else 'pay_order'}', ...",
+            "        'intent': input.intent,",
+            "        'user_id': input.user_id,",
+            "        'session_id': input.session_id,",
+            "        'message_preview': (input.message or '')[:200],",
+            "        **(input.entities or {}),",
+            "    }",
+            "    return guarded('tool_use', payload, lambda: self._execute(tool, input))",
+            "```",
+        ])
+
+    md.extend([
+        "",
+        "## Paso 2 — Policies por tool (sin tocar código)",
+        "",
+        "Ventaja del wrap en orquestador: las reglas de negocio las escribís en YAML, no "
+        "en código. El supervisor recibe `{tool: 'pay_order', ...}` y decide.",
+        "",
+        "Sugerencia de rules iniciales (editar `runtime-supervisor/policies/tool_use.base.v1.yaml`):",
+        "",
+        "```yaml",
+        "rules:",
+    ])
+
+    tool_rules = {
+        "pay_order": ("deny", "amount > 500", "pay-order-over-cap"),
+        "place_order": ("review", "amount > 200", "place-order-large"),
+        "send_sms": ("review", "len(payload.get('to', [])) > 5", "sms-to-many"),
+        "send_whatsapp": ("review", "len(payload.get('to', [])) > 5", "whatsapp-to-many"),
+        "call_family_member": ("review", "True", "family-call-always-review"),
+        "create_trello_card": ("allow", "True", "trello-create-allowed"),
+        "create_appointment": ("allow", "True", "appointment-create-allowed"),
+    }
+    shown = False
+    for t in tools:
+        if t in tool_rules:
+            action, cond, rid = tool_rules[t]
+            md.append(f"  - id: {rid}")
+            md.append(f"    when: \"payload['tool'] == '{t}' and ({cond})\"")
+            md.append(f"    action: {action}")
+            md.append(f"    reason: {rid}")
+            shown = True
+    if not shown:
+        md.extend([
+            "  - id: high-risk-tools-review",
+            "    when: \"payload['tool'] in ('pay_order', 'place_order', 'send_email')\"",
+            "    action: review",
+            "    reason: high-risk-tool",
+        ])
+    md.extend([
+        "```",
+        "",
+        "## Paso 3 — Test",
+        "",
+        "```bash",
+        "curl -X POST $SUPERVISOR_BASE_URL/v1/actions/evaluate \\",
+        "  -H \"authorization: Bearer $JWT\" -H 'content-type: application/json' \\",
+        f"  -d '{{\"action_type\":\"tool_use\",\"payload\":{{\"tool\":\"{tools[0] if tools else 'pay_order'}\",\"amount\":9999}}}}'",
+        "# esperado: { \"decision\": \"deny\" | \"review\", \"reasons\": [...] }",
+        "```",
+        "",
+        "## ✅ Done when",
+        "",
+        f"- [ ] `{primary_label}.handle()` envuelto con `guarded(\"tool_use\", ...)`",
+        "- [ ] Al menos 1 policy rule por tool crítico",
+        "- [ ] Test del Paso 3 devuelve una decisión ≠ allow",
+        "- [ ] 7 días en shadow sin false-positives en el flow normal",
+        "- [ ] Flip a enforce: `SUPERVISOR_ENFORCEMENT_MODE=enforce`",
+        "",
+    ])
+
+    return Playbook(combo_id=combo.id, markdown="\n".join(md), policy_yaml=None)
+
+
 # ── Registry ───────────────────────────────────────────────────────────
 
 _PLAYBOOK_HANDLERS: dict[str, Callable[[Combo, list[Finding], RepoSummary], Playbook]] = {
+    "agent-orchestrator": _agent_orchestrator,
     "voice-clone-plus-outbound-call": _voice_clone_plus_outbound_call,
     "llm-plus-shell-exec": _llm_plus_shell_exec,
     "mass-email-plus-customer-db": _mass_email_plus_customer_db,
@@ -428,7 +588,7 @@ def render_index(combos: list[Combo]) -> str:
         "",
         "**Nivel 3 (opt-in):** tracking de estado (`combos.state.yaml`) — el scanner marca combos como `open` / `in-progress` / `resolved` y no los vuelve a reportar si están cerrados con evidencia. Ver `ac combos --track`. Actualmente en stub.",
         "",
-        "Para cambiar el default, seteá `SUPERVISOR_REMEDIATION_LEVEL=2` o `3` en el entorno.",
+        "Para cambiar el default, configura `SUPERVISOR_REMEDIATION_LEVEL=2` o `3` en el entorno.",
         "",
     ])
 

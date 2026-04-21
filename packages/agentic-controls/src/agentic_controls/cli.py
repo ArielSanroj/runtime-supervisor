@@ -94,22 +94,69 @@ def _repo_root() -> Path:
 # ── start ──────────────────────────────────────────────────────────────
 
 def cmd_start(args: argparse.Namespace) -> int:
-    _check_ports()
     STATE_DIR.mkdir(exist_ok=True)
     repo = _repo_root()
+
+    # Fast path: if supervisor + UI are alive and creds are saved, reuse them.
+    reused = _reuse_if_alive()
+    if reused is not None:
+        app_id, secret = reused
+        _print_banner(app_id, secret)
+        return 0
+
+    _check_ports()
     db = STATE_DIR / "state.sqlite3"
     admin_token = f"ac-admin-{int(time.time())}"
     (STATE_DIR / "admin_token").write_text(admin_token)
 
-    _migrate_db(repo, db)
-    _start_supervisor(repo, db, admin_token)
-    _wait_for_http(f"http://localhost:{SUPERVISOR_PORT}/v1/action-types", "supervisor", timeout=30)
-    app_id, secret = _bootstrap(admin_token)
-    _seed_policies(repo, admin_token)
-    _start_ui(repo, app_id, secret)
-    _wait_for_http(f"http://localhost:{UI_PORT}/login", "UI", timeout=45)
+    try:
+        _migrate_db(repo, db)
+        _start_supervisor(repo, db, admin_token)
+        _wait_for_http(f"http://localhost:{SUPERVISOR_PORT}/v1/action-types", "supervisor", timeout=30)
+        app_id, secret = _bootstrap(admin_token)
+        _seed_policies(repo, admin_token)
+        _start_ui(repo, app_id, secret)
+        _wait_for_http(f"http://localhost:{UI_PORT}/login", "UI", timeout=45)
+    except BaseException:
+        _teardown_on_failure()
+        raise
     _print_banner(app_id, secret)
     return 0
+
+
+def _reuse_if_alive() -> tuple[str, str] | None:
+    """Return (app_id, secret) if supervisor + UI pid files point to live processes
+    and the credential files are present. Otherwise return None."""
+    for svc in ("supervisor", "ui"):
+        pid_file = STATE_DIR / f"{svc}.pid"
+        if not pid_file.exists():
+            return None
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+        except (ProcessLookupError, ValueError):
+            return None
+    app_id_file = STATE_DIR / "ui_app_id"
+    secret_file = STATE_DIR / "ui_secret"
+    if not (app_id_file.exists() and secret_file.exists()):
+        return None
+    _ok("supervisor y UI ya corrían — reutilizando")
+    return app_id_file.read_text().strip(), secret_file.read_text().strip()
+
+
+def _teardown_on_failure() -> None:
+    """Kill any partially-started services so the next `ac start` can run cleanly."""
+    _warn("falló el arranque — limpiando procesos parciales…")
+    for svc in ("supervisor", "ui"):
+        pid_file = STATE_DIR / f"{svc}.pid"
+        if not pid_file.exists():
+            continue
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except Exception:
+            pass
+        pid_file.unlink(missing_ok=True)
 
 
 def _check_ports() -> None:

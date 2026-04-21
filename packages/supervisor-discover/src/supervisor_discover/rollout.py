@@ -119,7 +119,7 @@ def _shadow_config_block(stack: Stack) -> str:
     env_note = (
         "`configure()` sin argumentos ya lee `SUPERVISOR_ENFORCEMENT_MODE` del "
         "entorno y defaultea a shadow. Para cambiar de modo (shadow/sample/enforce) "
-        "en runtime, cambiá la env var y reiniciá — no requiere redeploy de código."
+        "en runtime, cambia la env var y reinicia — no requiere redeploy de código."
     )
     if stack == "typescript":
         code = (
@@ -229,7 +229,7 @@ def _rollback_block() -> str:
         "# restart el proceso; los guards vuelven a observar sin bloquear\n"
         "```\n\n"
         "Si el problema es el guard mismo (errores de red, latencia al supervisor), "
-        "seteá `SUPERVISOR_ENFORCEMENT_MODE=off` y los guards hacen bypass completo. "
+        "configura `SUPERVISOR_ENFORCEMENT_MODE=off` y los guards hacen bypass completo. "
         "El código sigue compilando y pasando tests — sólo deja de evaluar.\n"
     )
 
@@ -250,11 +250,11 @@ def _phase_shadow(n: int, active: list[Tier], stack: Stack) -> str:
         "Setup: `SUPERVISOR_ENFORCEMENT_MODE=shadow`. Bootstrap en el arranque de la app:\n\n"
         f"{_shadow_config_block(stack)}\n\n"
         "Qué hacer:\n"
-        f"1. Pegá los stubs de `stubs/` en tu código — cubren {tiers_label}.\n"
+        f"1. Pega los stubs de `stubs/` en tu código — cubren {tiers_label}.\n"
         "2. Deploy normal. Nada bloquea.\n"
         "3. Dashboard diario mientras acumula observaciones.\n"
-        "4. Si `would_block_in_shadow` incluye paths legítimos, ajustá el YAML "
-        "en `policies/` o excluí el call-site de la política.\n\n"
+        "4. Si `would_block_in_shadow` incluye paths legítimos, ajusta el YAML "
+        "en `policies/` o excluye el call-site de la política.\n\n"
         "Criterios de salida (todos deben cumplirse):\n"
         f"{exit_lines}\n"
     )
@@ -311,11 +311,11 @@ def _short_rollout(summary: RepoSummary, findings: list[Finding], stack: Stack) 
         _shadow_config_block(stack),
         "",
         "Qué hacer:",
-        f"1. Pegá los stubs (cubren {tiers_label}).",
+        f"1. Pega los stubs (cubren {tiers_label}).",
         "2. Deploy normal.",
-        "3. Re-escaneá (`supervisor-discover scan`) cuando agregues integraciones nuevas "
+        "3. Re-escanea (`supervisor-discover scan`) cuando agregues integraciones nuevas "
         "(payments, LLM providers, jobs programados). Si aparecen call-sites HIGH, "
-        "regenerá este ROLLOUT.md y seguí el playbook extendido.",
+        "regenera este ROLLOUT.md y sigue el playbook extendido.",
         "",
         _metrics_block(),
         _rollback_block(),
@@ -327,7 +327,7 @@ def _empty_rollout(summary: RepoSummary) -> str:
     return (
         f"# Rollout playbook — {summary.one_liner}\n\n"
         "El scan no encontró call-sites que justifiquen un rollout por fases.\n\n"
-        "Re-escaneá cuando:\n"
+        "Re-escanea cuando:\n"
         "- Agregues un SDK de pagos (Stripe, Adyen, etc.)\n"
         "- Agregues un LLM provider (OpenAI, Anthropic, etc.)\n"
         "- Agregues mutaciones directas a tablas sensibles (users/orders/customers/...)\n\n"

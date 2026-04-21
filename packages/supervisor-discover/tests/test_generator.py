@@ -149,6 +149,29 @@ def test_rollout_md_progression_orders_by_max_confidence(tmp_path):
     assert "**LLM tool-use → Customer data**" in rollout
 
 
+def test_generated_output_has_no_rioplatense_voseo(tmp_path):
+    # Neutral Latin American Spanish, no voseo. These are the specific forms
+    # the user called out — enforce on both ROLLOUT.md and report.md.
+    findings = validate(scan_all(FLASK_FIXTURE))
+    out = tmp_path / "rs"
+    generate(findings, out)
+
+    voseo_patterns = [
+        "pegá", "arrancá", "querés", "tenés", "podés", "reiniciá",
+        "cambiá", "ajustá", "seteá", "mirá", "dejá", "seguí",
+        "corré", "mandá", "Preferí", "Revisá", "Re-escaneá",
+        "regenerá", "excluí", "envolvelo", "promové", "verificá",
+        "abrilo", "elegí", "por vos", "abrí ", "Abrí ",
+    ]
+    for doc in ("ROLLOUT.md", "report.md"):
+        content = (out / doc).read_text()
+        for p in voseo_patterns:
+            assert p not in content, (
+                f"{doc} contiene voseo rioplatense '{p}'. "
+                f"Usar equivalente neutro (imperativo con tú)."
+            )
+
+
 def test_rollout_md_surface_block_only_lists_active_tiers(tmp_path):
     # Construct findings that touch only customer_data (no money, no LLM).
     findings = validate([

@@ -218,6 +218,63 @@ def _llm_plus_fs_write(findings: list[Finding]) -> Combo | None:
     )
 
 
+def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
+    """If we found an agent chokepoint (Controller/Dispatcher/Planner class or
+    a tool registration), recommend wrapping IT instead of every leaf call-site.
+    High leverage: 1 wrap = total coverage. This is the combo that matters most
+    for agentic codebases, even when it fires alone."""
+    orch = [f for f in findings if f.scanner == "agent-orchestrators"]
+    classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
+    registrations = [f for f in orch if f.extra.get("kind") == "tool-registration"]
+
+    if not (classes or registrations):
+        return None
+
+    chokepoint_names = sorted({
+        f.extra.get("class_name") or f.extra.get("framework") or "agent"
+        for f in classes
+    })
+    tool_names = sorted({f.extra.get("tool_name") for f in registrations if f.extra.get("tool_name")})
+
+    title_bits: list[str] = []
+    if chokepoint_names:
+        title_bits.append(f"chokepoint ({', '.join(chokepoint_names[:2])})")
+    if tool_names:
+        title_bits.append(f"{len(tool_names)} tools")
+
+    ev_lines: list[str] = []
+    for f in classes[:2]:
+        # Last 2 path segments for readable evidence without absolute paths.
+        rel = "/".join(f.file.rsplit("/", 2)[-2:])
+        ev_lines.append(f"{rel}:{f.line}")
+    if tool_names:
+        ev_lines.append(f"tools: {', '.join(tool_names[:5])}{'...' if len(tool_names) > 5 else ''}")
+
+    severity = "critical" if (classes and registrations) else "high"
+
+    return Combo(
+        id="agent-orchestrator",
+        title=f"Agent orchestrator detectado · {' · '.join(title_bits)}",
+        severity=severity,
+        narrative=(
+            "Este repo tiene un orquestador de agente — una `Controller.handle()` / "
+            "`Dispatcher.dispatch()` / `AgentExecutor` por donde fluye TODA decisión que "
+            "el agente toma antes de ejecutar una tool. Es tu punto de máximo "
+            "apalancamiento: un solo `@supervised('tool_use')` alrededor del orquestador "
+            "gatea todos los tools actuales + cualquiera que agregues después, sin mantener "
+            "wraps individuales. Wrappear acá es estrictamente mejor que wrappear cada "
+            "leaf call-site — no se pierde cobertura cuando el equipo agrega un tool nuevo."
+        ),
+        evidence=ev_lines,
+        mitigation=(
+            "Wrap `Controller.handle()` (o el equivalente). Pasá al supervisor `{tool, "
+            "intent, user_id, session_id, ...payload del intent}` — así las policies "
+            "por-tool funcionan sin tocar código del agente. Ver "
+            "`runtime-supervisor/combos/agent-orchestrator.md`."
+        ),
+    )
+
+
 def _voice_call_plus_scheduler(findings: list[Finding]) -> Combo | None:
     voice_providers = _providers_for_scanner(findings, "voice-actions")
     call_providers = {"twilio", "retell", "vapi", "bland"}
@@ -244,6 +301,8 @@ def _voice_call_plus_scheduler(findings: list[Finding]) -> Combo | None:
 
 
 _COMBO_RULES: list[Callable[[list[Finding]], Combo | None]] = [
+    # Agent orchestrator first — if this fires, it's the #1 mitigation to ship.
+    _agent_orchestrator_present,
     _voice_clone_plus_outbound_call,
     _llm_plus_shell_exec,
     _llm_plus_fs_delete,

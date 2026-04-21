@@ -35,6 +35,7 @@ _SCANNER_TO_TIER: dict[str, Tier] = {
     "calendar-actions": "real_world_actions",
     "fs-shell": "real_world_actions",
     "media-gen": "real_world_actions",
+    "agent-orchestrators": "real_world_actions",
     # http-routes, cron-schedules, anything else → general (fallback below)
 }
 

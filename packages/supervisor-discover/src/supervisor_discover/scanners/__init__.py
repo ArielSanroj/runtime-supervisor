@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..findings import Finding
 from . import (
+    agent_orchestrators,
     calendar_actions,
     cron_schedules,
     db_mutations,
@@ -34,6 +35,8 @@ def scan_all(root: Path) -> list[Finding]:
         calendar_actions,
         fs_shell,
         media_gen,
+        # agent orchestration chokepoints — where ALL agent actions flow through
+        agent_orchestrators,
     ):
         findings.extend(module.scan(root))
     return findings

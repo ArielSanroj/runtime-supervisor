@@ -67,7 +67,7 @@ TIER_COPY = {
         "problem": (
             "Tu agente puede iniciar refunds, charges, subscriptions o payouts. "
             "Sin supervisión, un prompt injection puede disparar un movimiento de "
-            "plata que nadie autorizó."
+            "dinero que nadie autorizó."
         ),
         "in_your_repo_prefix": (
             "{total} call-site(s) que mueven dinero sin pasar por el supervisor."
@@ -76,6 +76,12 @@ TIER_COPY = {
             "Wrappear cada call-site con `@supervised('payment')` (o `refund`). "
             "La policy `payment.base.v1` ya enforce-a hard-cap en amount, velocity "
             "por customer, y bloquea si la cuenta bancaria cambió en las últimas 24h."
+        ),
+        "runtime_behavior": (
+            "bloquea la llamada si el payload falla la policy. Si el risk score "
+            "es ≥50 (monto alto, cliente nuevo, velocity sospechosa), la escala a "
+            "review humano. En shadow mode solo registra la decisión sin interrumpir "
+            "— útil para calibrar el hard-cap antes de enforzar."
         ),
         "technical_footnote": (
             "_Policies: `payment.base.v1` y `refund.base.v1`. Detectores activos: "
@@ -98,6 +104,12 @@ TIER_COPY = {
             "copy-paste están en `stubs/py/` y `stubs/ts/`. La policy `tool_use.base.v1` "
             "requiere tool name explícito, caps prompt length, y bloquea namespaces "
             "privilegiados (shell, fs.delete, network.raw)."
+        ),
+        "runtime_behavior": (
+            "bloquea llamadas a tools prohibidas (shell, fs.delete, network.raw). "
+            "Escala a humano cualquier acción que envíe mensaje, llame, o agende "
+            "con contenido sospechoso. En shadow mode solo registra — útil para "
+            "construir allowlist de destinatarios/tools reales antes de enforzar."
         ),
         "technical_footnote": (
             "_Policy: `tool_use.base.v1`. Detectores activos: prompt injection, "
@@ -122,6 +134,12 @@ TIER_COPY = {
             "requerido, row_limit, columnas PII bloqueadas) y dejan audit trail "
             "con cadena hash para cumplimiento."
         ),
+        "runtime_behavior": (
+            "bloquea mutaciones fuera del scope autorizado (tenant cruzado, "
+            "cambios múltiples de identidad). Emite evidence-log con hash-chain "
+            "por cada decisión para cumplimiento. En review, notifica al "
+            "responsable de protección de datos antes de permitir."
+        ),
         "technical_footnote": (
             "_Policies: `account_change.base.v1`, `data_access.base.v1`. Audit "
             "trail con hash-chain. Ref: OWASP LLM Top 10 (LLM02), cumplimiento: GDPR, SOC2._"
@@ -143,6 +161,12 @@ TIER_COPY = {
             "valida que el prompt no supere 50k chars (loop de consumo), que el tool "
             "name esté declarado (rate-limit + audit), y corre los detectores de "
             "ataques típicos a LLMs."
+        ),
+        "runtime_behavior": (
+            "bloquea llamadas con prompts inyectados o que pidan acciones fuera "
+            "del scope del agente. Escala a review si detecta PII en el input. "
+            "En shadow marca la llamada sin interrumpir — permite medir cuántos "
+            "prompts legítimos matchearían las reglas antes de enforzar."
         ),
         "technical_footnote": (
             "_Policy: `tool_use.base.v1`. Detectores: prompt injection, jailbreak, "
@@ -167,6 +191,7 @@ TIER_COPY = {
             "va a poder gatear cron jobs con ejecución idempotente y rate-limits "
             "por route."
         ),
+        "runtime_behavior": "",
         "technical_footnote": "",
     },
 }

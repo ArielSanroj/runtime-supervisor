@@ -60,6 +60,15 @@ def test_report_is_tiered_with_rollout_guidance(tmp_path):
     assert "🔴 **Problema:**" in report
     assert "📍 **En tu repo:**" in report
     assert "✅ **La solución:**" in report
+    # 💡 En runtime: block/review/shadow semantics — preserves the detail
+    # that the old "Intervendría" copy had (what the supervisor actually does
+    # at call time, not just the wrap pattern).
+    assert "💡 **En runtime:**" in report
+    # Operational note about env-var switching without redeploy survives
+    # in ROLLOUT.md's shadow phase.
+    rollout = (tmp_path / "rs" / "ROLLOUT.md").read_text()
+    assert "SUPERVISOR_ENFORCEMENT_MODE" in rollout
+    assert "no requiere redeploy" in rollout
 
 
 def test_rollout_md_is_stack_aware_for_python_repo(tmp_path):

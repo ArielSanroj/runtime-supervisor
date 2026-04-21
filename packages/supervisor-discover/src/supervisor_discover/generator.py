@@ -357,6 +357,13 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         lines.append("")
         lines.append(f"✅ **La solución:** {copy['solution']}")
         lines.append("")
+        # Optional 💡 runtime behavior — what the supervisor does at call time.
+        # This is the "old intervendría" detail, kept so the reader understands
+        # block vs review vs shadow semantics, not just the wrap pattern.
+        runtime = copy.get("runtime_behavior", "")
+        if runtime:
+            lines.append(f"💡 **En runtime:** {runtime}")
+            lines.append("")
         footnote = copy.get("technical_footnote", "")
         if footnote:
             lines.append(footnote)

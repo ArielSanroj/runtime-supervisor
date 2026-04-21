@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_tier
+from .combo_playbooks import render_index as render_combos_index, render_playbook
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .rollout import render_rollout_md
@@ -84,6 +85,20 @@ def generate(findings: list[Finding], out_dir: Path) -> None:
             shutil.copyfile(src, dst)
         else:
             dst.write_text(_policy_template(action_type))
+
+    # combos/ — Nivel 1 remediation playbooks per detected combo.
+    # Writes one markdown per combo + an index README. Combo-specific
+    # policies also land in policies/ (created above) so the user can
+    # copy-paste them into the supervisor without extra ceremony.
+    if combos:
+        combos_dir = out_dir / "combos"
+        combos_dir.mkdir(exist_ok=True)
+        for combo in combos:
+            pb = render_playbook(combo, findings, summary)
+            (combos_dir / f"{combo.id}.md").write_text(pb.markdown)
+            if pb.policy_yaml:
+                (policies_dir / f"tool_use.{combo.id}.v1.yaml").write_text(pb.policy_yaml)
+        (combos_dir / "README.md").write_text(render_combos_index(combos))
 
     # stubs (one per call-site of high-confidence payment/LLM findings)
     stubs_py = out_dir / "stubs" / "py"

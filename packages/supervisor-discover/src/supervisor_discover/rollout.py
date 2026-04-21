@@ -71,18 +71,25 @@ def _pacing(summary: RepoSummary, findings: list[Finding]) -> Pacing:
     minimal → one shadow phase, no advancement (too little to measure)
     small   → two phases (shadow → enforce)
     large   → three phases (shadow → sample → enforce per tier)
+
+    All action tiers count toward criticality, not just money + llm. A repo
+    with 24 real-world-actions HIGH (voice/email/shell) needs a full rollout
+    just as much as one with 2 payment findings — the earlier version missed
+    that because it only summed money_high + llm_high.
     """
     if not findings:
         return "none"
 
     buckets = group_by_risk_tier(findings)
-    money_high = sum(1 for f in buckets["money"] if f.confidence == "high")
-    llm_high = sum(1 for f in buckets["llm"] if f.confidence == "high")
-    critical_high = money_high + llm_high
+    high_by_tier = {
+        tier: sum(1 for f in buckets[tier] if f.confidence == "high")
+        for tier in ("money", "real_world_actions", "llm", "customer_data")
+    }
+    total_high = sum(high_by_tier.values())
 
-    if critical_high == 0 and sum(1 for f in buckets["customer_data"] if f.confidence == "high") == 0:
+    if total_high == 0:
         return "minimal"
-    if critical_high >= 3 or summary.total_findings >= 100:
+    if total_high >= 3 or summary.total_findings >= 100:
         return "large"
     return "small"
 
@@ -300,8 +307,10 @@ def _short_rollout(summary: RepoSummary, findings: list[Finding], stack: Stack) 
     lines = [
         f"# Rollout playbook — {summary.one_liner}",
         "",
-        "Superficie chica: este repo no tiene call-sites HIGH en money ni LLM, "
-        "así que el rollout se colapsa a una fase de observación.",
+        "Superficie chica: no hay call-sites HIGH en ningún tier, "
+        "así que el rollout se colapsa a una fase de observación. "
+        "Cuando aparezcan findings HIGH (nuevas integraciones, call-sites agregados), "
+        "re-escaneá y el playbook extendido se regenera solo.",
         "",
         _surface_block(summary, findings, stack),
         "## Fase única — Shadow indefinido",

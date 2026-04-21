@@ -249,7 +249,7 @@ scanned your repo in 9.5s
               num="02"
               title="start the local supervisor"
               command="uv run ac start"
-              result="SQLite, zero infra, panel on localhost:3099"
+              result="SQLite, no cloud. dashboard at http://localhost:3099 — live blocks, reviews, policies."
             />
             <Step
               num="03"
@@ -264,7 +264,7 @@ scanned your repo in 9.5s
               href="/dashboard"
               className="rounded-lg bg-emerald-500 px-6 py-3 text-sm font-semibold text-black hover:bg-emerald-400"
             >
-              open panel →
+              open dashboard →
             </Link>
             <Link
               href="https://github.com/ArielSanroj/runtime-supervisor"
@@ -325,7 +325,7 @@ function Header({ apiUp }: { apiUp: boolean }) {
             href="/dashboard"
             className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-black hover:bg-emerald-400"
           >
-            open panel
+            open dashboard
           </Link>
         </div>
       </div>

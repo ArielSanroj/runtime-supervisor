@@ -222,12 +222,17 @@ def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
     """If we found an agent chokepoint (Controller/Dispatcher/Planner class or
     a tool registration), recommend wrapping IT instead of every leaf call-site.
     High leverage: 1 wrap = total coverage. This is the combo that matters most
-    for agentic codebases, even when it fires alone."""
+    for agentic codebases, even when it fires alone.
+
+    Framework imports (no class / no registration) still fire the combo at
+    lower severity — the user's repo is agentic, we just couldn't pinpoint
+    the wrap site. The playbook tells them how to find it themselves."""
     orch = [f for f in findings if f.scanner == "agent-orchestrators"]
     classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
     registrations = [f for f in orch if f.extra.get("kind") == "tool-registration"]
+    imports = [f for f in orch if f.extra.get("kind") == "framework-import"]
 
-    if not (classes or registrations):
+    if not (classes or registrations or imports):
         return None
 
     chokepoint_names = sorted({
@@ -235,12 +240,15 @@ def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
         for f in classes
     })
     tool_names = sorted({f.extra.get("tool_name") for f in registrations if f.extra.get("tool_name")})
+    frameworks = sorted({str(f.extra.get("framework")) for f in imports if f.extra.get("framework")})
 
     title_bits: list[str] = []
     if chokepoint_names:
         title_bits.append(f"chokepoint ({', '.join(chokepoint_names[:2])})")
     if tool_names:
         title_bits.append(f"{len(tool_names)} tools")
+    if not chokepoint_names and not tool_names and frameworks:
+        title_bits.append(f"framework ({', '.join(frameworks)})")
 
     ev_lines: list[str] = []
     for f in classes[:2]:
@@ -249,8 +257,20 @@ def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
         ev_lines.append(f"{rel}:{f.line}")
     if tool_names:
         ev_lines.append(f"tools: {', '.join(tool_names[:5])}{'...' if len(tool_names) > 5 else ''}")
+    if not classes and imports:
+        # Show the files where imports live so the reader knows where to look.
+        for f in imports[:3]:
+            rel = "/".join(f.file.rsplit("/", 2)[-2:])
+            ev_lines.append(f"{rel}:{f.line}")
+        if len(imports) > 3:
+            ev_lines.append(f"+{len(imports) - 3} archivos con imports")
 
-    severity = "critical" if (classes and registrations) else "high"
+    if classes and registrations:
+        severity = "critical"
+    elif classes or registrations:
+        severity = "high"
+    else:  # imports only — signal, not a wrap point
+        severity = "medium"
 
     return Combo(
         id="agent-orchestrator",

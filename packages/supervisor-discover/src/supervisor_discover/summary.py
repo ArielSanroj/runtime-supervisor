@@ -108,6 +108,42 @@ def _stripe_capability_from_method(method: str) -> str | None:
     return _STRIPE_CAPABILITY.get(parts[1])
 
 
+# Filename hints that mean "this is an assembly point" — the class defined
+# here is almost certainly the entry-point that orchestrates the agent.
+# Matches lowercased basenames (including extension).
+_FACTORY_FILE_HINTS = (
+    "crew_factory", "crewfactory", "crew.py",
+    "orchestrator", "dispatcher", "router",
+    "controller", "supervisor",
+    "main.py", "app.py", "graph.py", "workflow.py",
+)
+
+
+def _chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
+    """Lower rank = better wrap point.
+
+    Ranking:
+      0. Agent-class definitions in factory/orchestrator files — the actual
+         class whose method the user will wrap.
+      1. Tool registrations — each registration names a concrete tool.
+      2. Agent-class definitions elsewhere.
+      3. Framework imports — signal that a framework is in use, but the
+         import line itself is not wrappable. Informational, not actionable.
+    Tie-break by line then file so output is deterministic.
+    """
+    file_lower = cp.file.lower()
+    is_factory = any(hint in file_lower for hint in _FACTORY_FILE_HINTS)
+    if cp.kind == "agent-class" and is_factory:
+        tier = 0
+    elif cp.kind == "tool-registration":
+        tier = 1
+    elif cp.kind == "agent-class":
+        tier = 2
+    else:  # framework-import — signal, not a wrap point
+        tier = 3
+    return (tier, cp.line, cp.file)
+
+
 def build_summary(findings: list[Finding]) -> RepoSummary:
     frameworks_seen: Counter[str] = Counter()
     http_count = 0
@@ -203,6 +239,13 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
         if key not in seen_cp:
             unique_chokepoints.append(cp)
             seen_cp.add(key)
+
+    # Rank by wrap-value, not scan order: an actual Crew/Controller class in
+    # a factory/orchestrator file is wrappable; a plain `from crewai import X`
+    # in an agent definition file is signal but not a wrap-point. Put the
+    # wrappable ones first so the report's "wrappear UNO de estos" list leads
+    # with call-sites the reader can actually decorate.
+    unique_chokepoints.sort(key=_chokepoint_rank)
 
     return RepoSummary(
         frameworks=primary_fw,
@@ -345,15 +388,34 @@ def render_markdown(summary: RepoSummary) -> str:
         lines.append("")
         lines.append("### 🎯 Agent orchestration detectada")
         lines.append("")
-        if summary.agent_chokepoints:
-            lines.append("**Chokepoints** (wrappear UNO de estos con `@supervised('tool_use')` = cobertura total del agente):")
-            for cp in summary.agent_chokepoints[:5]:
+
+        # Split by kind: wrappable call-sites (classes in factory files,
+        # tool registrations) vs. pure signal (framework imports).
+        wrappable = [cp for cp in summary.agent_chokepoints
+                     if cp.kind in ("agent-class", "tool-registration")]
+        imports = [cp for cp in summary.agent_chokepoints if cp.kind == "framework-import"]
+
+        if wrappable:
+            lines.append("**Wrap aquí** — un solo `@supervised('tool_use')` en uno de estos puntos cubre todos los tools del agente (actuales y futuros):")
+            for cp in wrappable[:5]:
                 file_short = cp.file.rsplit("/", 2)
                 file_display = "/".join(file_short[-2:]) if len(file_short) > 1 else cp.file
-                lines.append(f"- `{file_display}:{cp.line}` — {cp.kind} `{cp.label}`")
-            if len(summary.agent_chokepoints) > 5:
-                lines.append(f"- _+{len(summary.agent_chokepoints) - 5} más_")
+                kind_label = "class" if cp.kind == "agent-class" else "tool"
+                lines.append(f"- `{file_display}:{cp.line}` — {kind_label} `{cp.label}`")
+            if len(wrappable) > 5:
+                lines.append(f"- _+{len(wrappable) - 5} más_")
             lines.append("")
+
+        if imports:
+            frameworks_seen = sorted({cp.label for cp in imports})
+            fw_str = ", ".join(f"`{f}`" for f in frameworks_seen)
+            lines.append(
+                f"**Framework detectado:** {fw_str} — imports en {len(imports)} archivo(s). "
+                "Los imports solos no son wrap-points; buscá el `Crew()` / `AgentExecutor()` / "
+                "`StateGraph()` que los usa (ese sí se wrappea)."
+            )
+            lines.append("")
+
         if summary.agent_tools:
             tools_str = ", ".join(f"`{t}`" for t in summary.agent_tools[:10])
             more = f" _+{len(summary.agent_tools) - 10} más_" if len(summary.agent_tools) > 10 else ""
@@ -408,9 +470,17 @@ def render_cli_stdout(summary: RepoSummary) -> list[str]:
         out.append(f"  actions: {' · '.join(parts)}")
     if summary.agent_tools or summary.agent_chokepoints:
         # 🎯 headline — agent orchestration is the highest-leverage signal.
+        # Distinguish "wrap here" points from "framework import" signal so the
+        # CLI reader doesn't think a `from crewai import X` is a wrap point.
         bits: list[str] = []
-        if summary.agent_chokepoints:
-            bits.append(f"chokepoint: {summary.agent_chokepoints[0].label}")
+        wrappable = [cp for cp in summary.agent_chokepoints
+                     if cp.kind in ("agent-class", "tool-registration")]
+        imports = [cp for cp in summary.agent_chokepoints if cp.kind == "framework-import"]
+        if wrappable:
+            bits.append(f"wrap: {wrappable[0].label}")
+        if imports:
+            frameworks_seen = sorted({cp.label for cp in imports})
+            bits.append(f"framework: {', '.join(frameworks_seen)}")
         if summary.agent_tools:
             tools_preview = ", ".join(summary.agent_tools[:4])
             more = f" +{len(summary.agent_tools) - 4}" if len(summary.agent_tools) > 4 else ""

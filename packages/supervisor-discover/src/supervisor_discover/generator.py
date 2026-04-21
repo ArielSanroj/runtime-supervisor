@@ -14,6 +14,7 @@ from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_ti
 from .combo_playbooks import render_index as render_combos_index, render_playbook
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
+from .narrator import render_summary as render_summary_email
 from .rollout import render_rollout_md
 from .summary import build_summary, render_markdown as render_summary_md
 from .templates import (
@@ -36,10 +37,15 @@ def _safe_filename(path: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", rel)
 
 
-def generate(findings: list[Finding], out_dir: Path) -> None:
+def generate(findings: list[Finding], out_dir: Path, repo_root: Path | None = None) -> None:
+    """Emit the runtime-supervisor/ output directory.
+
+    `repo_root`, when provided, becomes the basename in SUMMARY.md's title.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     summary = build_summary(findings)
+    repo_name = repo_root.name if repo_root else None
 
     # findings.json — wrapped now: top-level "findings" + "repo_summary".
     # CI consumers that diff findings[] keep working; new consumers can read
@@ -74,6 +80,12 @@ def generate(findings: list[Finding], out_dir: Path) -> None:
 
     # ROLLOUT.md — tailored to the repo's stack + surface + tier counts.
     (out_dir / "ROLLOUT.md").write_text(render_rollout_md(summary, findings))
+
+    # SUMMARY.md — the mandable "security review email". report.md is the
+    # technical doc; SUMMARY.md is the thing you paste in a PR or DM.
+    (out_dir / "SUMMARY.md").write_text(
+        render_summary_email(summary, findings, combos, repo_name=repo_name)
+    )
 
     # policies — copy from supervisor's source dir for live action types
     policies_dir = out_dir / "policies"
@@ -197,7 +209,12 @@ def _render_applicable_guardrails(findings: list[Finding]) -> str:
         rules = _load_policy_rules(action_type)
         owasp = _OWASP_PER_ACTION_TYPE.get(action_type, [])
 
-        lines.append(f"### {action_type} — {len(items)} call-site(s)")
+        # Show the scanners that emitted this action_type so the reader
+        # knows whether "tool_use" here means LLM calls, email/shell, or
+        # agent-orchestrator — the policy name alone is ambiguous.
+        scanners_used = sorted({f.scanner for f in items})
+        scanners_str = f" — via {', '.join(scanners_used)}" if scanners_used else ""
+        lines.append(f"### Policy `{action_type}.base.v1` — {len(items)} call-site(s){scanners_str}")
         lines.append("")
 
         # Policy rules block
@@ -318,7 +335,17 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         lines.append(f"**Intervendría:** {copy['intervendria']}")
         lines.append("")
 
-    # Findings table — headline tier shows high+medium, low in a nested <details>.
+    if collapse:
+        # General tier: one simple table inside the <details>, no duplication.
+        lines.append("| Scanner | File:Line | Snippet |")
+        lines.append("|---|---|---|")
+        for f in items:
+            lines.append(f"| `{f.scanner}` | `{f.file}`:{f.line} | `{f.snippet}` |")
+        lines.append("")
+        lines.append("</details>\n")
+        return lines
+
+    # Headline tiers: high+medium in a rich table, low in a nested <details>.
     if high or medium:
         lines.append("| Confianza | Scanner | File:Line | Snippet | Rationale |")
         lines.append("|---|---|---|---|---|")
@@ -328,21 +355,12 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
             )
         lines.append("")
 
-    if low and not collapse:
+    if low:
         lines.append(f"<details>\n<summary>{len(low)} low-confidence findings</summary>\n")
         lines.append("| Scanner | File:Line | Snippet | Rationale |")
         lines.append("|---|---|---|---|")
         for f in low:
             lines.append(f"| `{f.scanner}` | `{f.file}`:{f.line} | `{f.snippet}` | {f.rationale} |")
-        lines.append("")
-        lines.append("</details>\n")
-
-    if collapse:
-        # For general tier: just a simple listing of all items.
-        lines.append("| Scanner | File:Line | Snippet |")
-        lines.append("|---|---|---|")
-        for f in items:
-            lines.append(f"| `{f.scanner}` | `{f.file}`:{f.line} | `{f.snippet}` |")
         lines.append("")
         lines.append("</details>\n")
 

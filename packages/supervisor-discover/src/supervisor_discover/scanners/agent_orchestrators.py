@@ -83,11 +83,24 @@ _FRAMEWORK_IMPORTS: list[tuple[re.Pattern, str]] = [
 # MEDIUM-confidence — class defs with agent-y names.
 _AGENT_CLASS_NAMES = r"(?:Controller|Dispatcher|Orchestrator|Planner|Agent|ToolDispatcher|AgentExecutor|AgentRouter)"
 
+# Shims / test doubles / abstract bases — names that look agent-shaped but
+# never run a real agent in prod. Filter OUT matches whose class name
+# contains any of these tokens (case-insensitive).
+_CLASS_NAME_BLOCKLIST = (
+    "stub", "mock", "fake", "dummy", "compat", "shim",
+    "base", "abstract", "proto", "test",
+)
+
 _CLASS_DEF: list[tuple[re.Pattern, str]] = [
     (re.compile(rf"\bclass\s+(\w*{_AGENT_CLASS_NAMES})\b"), "agent-shaped class name"),
     # TS/JS: `export class Foo` / `export default class Foo`
     (re.compile(rf"\bexport\s+(?:default\s+)?class\s+(\w*{_AGENT_CLASS_NAMES})\b"), "agent-shaped class name"),
 ]
+
+
+def _is_shim_class(name: str) -> bool:
+    lower = name.lower()
+    return any(tok in lower for tok in _CLASS_NAME_BLOCKLIST)
 
 # LOW-confidence by itself, MEDIUM when in agent path — method defs.
 _AGENT_METHOD_NAMES = (
@@ -154,11 +167,15 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 extra={"kind": "framework-import", "framework": framework},
             ))
 
-    # 3. Agent-shaped class definitions — HIGH in agent paths, MEDIUM otherwise
+    # 3. Agent-shaped class definitions — HIGH in agent paths, MEDIUM otherwise.
+    # Skip shims (Stub/Mock/Fake/Compat/…) — they match the name regex but are
+    # test doubles or abstract bases, never the real orchestrator in prod.
     for pattern, label in _CLASS_DEF:
         for m in pattern.finditer(text):
             line = text[: m.start()].count("\n") + 1
             class_name = m.group(1) if m.groups() else "?"
+            if _is_shim_class(class_name):
+                continue
             confidence = "high" if in_agent_path else "medium"
             findings.append(Finding(
                 scanner="agent-orchestrators",

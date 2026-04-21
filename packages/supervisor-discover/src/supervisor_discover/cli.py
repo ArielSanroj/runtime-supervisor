@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         return 0
 
-    generate(findings, out)
+    generate(findings, out, repo_root=root)
     _print_tier_summary(root, findings, elapsed, out)
     _prompt_remediation_level(findings, out, args)
     return 0
@@ -308,7 +308,8 @@ def _print_tier_summary(root: Path, findings: list, elapsed: float, out: Path) -
 
     print("", file=sys.stderr)
     print(f"-> wrote {out}", file=sys.stderr)
-    print(f"-> next: open {out / 'ROLLOUT.md'} for the deploy playbook tailored to this repo", file=sys.stderr)
+    print(f"-> next: open {out / 'SUMMARY.md'} — security review priorizada (lo que harías hoy, mañana, día 4)", file=sys.stderr)
+    print(f"   or:   {out / 'ROLLOUT.md'} para el deploy playbook por fases", file=sys.stderr)
 
 
 def _handle_fix(args: argparse.Namespace) -> int:

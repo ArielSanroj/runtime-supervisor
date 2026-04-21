@@ -383,21 +383,173 @@ en github.com/ArielSanroj/runtime-supervisor con el combo_id `{combo.id}`._
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=None)
 
 
+def _imports_only_playbook(
+    combo: Combo,
+    imports: list[Finding],
+    frameworks: list[str],
+    summary: RepoSummary,
+    stack_is_ts: bool,
+) -> Playbook:
+    """Playbook variant when we found framework imports but no class/registration.
+
+    We know the repo uses langchain/crewai/langgraph/etc., but we can't point
+    to the exact line to wrap — that depends on how the user wired the
+    framework. This playbook tells them how to find it themselves."""
+    framework = frameworks[0] if frameworks else "agent framework"
+    import_files = sorted({f.file for f in imports})
+    import_samples = [_relative_path(f) for f in import_files[:5]]
+
+    # Per-framework hints: the entry-point name the reader should look for.
+    framework_hints = {
+        "crewai": ("Crew(", "Crew.kickoff()"),
+        "langchain": ("AgentExecutor(", "AgentExecutor.invoke()"),
+        "langchain python": ("AgentExecutor(", "AgentExecutor.invoke()"),
+        "langgraph": ("StateGraph(", "graph.invoke() / graph.stream()"),
+        "autogen": ("ConversableAgent(", "initiate_chat()"),
+        "mastra": ("new Agent(", "agent.generate() / agent.stream()"),
+    }
+    ctor, entry = framework_hints.get(framework.lower(), (f"{framework}(", f"{framework} invoke / kickoff"))
+
+    md = [
+        f"# Fix: {combo.title}",
+        "",
+        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        "",
+        "## Qué detecté",
+        "",
+        f"Tu repo importa `{framework}` en {len(import_files)} archivo(s). "
+        "El scanner confirma que estás usando un framework de agentes, pero los "
+        "imports por sí mismos no son wrap-points — el `guarded()` tiene que "
+        "envolver la **invocación** del framework, no la definición.",
+        "",
+        "Archivos con imports:",
+        "",
+    ]
+    for p in import_samples:
+        md.append(f"- `{p}`")
+    if len(import_files) > 5:
+        md.append(f"- _+{len(import_files) - 5} más_")
+    md.append("")
+
+    md.extend([
+        f"## Paso 1 — Encontrá tu `{ctor}` en el repo",
+        "",
+        f"Grepeá donde se construye el `{ctor}`:",
+        "",
+        "```bash",
+        f"rg '{ctor}' --type py --type ts",
+        "```",
+        "",
+        "Típicamente vive en un archivo tipo `main.py`, `app.py`, `crew_factory.py`, "
+        "`orchestrator.py`, o dentro del entry-point de tu API (Flask route / FastAPI "
+        f"endpoint). Lo que buscás es la **línea que llama a `{entry}`** — ese es tu "
+        "wrap point.",
+        "",
+        f"## Paso 2 — Envolver la llamada a `{entry}`",
+        "",
+    ])
+
+    if stack_is_ts:
+        md.extend([
+            "```typescript",
+            "import { guarded } from \"@runtime-supervisor/guards\";",
+            "",
+            "// antes:",
+            f"// const result = await {entry};",
+            "",
+            "// después:",
+            "const result = await guarded(",
+            "  \"tool_use\",",
+            "  {",
+            f"    tool: \"{framework}.invoke\",",
+            "    intent: userIntent,",
+            "    user_id: userId,",
+            "    session_id: sessionId,",
+            "    input_preview: inputText?.slice(0, 200),",
+            "  },",
+            f"  async () => {entry.split('(')[0]}({'...args'}),",
+            ");",
+            "```",
+        ])
+    else:
+        md.extend([
+            "```python",
+            "from supervisor_guards import guarded",
+            "",
+            "# antes:",
+            f"# result = {entry}",
+            "",
+            "# después:",
+            "result = guarded(",
+            "    'tool_use',",
+            "    {",
+            f"        'tool': '{framework}.invoke',",
+            "        'intent': user_intent,",
+            "        'user_id': user_id,",
+            "        'session_id': session_id,",
+            "        'input_preview': (input_text or '')[:200],",
+            "    },",
+            f"    lambda: {entry.split('(')[0]}(...args),",
+            ")",
+            "```",
+        ])
+
+    md.extend([
+        "",
+        "## Paso 3 — Policy base",
+        "",
+        "El `tool_use.base.v1` ya cubre missing-tool-name / prompt length / privileged "
+        "namespaces. Suficiente para arrancar.",
+        "",
+        "Cuando identifiques los tools concretos que tu agente expone (revisar en tu "
+        f"definición de `{framework}` — las tools que le pasás al Agent/Crew/Graph), "
+        "agregás reglas específicas por tool en el mismo YAML.",
+        "",
+        "## ✅ Done when",
+        "",
+        f"- [ ] Encontré el call-site de `{entry}` en mi repo",
+        "- [ ] Envuelto con `guarded(\"tool_use\", ...)` o `@supervised(\"tool_use\")`",
+        "- [ ] Re-escaneo con `supervisor-discover scan` confirma el wrap (el finding "
+        "pasa de imports-only a wrap-site detectado)",
+        "- [ ] 7 días shadow sin false-positives en el flow normal del agente",
+        "- [ ] Flip a enforce",
+        "",
+        "---",
+        "",
+        f"_Tip: si el framework no detectado acá te parece raro para tu stack, o si sabés "
+        f"cuál es tu wrap point pero el scanner no lo vio, [abrí un issue]"
+        "(https://github.com/ArielSanroj/runtime-supervisor/issues) con el path exacto — "
+        "ampliamos los patrones del scanner._",
+    ])
+
+    return Playbook(combo_id=combo.id, markdown="\n".join(md), policy_yaml=None)
+
+
 def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSummary) -> Playbook:
     """Playbook for repos with an agent orchestrator chokepoint. The #1
     recommendation is to wrap the orchestrator, not every leaf call-site —
     this file generates the specific code + policy snippets."""
     orch = [f for f in findings if f.scanner == "agent-orchestrators"]
     classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
+    registrations = [f for f in orch if f.extra.get("kind") == "tool-registration"]
+    imports = [f for f in orch if f.extra.get("kind") == "framework-import"]
     tools = sorted({
-        f.extra.get("tool_name") for f in orch
-        if f.extra.get("kind") == "tool-registration" and f.extra.get("tool_name")
+        f.extra.get("tool_name") for f in registrations if f.extra.get("tool_name")
     })
 
-    primary = classes[0] if classes else (orch[0] if orch else None)
+    # Imports-only: we know the framework is in use but can't point to a
+    # specific wrap site. Emit a "find your Crew()" playbook instead of the
+    # full wrap-and-go template, so the reader gets useful guidance rather
+    # than a template that assumes knowledge we don't have.
+    imports_only = bool(imports) and not classes and not registrations
+    primary = classes[0] if classes else (registrations[0] if registrations else (imports[0] if imports else None))
     primary_rel = _relative_path(primary.file) if primary else "<no chokepoint>"
     primary_label = (primary.extra.get("class_name") if primary else None) or "agent"
+    frameworks = sorted({str(f.extra.get("framework")) for f in imports if f.extra.get("framework")})
     stack_is_ts = any(f.file.endswith((".ts", ".tsx", ".js")) for f in orch)
+
+    if imports_only:
+        return _imports_only_playbook(combo, imports, frameworks, summary, stack_is_ts)
 
     md = [
         f"# Fix: {combo.title}",

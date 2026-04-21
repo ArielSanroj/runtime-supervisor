@@ -53,7 +53,7 @@ function DecisionBar({ m }: { m: MetricsSummary }) {
   return (
     <div>
       <div style={{ display: "flex", height: 24, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)" }}>
-        <div style={{ width: `${allow}%`, background: "rgba(62,207,142,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>
+        <div style={{ width: `${allow}%`, background: "rgba(52,211,153,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>
           {allow >= 8 ? "allow" : ""}
         </div>
         <div style={{ width: `${review}%`, background: "rgba(245,182,66,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>

@@ -10,18 +10,18 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 
 /* ------- Ops console dark theme (scoped to .ops-shell) ------- */
 .ops-shell {
-  --bg: #0b0d12;
-  --panel: #12151d;
-  --panel-2: #1a1f2a;
+  --bg: #000000;
+  --panel: #0b0d12;
+  --panel-2: #12151d;
   --border: #262c39;
   --text: #e6e9ef;
   --muted: #8a93a5;
-  --accent: #7aa2ff;
-  --ok: #3ecf8e;
+  /* Brand accent — matches landing's emerald-400 for visual continuity */
+  --accent: #34d399;
+  --ok: #34d399;
   --warn: #f5b642;
   --danger: #ef4f5a;
 
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
 }

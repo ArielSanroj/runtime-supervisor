@@ -10,6 +10,7 @@ export type Integration = {
   revoked_at: string | null;
   execute_url: string | null;
   execute_method: string;
+  tenant_id: string | null;
 };
 
 export type IntegrationCreated = Integration & { shared_secret: string };

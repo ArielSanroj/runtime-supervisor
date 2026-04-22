@@ -56,6 +56,7 @@ export default async function IntegrationsPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Tenant</th>
                 <th>Scopes</th>
                 <th>Execute URL</th>
                 <th>Status</th>
@@ -67,6 +68,9 @@ export default async function IntegrationsPage() {
               {rows.map((i) => (
                 <tr key={i.id}>
                   <td className="mono">{i.name}</td>
+                  <td className="mono muted" style={{ fontSize: 12 }}>
+                    {i.tenant_id ? i.tenant_id.slice(0, 8) : "—"}
+                  </td>
                   <td className="mono">{(i.scopes || []).join(", ")}</td>
                   <td className="mono muted" style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {i.execute_url ?? "—"}

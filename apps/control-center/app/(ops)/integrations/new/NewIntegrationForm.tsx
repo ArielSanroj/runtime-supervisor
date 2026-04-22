@@ -2,17 +2,30 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const KNOWN_ACTION_TYPES = ["refund", "payment", "account_change", "data_access", "tool_use", "compliance"];
+
+type TenantOption = { id: string; name: string };
 
 export default function NewIntegrationForm() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["*"]);
+  const [tenantId, setTenantId] = useState<string>("");
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [created, setCreated] = useState<{ id: string; name: string; shared_secret: string } | null>(null);
+
+  // Fetch tenants once so the operator can assign the new integration
+  // explicitly. Empty-string "" means "let the server pick the default".
+  useEffect(() => {
+    fetch("/api/tenants")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: TenantOption[]) => setTenants(Array.isArray(rows) ? rows : []))
+      .catch(() => setTenants([]));
+  }, []);
 
   function toggleScope(s: string) {
     setScopes((cur) => {
@@ -27,10 +40,15 @@ export default function NewIntegrationForm() {
     setBusy(true);
     setErr(null);
     try {
+      const body: Record<string, unknown> = {
+        name,
+        scopes: scopes.length ? scopes : ["*"],
+      };
+      if (tenantId) body.tenant_id = tenantId;
       const r = await fetch("/api/integrations", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, scopes: scopes.length ? scopes : ["*"] }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       const out = await r.json();
@@ -79,6 +97,22 @@ export default function NewIntegrationForm() {
       <label style={{ display: "block", marginBottom: 12 }}>
         <span className="muted">Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. acme-refund-agent" />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 12 }}>
+        <span className="muted">Tenant</span>
+        <select
+          value={tenantId}
+          onChange={(e) => setTenantId(e.target.value)}
+          style={{ width: "100%", padding: "8px 10px", background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 8, marginTop: 6 }}
+        >
+          <option value="">— default (server fallback) —</option>
+          {tenants.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
       </label>
 
       <label style={{ display: "block", marginBottom: 12 }}>

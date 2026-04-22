@@ -129,6 +129,25 @@ def test_get_decision_404s_across_tenants(client, auth_on):
     assert leak.status_code == 404, leak.text
 
 
+def test_metrics_summary_isolates_by_tenant(client, auth_on):
+    """Dashboard metrics must only count the caller's tenant — otherwise
+    tenant B can infer tenant A's traffic volume from its own /metrics."""
+    _, headers_a = _create_tenant_and_integration(client, "t-met-a", "i-met-a")
+    _, headers_b = _create_tenant_and_integration(client, "t-met-b", "i-met-b")
+
+    # Tenant A: 3 refunds.
+    for i in range(3):
+        _evaluate_refund(client, headers_a, f"a-{i}")
+    # Tenant B: 1 refund.
+    _evaluate_refund(client, headers_b, "b-0")
+
+    sum_a = client.get("/v1/metrics/summary?window=24h", headers=headers_a).json()
+    sum_b = client.get("/v1/metrics/summary?window=24h", headers=headers_b).json()
+
+    assert sum_a["actions_total"] == 3, f"tenant A expected 3, got {sum_a['actions_total']}"
+    assert sum_b["actions_total"] == 1, f"tenant B expected 1, got {sum_b['actions_total']}"
+
+
 def test_review_queue_isolates_by_tenant(client, auth_on):
     """A review is produced when a refund hits the risk threshold. Both
     tenants trigger one; each must only see its own."""

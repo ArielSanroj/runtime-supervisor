@@ -36,19 +36,24 @@ def metrics_summary(
     window: str = Query(default="24h", pattern="^(24h|7d|30d)$"),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> dict[str, Any]:
     since = _since(window)
 
-    # Total actions in the window
+    # Total actions in the window — tenant-scoped.
     actions_total = db.execute(
-        select(func.count()).select_from(Action).where(Action.created_at >= since)
+        select(func.count())
+        .select_from(Action)
+        .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
     ).scalar_one()
 
-    # Decision breakdown (joined via Action.created_at so planned/denied before window excluded)
+    # Decision breakdown (joined via Action so window + tenant inherit).
     decision_rows = db.execute(
         select(Decision.decision, func.count())
         .join(Action, Action.id == Decision.action_id)
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .group_by(Decision.decision)
     ).all()
     decisions = {"allow": 0, "deny": 0, "review": 0}
@@ -59,6 +64,7 @@ def metrics_summary(
     threat_rows = db.execute(
         select(ThreatAssessmentRow.level, func.count())
         .where(ThreatAssessmentRow.created_at >= since)
+        .where(ThreatAssessmentRow.tenant_id == tenant_id)
         .group_by(ThreatAssessmentRow.level)
     ).all()
     threats = {"critical": 0, "warn": 0, "info": 0}
@@ -70,6 +76,7 @@ def metrics_summary(
     detector_rows = db.execute(
         select(ThreatAssessmentRow.detector_id, func.count())
         .where(ThreatAssessmentRow.created_at >= since)
+        .where(ThreatAssessmentRow.tenant_id == tenant_id)
         .group_by(ThreatAssessmentRow.detector_id)
         .order_by(func.count().desc())
         .limit(5)
@@ -78,14 +85,18 @@ def metrics_summary(
 
     # Reviews by status (open pending doesn't care about window — always current)
     review_status_rows = db.execute(
-        select(ReviewItem.status, func.count()).group_by(ReviewItem.status)
+        select(ReviewItem.status, func.count())
+        .where(ReviewItem.tenant_id == tenant_id)
+        .group_by(ReviewItem.status)
     ).all()
     reviews = {"pending": 0, "approved": 0, "rejected": 0}
     for s, n in review_status_rows:
         reviews[s] = n
 
     oldest_pending = db.execute(
-        select(func.min(ReviewItem.created_at)).where(ReviewItem.status == "pending")
+        select(func.min(ReviewItem.created_at))
+        .where(ReviewItem.status == "pending")
+        .where(ReviewItem.tenant_id == tenant_id)
     ).scalar_one()
     oldest_age_minutes = None
     if oldest_pending is not None:
@@ -98,6 +109,7 @@ def metrics_summary(
     exec_rows = db.execute(
         select(ActionExecution.state, func.count())
         .where(ActionExecution.queued_at >= since)
+        .where(ActionExecution.tenant_id == tenant_id)
         .group_by(ActionExecution.state)
     ).all()
     executions = {"success": 0, "failed": 0, "pending": 0}
@@ -106,12 +118,17 @@ def metrics_summary(
     exec_total = sum(executions.values())
     exec_success_rate = (executions["success"] / exec_total) if exec_total else None
 
-    # Active integrations count (all-time)
+    # Active integrations count (this tenant only).
     active_integrations = db.execute(
-        select(func.count()).select_from(Integration).where(Integration.active.is_(True))
+        select(func.count())
+        .select_from(Integration)
+        .where(Integration.active.is_(True))
+        .where(Integration.tenant_id == tenant_id)
     ).scalar_one()
 
-    # Policy active count by action_type
+    # Policy active count by action_type. Policies remain global-admin-owned
+    # today (Phase 3 will add tenant-scoped overrides); count all actives so
+    # the dashboard reflects what the supervisor actually evaluates against.
     from ..models import PolicyRecord
 
     active_policies = db.execute(
@@ -125,6 +142,7 @@ def metrics_summary(
     volume_by_type_rows = db.execute(
         select(Action.action_type, func.count())
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .group_by(Action.action_type)
     ).all()
     volume_by_type = {at: n for at, n in volume_by_type_rows}
@@ -157,6 +175,7 @@ def metrics_enforcement(
     window: str = Query(default="7d", pattern="^(24h|7d|30d)$"),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> dict[str, Any]:
     """Shadow-vs-enforce diff for the rollout playbook.
 
@@ -179,6 +198,7 @@ def metrics_enforcement(
     totals = db.execute(
         select(Action.shadow, func.count())
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .group_by(Action.shadow)
     ).all()
     shadow_evaluations = 0
@@ -195,6 +215,7 @@ def metrics_enforcement(
         .select_from(Decision)
         .join(Action, Action.id == Decision.action_id)
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .where(Action.shadow.is_(True))
         .where(Decision.decision.in_(("deny", "review")))
     ).scalar_one()
@@ -204,6 +225,7 @@ def metrics_enforcement(
         .select_from(Decision)
         .join(Action, Action.id == Decision.action_id)
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .where(Action.shadow.is_(False))
         .where(Decision.decision == "deny")
     ).scalar_one()
@@ -215,6 +237,7 @@ def metrics_enforcement(
         select(ReviewItem.status, func.count())
         .join(Action, Action.id == ReviewItem.action_id)
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .group_by(ReviewItem.status)
     ).all()
     review_counts = {"pending": 0, "approved": 0, "rejected": 0}
@@ -229,6 +252,7 @@ def metrics_enforcement(
         select(Decision.latency_ms)
         .join(Action, Action.id == Decision.action_id)
         .where(Action.created_at >= since)
+        .where(Action.tenant_id == tenant_id)
         .where(Decision.latency_ms.is_not(None))
         .order_by(Decision.created_at.desc())
         .limit(10000)

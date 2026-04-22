@@ -44,9 +44,23 @@ _SKIP_DIRS = {
 
 
 def _walk(root: Path, globs: tuple[str, ...]) -> Iterator[Path]:
+    """Iterate matching files under `root`, skipping build/cache dirs.
+
+    Skip check uses the path RELATIVE to `root` — not the absolute path —
+    because a user's repo may legitimately live inside a host directory
+    whose name is in _SKIP_DIRS. Example: repos in Dropbox on macOS live
+    at `~/Library/CloudStorage/Dropbox/<repo>`; if we checked absolute
+    parts, "Library" would match and we'd skip every file.
+    """
     for pattern in globs:
         for path in root.glob(pattern):
-            if any(part in _SKIP_DIRS for part in path.parts):
+            try:
+                rel_parts = path.relative_to(root).parts
+            except ValueError:
+                # path is not a descendant of root (shouldn't happen with
+                # glob, but be defensive). Treat as skip.
+                continue
+            if any(part in _SKIP_DIRS for part in rel_parts):
                 continue
             if path.is_file():
                 yield path

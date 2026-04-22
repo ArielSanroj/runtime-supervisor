@@ -49,6 +49,7 @@ _MIN_CALLS_BY_TIER: dict[Tier, int] = {
     "real_world_actions": 20,  # voice/email/slack/shell — irreversible, be conservative
     "llm": 30,
     "customer_data": 50,
+    "business_data": 30,  # trades/positions/inventory — mid-volume, mid-sensitivity
     "general": 0,
 }
 

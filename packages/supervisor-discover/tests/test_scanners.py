@@ -90,6 +90,35 @@ def test_skip_dirs_check_is_relative_to_scan_root(tmp_path):
     )
 
 
+def test_db_mutations_on_customer_table_go_to_customer_data(tmp_path):
+    """`INSERT INTO users` → customer_data tier (PII)."""
+    from supervisor_discover.classifier import tier_of
+    from supervisor_discover.findings import Finding
+
+    f = Finding(
+        scanner="db-mutations", file="/r/app.py", line=1, snippet="INSERT INTO users",
+        suggested_action_type="account_change", confidence="high", rationale="x",
+        extra={"table": "users", "verb": "INSERT"},
+    )
+    assert tier_of(f) == "customer_data"
+
+
+def test_db_mutations_on_business_table_go_to_business_data(tmp_path):
+    """`INSERT INTO trades` → business_data tier (NOT customer PII)."""
+    from supervisor_discover.classifier import tier_of
+    from supervisor_discover.findings import Finding
+
+    for table in ("trades", "positions", "inventory", "events", "orders_history",
+                  "products", "logs", "metrics"):
+        f = Finding(
+            scanner="db-mutations", file="/r/app.py", line=1,
+            snippet=f"INSERT INTO {table}",
+            suggested_action_type="other", confidence="medium", rationale="x",
+            extra={"table": table, "verb": "INSERT"},
+        )
+        assert tier_of(f) == "business_data", f"table `{table}` should go to business_data"
+
+
 def test_skip_dirs_still_filters_within_the_repo(tmp_path):
     """Complementary check: build/cache dirs INSIDE the scanned repo are
     still skipped (the common case we care about)."""

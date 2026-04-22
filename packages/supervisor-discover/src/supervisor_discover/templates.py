@@ -145,6 +145,36 @@ TIER_COPY = {
             "trail con hash-chain. Ref: OWASP LLM Top 10 (LLM02), cumplimiento: GDPR, SOC2._"
         ),
     },
+    "business_data": {
+        "title": "Business data",
+        "problem": (
+            "El agente puede modificar tablas de estado del negocio — trades, "
+            "positions, inventory, products, events, logs. No son PII, pero un "
+            "prompt injection que genere el SQL mal puede corromper los libros, "
+            "inventariar stock inexistente, o disparar trades no autorizados. "
+            "Irreversible en la mayoría de los casos."
+        ),
+        "in_your_repo_prefix": (
+            "{total} mutación(es) sobre tablas de estado del negocio (no-PII)."
+        ),
+        "solution": (
+            "Wrappear cada mutación con `@supervised('data_access')`. Las "
+            "policies cap scope (tenant_id, row_limit por query) y dejan audit "
+            "trail para reconstruir qué pasó. Stubs en `stubs/`."
+        ),
+        "runtime_behavior": (
+            "bloquea mutaciones masivas sin `WHERE` (típico cuando el LLM "
+            "genera SQL desde texto libre). Escala a humano cualquier write "
+            "que cambie más del row_limit por query. En shadow mode registra "
+            "— útil para descubrir qué tablas toca el agente en runtime antes "
+            "de enforzar."
+        ),
+        "technical_footnote": (
+            "_Policy: `data_access.base.v1`. Detectores: prompt injection en "
+            "el SQL generado, unbounded consumption en bulk UPDATE/DELETE. "
+            "Ref: OWASP LLM Top 10 (LLM01, LLM10)._"
+        ),
+    },
     "llm": {
         "title": "LLM tool-use",
         "problem": (

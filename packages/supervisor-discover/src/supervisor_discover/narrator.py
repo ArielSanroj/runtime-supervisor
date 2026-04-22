@@ -118,11 +118,28 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
 
 
 def _group_by_scanner(findings: list[Finding]) -> list[tuple[str, list[Finding]]]:
-    """Group findings by scanner, ordered by group size descending."""
-    by_scanner: dict[str, list[Finding]] = {}
+    """Group findings by scanner (with tier-aware split for db-mutations).
+
+    Normally findings with the same scanner collapse into one bullet. But
+    db-mutations is split across two tiers (customer_data vs business_data
+    by table name) — grouping them together would conflate different kinds
+    of risk in the same bullet. For that scanner we sub-key by tier so the
+    SUMMARY shows a separate line for customer PII mutations vs business
+    state mutations.
+
+    Returns: list of (group_key, findings) ordered by group size desc.
+    Group key is the scanner name (`"db-mutations:customer_data"` when a
+    per-tier split occurs).
+    """
+    from .classifier import tier_of
+
+    by_key: dict[str, list[Finding]] = {}
     for f in findings:
-        by_scanner.setdefault(f.scanner, []).append(f)
-    return sorted(by_scanner.items(), key=lambda kv: -len(kv[1]))
+        key = f.scanner
+        if f.scanner == "db-mutations":
+            key = f"db-mutations:{tier_of(f)}"
+        by_key.setdefault(key, []).append(f)
+    return sorted(by_key.items(), key=lambda kv: -len(kv[1]))
 
 
 # Scanner → one-line capability label used in PriorityItem.label.
@@ -228,7 +245,8 @@ def _minutes_for(scanner: str, count: int) -> int:
 
 def _scanner_problem(f: Finding, count: int) -> str:
     """Pick the right 'problema' copy for a finding. Handles per-family
-    overrides (fs-shell) and per-kind overrides (agent-orchestrators)."""
+    overrides (fs-shell), per-kind overrides (agent-orchestrators), and
+    per-table overrides (db-mutations — customer vs business)."""
     scanner = f.scanner
     if scanner == "fs-shell":
         family = str(f.extra.get("family") or "")
@@ -236,12 +254,26 @@ def _scanner_problem(f: Finding, count: int) -> str:
     if scanner == "agent-orchestrators":
         kind = str(f.extra.get("kind") or "")
         return _PROBLEM_BY_ORCHESTRATOR_KIND.get(kind, "chokepoint del agente detectado.")
+    if scanner == "db-mutations":
+        from .classifier import tier_of
+        table = str(f.extra.get("table") or "")
+        if tier_of(f) == "business_data":
+            return (
+                f"el agente puede modificar tablas de estado del negocio "
+                f"(ej. `{table}`) — no es PII, pero un `DELETE` sin `WHERE` "
+                f"o un `UPDATE` generado mal por el LLM corrompe los libros."
+            )
+        return (
+            f"el agente puede modificar tablas de clientes (`{table}`) "
+            f"directamente — `DELETE FROM users` sin `WHERE` borra todo, "
+            f"un `UPDATE` multi-campo parece takeover."
+        )
     return _PROBLEM_BY_SCANNER.get(scanner, f"{count} call-sites en {scanner}.")
 
 
 def _scanner_solution(f: Finding, with_combo_link: bool = True) -> str:
     """Pick the right 'solución' copy and append a combo-playbook pointer
-    when applicable."""
+    when applicable. Tier-aware for db-mutations (customer vs business)."""
     scanner = f.scanner
     if scanner == "fs-shell":
         family = str(f.extra.get("family") or "")
@@ -256,6 +288,19 @@ def _scanner_solution(f: Finding, with_combo_link: bool = True) -> str:
         if with_combo_link:
             sol += " → ver `combos/agent-orchestrator.md`."
         return sol
+    if scanner == "db-mutations":
+        from .classifier import tier_of
+        if tier_of(f) == "business_data":
+            return (
+                "wrap con `@supervised('data_access')`. Policy: row_limit por "
+                "query, audit trail por mutación. Business state no es PII "
+                "pero sigue siendo irreversible."
+            )
+        return (
+            "wrap con `@supervised('account_change')` o `data_access` "
+            "según aplique. Policy: tenant_id requerido, row_limit, columnas "
+            "PII bloqueadas, audit trail con hash-chain."
+        )
     sol = _SOLUTION_BY_SCANNER.get(scanner, "wrap con `@supervised('tool_use')`. Stub copy-paste en `stubs/`.")
     if with_combo_link and scanner in _COMBO_LINK_BY_SCANNER and scanner != "fs-shell":
         sol += f" → ver `{_COMBO_LINK_BY_SCANNER[scanner]}`."
@@ -286,7 +331,17 @@ def _group_item(
     scanner: str,
     findings: list[Finding],
 ) -> PriorityItem:
-    capability = _SCANNER_LABEL.get(scanner, scanner)
+    # `scanner` may be a tier-aware key like "db-mutations:customer_data".
+    # The suffix is used to pick a more specific label/copy; the bare name
+    # is what we look up in _SCANNER_LABEL.
+    scanner_base = scanner.split(":", 1)[0]
+    tier_suffix = scanner.split(":", 1)[1] if ":" in scanner else None
+    if scanner_base == "db-mutations" and tier_suffix == "customer_data":
+        capability = "customer-data mutations"
+    elif scanner_base == "db-mutations" and tier_suffix == "business_data":
+        capability = "business-data mutations"
+    else:
+        capability = _SCANNER_LABEL.get(scanner_base, scanner_base)
     count = len(findings)
     evidence = [f"{_short_path(f.file)}:{f.line}" for f in findings[:3]]
     if count > 3:

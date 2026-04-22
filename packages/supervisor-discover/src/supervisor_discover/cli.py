@@ -291,6 +291,7 @@ _TIER_FALLBACK: dict[str, str] = {
     "money": "stripe · paypal · plaid (nada detectado)",
     "real_world_actions": "voice · email · slack · shell (nada detectado)",
     "customer_data": "UPDATE/DELETE users/customers/orders",
+    "business_data": "UPDATE/DELETE trades/positions/inventory/events",
     "llm": "anthropic · openai (nada detectado)",
     "general": "http routes · cron schedules · informativo",
 }
@@ -321,6 +322,19 @@ def _tier_hint(tier: str, items: list, summary) -> str:
         if summary.sensitive_tables:
             sample = ", ".join(summary.sensitive_tables[:4])
             more = f" +{len(summary.sensitive_tables) - 4}" if len(summary.sensitive_tables) > 4 else ""
+            return f"tablas: {sample}{more}"[:60]
+        return _TIER_FALLBACK[tier]
+
+    if tier == "business_data" and items:
+        # Derive the table list from the actual findings in this tier.
+        tables = sorted({
+            str(f.extra.get("table") or "").lower()
+            for f in items
+            if f.extra.get("table")
+        })
+        if tables:
+            sample = ", ".join(t for t in tables[:4] if t)
+            more = f" +{len(tables) - 4}" if len(tables) > 4 else ""
             return f"tablas: {sample}{more}"[:60]
         return _TIER_FALLBACK[tier]
 

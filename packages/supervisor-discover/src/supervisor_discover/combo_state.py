@@ -1,91 +1,217 @@
-"""Nivel 3 (opt-in): combo state tracking — STUB.
+"""Nivel 3 — combo state tracking.
 
-Planned behavior: each scan writes `runtime-supervisor/combos/state.yaml`
-recording the status of every detected combo (open / in-progress / resolved).
-Subsequent scans suppress already-resolved combos from the report (as long
-as the evidence of the resolution — policy promoted + stubs present — is
-still intact).
+Cada combo detectado puede estar en uno de 3 estados: `open` (default cuando
+se detecta), `in-progress` (el equipo lo está trabajando), o `resolved` (ya
+se aplicó el playbook y se verificó). Los combos `resolved` se suprimen del
+output del próximo scan, así el report se vuelve un tracker de progreso en
+vez de repetir el mismo catálogo cada vez.
 
-Schema (when implemented):
+State file: `runtime-supervisor/combos.state.yaml` (convivencia explícita
+con `combos/` y `policies/`). Formato:
 
+    version: 1
     combos:
       voice-clone-plus-outbound-call:
         status: resolved
-        resolved_at: "2026-04-22T10:30:00Z"
-        resolved_by: "alice@corp.com"
-        evidence:
-          policy_active: "tool_use.voice-clone-plus-outbound-call.v1"
-          stubs_applied:
-            - "src/agents/voice.ts"
-            - "src/agents/tts.ts"
-        notes: "Allowlist has 12 numbers, shadowed 2 weeks with 0 false positives."
+        resolved_at: "2026-04-21T18:30:00Z"
+        resolved_by: "ariel@clio.com"
+        note: "Allowlist con 12 números, shadow 2 semanas sin FPs."
       llm-plus-shell-exec:
-        status: open
+        status: in-progress
+        note: "Aplicando allowlist de comandos."
 
-Why stubbed: requires (a) reliable detection of "policy is active" across
-DB + YAML, (b) diffing stub-template vs actual-source to confirm wrapping,
-(c) CLI verb `ac combos resolve <combo-id>` to record human decisions.
+**Trust model:** confiamos en que el humano marca como resolved solo cuando
+el playbook está aplicado. No verificamos evidence (policy promoted, wraps
+en código) en esta versión. Si el usuario remueve el wrap después de marcar
+resolved, el scan no lo re-detecta hasta que haga `combos reopen <id>`.
+Una versión futura puede agregar evidence checks.
 
-Until this ships, every scan re-reports the same combos. That's fine for
-Nivel 1 (playbooks are idempotent), just noisier.
-
-To enable when ready:
-  1. Implement `load()`, `save()`, `mark_resolved()`, `filter_reported()`.
-  2. Wire into `generator.py` so already-resolved combos drop out of the report.
-  3. Add `ac combos` CLI subcommand for human interaction.
+CLI interaction (ver `cli._handle_combos`):
+    supervisor-discover combos                    # list status
+    supervisor-discover combos resolve <id>       # mark resolved
+    supervisor-discover combos reopen <id>        # revert a open
+    supervisor-discover combos clear              # delete state file
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 Status = Literal["open", "in-progress", "resolved"]
 
+# Path relativo al out_dir (runtime-supervisor/). Usado por generator.py y CLI.
+STATE_FILENAME = "combos.state.yaml"
 
-@dataclass(frozen=True)
+_STATE_VERSION = 1
+
+
+@dataclass
 class ComboState:
     combo_id: str
     status: Status = "open"
     resolved_at: str | None = None
     resolved_by: str | None = None
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        """YAML dump — omit None fields for readability."""
+        d: dict = {"status": self.status}
+        if self.resolved_at:
+            d["resolved_at"] = self.resolved_at
+        if self.resolved_by:
+            d["resolved_by"] = self.resolved_by
+        if self.note:
+            d["note"] = self.note
+        return d
+
+
+def state_path_for(out_dir: Path) -> Path:
+    """Canonical location of the state file inside runtime-supervisor/."""
+    return out_dir / STATE_FILENAME
 
 
 def load(state_path: Path) -> dict[str, ComboState]:
-    """Stub — returns empty dict. Real impl will parse state.yaml."""
-    return {}
+    """Parse combos.state.yaml into {combo_id: ComboState}. Missing file or
+    malformed YAML both return an empty dict — the caller treats that as
+    "no tracking active"."""
+    if not state_path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(state_path.read_text()) or {}
+    except yaml.YAMLError:
+        return {}
+    combos_map = raw.get("combos") or {}
+    out: dict[str, ComboState] = {}
+    for combo_id, data in combos_map.items():
+        if not isinstance(data, dict):
+            continue
+        status = data.get("status", "open")
+        if status not in ("open", "in-progress", "resolved"):
+            status = "open"
+        out[combo_id] = ComboState(
+            combo_id=combo_id,
+            status=status,
+            resolved_at=data.get("resolved_at"),
+            resolved_by=data.get("resolved_by"),
+            note=data.get("note", "") or "",
+        )
+    return out
 
 
 def save(states: dict[str, ComboState], state_path: Path) -> None:
-    """Stub — no-op. Real impl will write yaml."""
-    pass
-
-
-def mark_resolved(combo_id: str, state_path: Path, *, by: str, notes: str = "") -> None:
-    """Stub — no-op. Planned verb: `ac combos resolve voice-clone-plus-outbound-call`."""
-    raise NotImplementedError(
-        "Combo state tracking is Nivel 3 (opt-in) and not yet implemented. "
-        "Until it ships, each scan re-reports the same combos. That's fine — "
-        "the playbooks are idempotent, just noisier."
+    """Write the state map as YAML. Creates parent dir if needed. Stable
+    sort by combo_id so diffs are clean."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": _STATE_VERSION,
+        "combos": {
+            cid: states[cid].to_dict()
+            for cid in sorted(states.keys())
+        },
+    }
+    state_path.write_text(
+        "# runtime-supervisor combo state — managed by `supervisor-discover combos`\n"
+        "# Marca un combo como resolved con: supervisor-discover combos resolve <id>\n"
+        "#\n"
+        + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
     )
 
 
-def filter_reported(all_combos: list, states: dict[str, ComboState]) -> list:
-    """Stub — returns all_combos unchanged. Real impl will drop `resolved` combos
-    where the resolution evidence is still intact."""
-    return all_combos
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def mark_resolved(
+    combo_id: str,
+    state_path: Path,
+    *,
+    by: str | None = None,
+    note: str = "",
+) -> ComboState:
+    """Mark a combo as resolved and persist. Returns the new state."""
+    states = load(state_path)
+    states[combo_id] = ComboState(
+        combo_id=combo_id,
+        status="resolved",
+        resolved_at=_now_iso(),
+        resolved_by=by,
+        note=note,
+    )
+    save(states, state_path)
+    return states[combo_id]
+
+
+def mark_in_progress(combo_id: str, state_path: Path, *, note: str = "") -> ComboState:
+    """Mark as in-progress (working on it, don't suppress from reports)."""
+    states = load(state_path)
+    states[combo_id] = ComboState(
+        combo_id=combo_id,
+        status="in-progress",
+        note=note,
+    )
+    save(states, state_path)
+    return states[combo_id]
+
+
+def mark_open(combo_id: str, state_path: Path) -> ComboState:
+    """Revert a combo to open — re-enables its reporting in scans."""
+    states = load(state_path)
+    states[combo_id] = ComboState(combo_id=combo_id, status="open")
+    save(states, state_path)
+    return states[combo_id]
+
+
+def clear(state_path: Path) -> bool:
+    """Delete the state file. Returns True if a file was removed."""
+    if state_path.exists():
+        state_path.unlink()
+        return True
+    return False
+
+
+def filter_reported(
+    all_combos: list,
+    states: dict[str, ComboState],
+    *,
+    include_resolved: bool = False,
+) -> list:
+    """Drop resolved combos from the list passed to the report renderers.
+
+    `all_combos` is a list of Combo objects (from combos.detect_combos).
+    Returns a filtered list — `resolved` entries are dropped unless
+    `include_resolved=True` (for --show-resolved CLI flag).
+
+    `in-progress` and `open` are never filtered — in-progress appears in
+    the report with a note, open is the default detected state.
+    """
+    if include_resolved or not states:
+        return all_combos
+    resolved_ids = {cid for cid, s in states.items() if s.status == "resolved"}
+    if not resolved_ids:
+        return all_combos
+    return [c for c in all_combos if c.id not in resolved_ids]
 
 
 def explain() -> str:
-    """Describe Nivel 3 to the user."""
+    """Short description for `supervisor-discover combos --help` and
+    for the interactive prompt when user picks option [3]."""
     return (
         "Nivel 3 — state tracking\n"
         "========================\n"
-        "Marca combos como open / in-progress / resolved. Scans sucesivos no\n"
-        "reportan combos ya resueltos (si la evidencia — policy activa + stubs\n"
-        "deployados — sigue intacta). Convierte el reporte en un tracker de\n"
-        "progreso en vez de una alerta repetida.\n"
+        "Marca combos como open / in-progress / resolved. Los `resolved`\n"
+        "desaparecen del próximo scan para que el reporte sea un tracker\n"
+        "de progreso, no el mismo catálogo repetido cada vez.\n"
         "\n"
-        "Estado actual: stub. Cada scan re-reporta los mismos combos."
+        "Verbos:\n"
+        "  supervisor-discover combos                    # list status\n"
+        "  supervisor-discover combos resolve <id>       # marca resolved\n"
+        "  supervisor-discover combos reopen <id>        # vuelve a open\n"
+        "  supervisor-discover combos clear              # wipe state file\n"
+        "\n"
+        "State file: runtime-supervisor/combos.state.yaml (commiteable)."
     )

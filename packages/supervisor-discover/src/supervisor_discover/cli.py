@@ -49,6 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Never prompt for remediation level — use --level or default 1 silently. "
              "Useful for CI.",
     )
+    scan_p.add_argument(
+        "--show-resolved",
+        action="store_true",
+        help="Ignore combos.state.yaml — report all detected combos even if "
+             "previously marked resolved. Useful for audit / regression check.",
+    )
 
     sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
 
@@ -65,14 +71,50 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fix_p.add_argument("--out", default="runtime-supervisor", help="Output directory")
 
-    # Nivel 3 (opt-in) — list / resolve tracked combos. Stub.
+    # Nivel 3 — combo state tracking. Marca combos como resolved y el próximo
+    # scan los suprime del report. State file: runtime-supervisor/combos.state.yaml.
     combos_p = sub.add_parser(
         "combos",
-        help="Nivel 3 (opt-in): list / track combo status. Currently a stub.",
+        help="Nivel 3: gestiona el estado de los combos detectados "
+             "(open / in-progress / resolved). `resolved` se suprime del próximo scan.",
     )
     combos_p.add_argument(
-        "--track", action="store_true",
-        help="Enable state tracking so subsequent scans suppress resolved combos.",
+        "--out", default="runtime-supervisor",
+        help="Directorio con combos.state.yaml (default: ./runtime-supervisor)",
+    )
+    combos_sub = combos_p.add_subparsers(
+        dest="combos_verb", required=False,
+        help="Verbo a ejecutar — sin argumento = list.",
+    )
+
+    combos_sub.add_parser(
+        "list",
+        help="Muestra el estado de cada combo detectado (default si se omite).",
+    )
+    resolve_p = combos_sub.add_parser(
+        "resolve",
+        help="Marca un combo como resolved. El próximo scan no lo reporta.",
+    )
+    resolve_p.add_argument("combo_id", help="ID del combo (ej: voice-clone-plus-outbound-call)")
+    resolve_p.add_argument("--note", default="", help="Nota breve del por qué se cerró.")
+    resolve_p.add_argument("--by", default=None, help="Quién lo cerró (email o handle).")
+
+    in_progress_p = combos_sub.add_parser(
+        "in-progress",
+        help="Marca un combo como in-progress (se sigue reportando pero con nota).",
+    )
+    in_progress_p.add_argument("combo_id")
+    in_progress_p.add_argument("--note", default="")
+
+    reopen_p = combos_sub.add_parser(
+        "reopen",
+        help="Revierte un combo a open — vuelve a aparecer en scans futuros.",
+    )
+    reopen_p.add_argument("combo_id")
+
+    combos_sub.add_parser(
+        "clear",
+        help="Borra combos.state.yaml — todos los combos vuelven a reportarse.",
     )
 
     return p
@@ -132,7 +174,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         return 0
 
-    generate(findings, out, repo_root=root)
+    generate(
+        findings, out, repo_root=root,
+        include_resolved=bool(getattr(args, "show_resolved", False)),
+    )
     _print_tier_summary(root, findings, elapsed, out)
     _prompt_remediation_level(findings, out, args)
     return 0
@@ -147,9 +192,14 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
       3. non-TTY or --no-prompt → silent default (1)
       4. interactive TTY → prompt, default 1 on Enter
     """
+    from .combo_state import filter_reported, load, state_path_for
     from .combos import detect_combos
 
     combos = detect_combos(findings)
+    # Nivel 3: no preguntar por combos ya marcados resolved (unless --show-resolved).
+    if not getattr(args, "show_resolved", False):
+        states = load(state_path_for(out))
+        combos = filter_reported(combos, states)
     if not combos:
         return
 
@@ -222,7 +272,15 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         print("", file=sys.stderr)
         print(explain(), file=sys.stderr)
         print("", file=sys.stderr)
-        print("Cayendo a Nivel 1: runtime-supervisor/combos/ tiene los playbooks.", file=sys.stderr)
+        print("Combos detectados ahora mismo (aplica el playbook primero, luego marca resolved):", file=sys.stderr)
+        for c in combos:
+            print(f"  · {c.id}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Cuando termines:", file=sys.stderr)
+        for c in combos:
+            print(f"  supervisor-discover combos resolve {c.id} --note \"...\"", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("El próximo scan no los va a reportar. `combos list` muestra el estado.", file=sys.stderr)
         return
 
 
@@ -346,22 +404,78 @@ def _handle_fix(args: argparse.Namespace) -> int:
 
 
 def _handle_combos(args: argparse.Namespace) -> int:
-    """Nivel 3 stub — prints explanation of state tracking + confirms it's
-    not yet active."""
-    from .combo_state import explain
+    """Nivel 3 — gestiona el estado de los combos detectados.
 
-    print(explain(), file=sys.stderr)
-    print("", file=sys.stderr)
+    Verbos:
+      list (default)   — muestra estado de cada combo
+      resolve <id>     — marca resolved (se suprime del próximo scan)
+      in-progress <id> — marca en progreso (sigue reportándose con nota)
+      reopen <id>      — vuelve a open
+      clear            — borra el state file
+    """
+    from .combo_state import (
+        clear as clear_state,
+        load as load_state,
+        mark_in_progress,
+        mark_open,
+        mark_resolved,
+        state_path_for,
+    )
 
-    if args.track:
-        print("--track flag recibido pero Nivel 3 todavía es stub.", file=sys.stderr)
-        print("Cada scan sigue re-reportando los mismos combos. Los playbooks", file=sys.stderr)
-        print("son idempotentes así que aplicar el mismo playbook dos veces no rompe.", file=sys.stderr)
-        return 2
+    out_dir = Path(args.out).resolve()
+    state_path = state_path_for(out_dir)
+    verb = getattr(args, "combos_verb", None) or "list"
 
-    print("Por ahora, cada scan re-reporta todos los combos detectados.", file=sys.stderr)
-    print("Los playbooks en runtime-supervisor/combos/ son idempotentes.", file=sys.stderr)
-    return 0
+    if verb == "list":
+        states = load_state(state_path)
+        if not states:
+            print(f"Sin state file en {state_path}.", file=sys.stderr)
+            print("Corre `supervisor-discover scan` primero, después marca combos con", file=sys.stderr)
+            print("  supervisor-discover combos resolve <combo-id>", file=sys.stderr)
+            return 0
+        print(f"Estado en {state_path}:", file=sys.stderr)
+        print("", file=sys.stderr)
+        emoji = {"open": "🟠", "in-progress": "🟡", "resolved": "✅"}
+        for cid in sorted(states.keys()):
+            s = states[cid]
+            print(f"  {emoji.get(s.status, '•')} {s.status:<12s} {cid}", file=sys.stderr)
+            if s.note:
+                print(f"       _{s.note}_", file=sys.stderr)
+            if s.resolved_at:
+                who = f" por {s.resolved_by}" if s.resolved_by else ""
+                print(f"       resuelto {s.resolved_at}{who}", file=sys.stderr)
+        return 0
+
+    if verb == "resolve":
+        state = mark_resolved(args.combo_id, state_path, by=args.by, note=args.note)
+        print(f"✅ combo `{args.combo_id}` marcado como resolved.", file=sys.stderr)
+        print(f"   State: {state_path}", file=sys.stderr)
+        print(f"   El próximo `supervisor-discover scan` no lo va a reportar.", file=sys.stderr)
+        print(f"   Para revertir: supervisor-discover combos reopen {args.combo_id}", file=sys.stderr)
+        return 0
+
+    if verb == "in-progress":
+        mark_in_progress(args.combo_id, state_path, note=args.note)
+        print(f"🟡 combo `{args.combo_id}` marcado como in-progress.", file=sys.stderr)
+        print(f"   Sigue apareciendo en scans — resolvelo con `combos resolve` cuando apliques el playbook.", file=sys.stderr)
+        return 0
+
+    if verb == "reopen":
+        mark_open(args.combo_id, state_path)
+        print(f"🟠 combo `{args.combo_id}` vuelto a open.", file=sys.stderr)
+        print(f"   Va a reaparecer en el próximo scan.", file=sys.stderr)
+        return 0
+
+    if verb == "clear":
+        if clear_state(state_path):
+            print(f"State file {state_path} borrado.", file=sys.stderr)
+            print("Todos los combos vuelven a reportarse en el próximo scan.", file=sys.stderr)
+        else:
+            print(f"No había state file en {state_path}.", file=sys.stderr)
+        return 0
+
+    print(f"error: verbo desconocido '{verb}'", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

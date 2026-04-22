@@ -12,6 +12,11 @@ import yaml
 
 from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_tier
 from .combo_playbooks import render_index as render_combos_index, render_playbook
+from .combo_state import (
+    filter_reported as filter_resolved_combos,
+    load as load_combo_state,
+    state_path_for,
+)
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .narrator import render_summary as render_summary_email
@@ -37,10 +42,19 @@ def _safe_filename(path: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", rel)
 
 
-def generate(findings: list[Finding], out_dir: Path, repo_root: Path | None = None) -> None:
+def generate(
+    findings: list[Finding],
+    out_dir: Path,
+    repo_root: Path | None = None,
+    *,
+    include_resolved: bool = False,
+) -> None:
     """Emit the runtime-supervisor/ output directory.
 
     `repo_root`, when provided, becomes the basename in SUMMARY.md's title.
+    `include_resolved=True` bypasses the Nivel 3 state filter (so the scan
+    shows combos even after they were marked `resolved`). Useful for audit
+    or when reviewing what was previously fixed.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +77,13 @@ def generate(findings: list[Finding], out_dir: Path, repo_root: Path | None = No
     # report.md — summary first, then critical combos (if any), then guardrails, then tier-by-risk.
     by_type = Counter(f.suggested_action_type for f in findings)
     tier_summary_table, headline_note = _tier_summary(findings)
-    combos = detect_combos(findings)
+    # Nivel 3: si hay state file con combos resueltos, se suprimen del output
+    # a menos que el caller pase include_resolved=True (flag --show-resolved).
+    raw_combos = detect_combos(findings)
+    combo_states = load_combo_state(state_path_for(out_dir))
+    combos = filter_resolved_combos(
+        raw_combos, combo_states, include_resolved=include_resolved
+    )
     report = render_summary_md(summary)
     if combos:
         report += "\n---\n\n"

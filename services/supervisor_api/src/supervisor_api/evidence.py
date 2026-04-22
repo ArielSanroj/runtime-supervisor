@@ -26,7 +26,14 @@ def _genesis_hash(action_id: str) -> str:
     return hashlib.sha256(f"genesis:{action_id}".encode()).hexdigest()
 
 
-def append(db: Session, *, action_id: str, event_type: str, payload: dict[str, Any]) -> EvidenceEvent:
+def append(
+    db: Session,
+    *,
+    action_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    tenant_id: str | None = None,
+) -> EvidenceEvent:
     last = db.execute(
         select(EvidenceEvent)
         .where(EvidenceEvent.action_id == action_id)
@@ -41,6 +48,16 @@ def append(db: Session, *, action_id: str, event_type: str, payload: dict[str, A
         seq = last.seq + 1
         prev = last.hash
 
+    # If the caller didn't pass tenant_id explicitly, inherit it from the
+    # parent action so evidence rows stay consistent with their action's
+    # tenancy. Legacy callers that predate Phase 2 still work — tenant_id
+    # just gets backfilled to whatever Action.tenant_id was.
+    if tenant_id is None:
+        parent_tenant = db.execute(
+            select(Action.tenant_id).where(Action.id == action_id)
+        ).scalar_one_or_none()
+        tenant_id = parent_tenant
+
     h = _hash(prev, seq, event_type, payload)
     ev = EvidenceEvent(
         action_id=action_id,
@@ -49,6 +66,7 @@ def append(db: Session, *, action_id: str, event_type: str, payload: dict[str, A
         event_payload=payload,
         prev_hash=prev,
         hash=h,
+        tenant_id=tenant_id,
     )
     db.add(ev)
     db.flush()

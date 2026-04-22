@@ -44,8 +44,14 @@ def list_threats(
     level: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> list[ThreatAssessmentOut]:
-    q = select(ThreatAssessmentRow).order_by(ThreatAssessmentRow.created_at.desc()).limit(limit)
+    q = (
+        select(ThreatAssessmentRow)
+        .where(ThreatAssessmentRow.tenant_id == tenant_id)
+        .order_by(ThreatAssessmentRow.created_at.desc())
+        .limit(limit)
+    )
     if level:
         q = q.where(ThreatAssessmentRow.level == level)
     items = db.execute(q).scalars().all()
@@ -64,9 +70,10 @@ def get_threat(
     threat_id: int,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> ThreatAssessmentOut:
     t = db.get(ThreatAssessmentRow, threat_id)
-    if t is None:
+    if t is None or t.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="threat not found")
     return ThreatAssessmentOut(
         id=t.id, action_id=t.action_id, integration_id=t.integration_id,

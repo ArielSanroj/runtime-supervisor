@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -167,7 +168,29 @@ def require_admin(
         raise HTTPException(status_code=401, detail="invalid admin token")
 
 
-def require_tenant_id(principal: Principal = Depends(require_any_scope)) -> str:
+_DEFAULT_TENANT_CACHE: dict[str, str] = {}
+
+
+def _default_tenant_id(db: Session) -> str | None:
+    """Look up the 'default' tenant's id. Cached per-process because the
+    default tenant row is immutable after the Phase 1 migration creates it.
+    """
+    if "id" in _DEFAULT_TENANT_CACHE:
+        return _DEFAULT_TENANT_CACHE["id"]
+    from .models import Tenant
+
+    row = db.execute(
+        select(Tenant.id).where(Tenant.name == "default")
+    ).scalar_one_or_none()
+    if row:
+        _DEFAULT_TENANT_CACHE["id"] = row
+    return row
+
+
+def require_tenant_id(
+    principal: Principal = Depends(require_any_scope),
+    db: Session = Depends(get_db),
+) -> str:
     """Dependency that returns the tenant_id bound to the caller's JWT.
 
     Phase 2 uses this on every tenant-scoped route so queries can apply
@@ -175,19 +198,22 @@ def require_tenant_id(principal: Principal = Depends(require_any_scope)) -> str:
     themselves. Routes declare `tenant_id: str = Depends(require_tenant_id)`
     and filter directly with that string.
 
-    Failure modes:
-      - No bearer → 401 (from require_any_scope).
-      - Verified integration but `tenant_id` column is NULL → 403. This
-        should not happen after Phase 1's backfill, but the explicit
-        rejection prevents silent cross-tenant leakage via unscoped rows.
-      - REQUIRE_AUTH=false (dev) → returns "default-dev-tenant" sentinel
-        so local tests don't need a real tenant row.
+    Resolution order:
+      1. principal.tenant_id (set when the integration was created with
+         an explicit tenant assignment)
+      2. 'default' tenant id (legacy integrations without tenant assignment
+         fall through to this; matches Phase 1's backfill philosophy)
+      3. REQUIRE_AUTH=false dev mode → sentinel string
+      4. Neither resolves → 500 (migration wasn't run)
     """
-    if principal.tenant_id is None:
-        if principal.integration_id == "dev":
-            return "default-dev-tenant"
+    if principal.tenant_id is not None:
+        return principal.tenant_id
+    if principal.integration_id == "dev":
+        return "default-dev-tenant"
+    default = _default_tenant_id(db)
+    if default is None:
         raise HTTPException(
-            status_code=403,
-            detail="integration is not assigned to a tenant — assign via /v1/integrations/{id}",
+            status_code=500,
+            detail="no default tenant configured — run `alembic upgrade head`",
         )
-    return principal.tenant_id
+    return default

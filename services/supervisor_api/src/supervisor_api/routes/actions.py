@@ -39,6 +39,7 @@ def evaluate_action(
     dry_run: bool = Query(default=False, description="Return decision without persisting"),
     db: Session = Depends(get_db),
     principal: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> DecisionOut:
     if not (set(principal.scopes) & {"*", body.action_type}):
         raise HTTPException(status_code=403, detail=f"scope '{body.action_type}' not granted")
@@ -88,7 +89,13 @@ def evaluate_action(
         )
 
     eval_started_at = time.perf_counter()
-    action = Action(action_type=body.action_type, status="received", payload=body.payload, shadow=body.shadow)
+    action = Action(
+        action_type=body.action_type,
+        status="received",
+        payload=body.payload,
+        shadow=body.shadow,
+        tenant_id=tenant_id,
+    )
     db.add(action)
     db.flush()
 
@@ -113,6 +120,7 @@ def evaluate_action(
                 owasp_ref=s.owasp_ref,
                 level=s.level,
                 signals=[{"message": s.message, "evidence": s.evidence}],
+                tenant_id=tenant_id,
             ))
         evidence.append(db, action_id=action.id, event_type="threat.detected", payload={
             "level": threat_assessment.level,
@@ -135,6 +143,7 @@ def evaluate_action(
             risk_breakdown=[],
             policy_version="threat-pipeline",
             latency_ms=latency_ms,
+            tenant_id=tenant_id,
         ))
         evidence.append(db, action_id=action.id, event_type="decision.made", payload={
             "decision": "deny", "reasons": reasons, "policy_version": "threat-pipeline",
@@ -207,6 +216,7 @@ def evaluate_action(
         risk_breakdown=dec.risk_breakdown,
         policy_version=dec.policy_version,
         latency_ms=latency_ms,
+        tenant_id=tenant_id,
     ))
 
     evidence.append(db, action_id=action.id, event_type="decision.made", payload={
@@ -252,7 +262,7 @@ def evaluate_action(
         action.status = "denied"
     else:
         action.status = "pending_review"
-        db.add(ReviewItem(action_id=action.id, status="pending"))
+        db.add(ReviewItem(action_id=action.id, status="pending", tenant_id=tenant_id))
 
     db.commit()
 
@@ -303,8 +313,18 @@ def get_action_execution(
     action_id: str,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> dict:
     from ..models import ActionExecution
+
+    # Scope by parent action's tenant to prevent cross-tenant reads even if a
+    # caller guesses another tenant's action_id. 404 (not 403) so we don't
+    # leak that the ID exists.
+    parent_tenant = db.execute(
+        select(Action.tenant_id).where(Action.id == action_id)
+    ).scalar_one_or_none()
+    if parent_tenant is None or parent_tenant != tenant_id:
+        raise HTTPException(status_code=404, detail="no execution recorded for this action")
 
     row = db.query(ActionExecution).filter_by(action_id=action_id).one_or_none()
     if row is None:
@@ -328,9 +348,10 @@ def get_decision(
     action_id: str,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> DecisionOut:
     action = db.get(Action, action_id)
-    if action is None or action.decision is None:
+    if action is None or action.decision is None or action.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="decision not found")
     d = action.decision
     reasons = [h.get("reason") for h in d.policy_hits] or [
@@ -351,7 +372,14 @@ def get_evidence(
     action_id: str,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> EvidenceBundle:
+    parent_tenant = db.execute(
+        select(Action.tenant_id).where(Action.id == action_id)
+    ).scalar_one_or_none()
+    if parent_tenant is None or parent_tenant != tenant_id:
+        raise HTTPException(status_code=404, detail="evidence not found")
+
     try:
         data = evidence.bundle(db, action_id)
     except LookupError as e:
@@ -360,7 +388,7 @@ def get_evidence(
     evidence.append(db, action_id=action_id, event_type="bundle.exported", payload={
         "bundle_hash": data["bundle_hash"],
         "exported_at": data["exported_at"].isoformat(),
-    })
+    }, tenant_id=tenant_id)
     db.commit()
     # re-fetch bundle tip after append so chain stays consistent for client
     final = evidence.bundle(db, action_id)
@@ -375,6 +403,7 @@ def list_recent_actions(
     include_shadow: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> list[RecentActionOut]:
     """Most recent actions with their decisions. Feeds the dashboard's
     'Recent blocks' card. `decision=deny` gives blocks only; omit to get
@@ -383,6 +412,7 @@ def list_recent_actions(
     q = (
         select(Decision, Action)
         .join(Action, Action.id == Decision.action_id)
+        .where(Action.tenant_id == tenant_id)
     )
     if decision:
         q = q.where(Decision.decision == decision)
@@ -416,7 +446,13 @@ def export_evidence_to_blob(
     action_id: str,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> EvidenceExportResult:
+    parent_tenant = db.execute(
+        select(Action.tenant_id).where(Action.id == action_id)
+    ).scalar_one_or_none()
+    if parent_tenant is None or parent_tenant != tenant_id:
+        raise HTTPException(status_code=404, detail="evidence not found")
     """Serialize the action's evidence bundle to the configured blob storage
     (local FS or S3) and return the durable URL. Useful for compliance
     retention — the DB can be pruned but the signed bundle remains recoverable.
@@ -438,7 +474,7 @@ def export_evidence_to_blob(
 
     evidence.append(db, action_id=action_id, event_type="bundle.exported_to_blob", payload={
         "url": url, "bundle_hash": data["bundle_hash"],
-    })
+    }, tenant_id=tenant_id)
     db.commit()
 
     return EvidenceExportResult(

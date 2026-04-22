@@ -39,8 +39,13 @@ def list_reviews(
     status: Literal["pending", "approved", "rejected"] | None = Query(default=None),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> list[ReviewItemOut]:
-    q = select(ReviewItem).order_by(ReviewItem.created_at.desc())
+    q = (
+        select(ReviewItem)
+        .where(ReviewItem.tenant_id == tenant_id)
+        .order_by(ReviewItem.created_at.desc())
+    )
     if status:
         q = q.where(ReviewItem.status == status)
     items = db.execute(q).scalars().all()
@@ -57,9 +62,10 @@ def get_review(
     review_id: str,
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> ReviewItemOut:
     item = db.get(ReviewItem, review_id)
-    if item is None:
+    if item is None or item.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="review not found")
     action = db.get(Action, item.action_id)
     if action is None:
@@ -75,9 +81,10 @@ def resolve_review(
     x_approver: str = Header(default="anonymous", alias="X-Approver"),
     db: Session = Depends(get_db),
     _: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> ReviewItemOut:
     item = db.get(ReviewItem, review_id)
-    if item is None:
+    if item is None or item.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="review not found")
     if item.status != "pending":
         raise HTTPException(status_code=409, detail=f"review already {item.status}")
@@ -96,7 +103,7 @@ def resolve_review(
         "decision": body.decision,
         "approver": x_approver,
         "notes": body.notes,
-    })
+    }, tenant_id=tenant_id)
 
     db.commit()
 
@@ -132,12 +139,13 @@ def escalate_review(
     x_approver: str = Header(default="anonymous", alias="X-Approver"),
     db: Session = Depends(get_db),
     principal: auth.Principal = Depends(auth.require_any_scope),
+    tenant_id: str = Depends(auth.require_tenant_id),
 ) -> ReviewItemOut:
     """Bump priority and route to the compliance queue. Idempotent — a
     second escalation on an already-high case just updates assigned_to and
     logs another evidence event."""
     item = db.get(ReviewItem, review_id)
-    if item is None:
+    if item is None or item.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="review not found")
     if item.status != "pending":
         raise HTTPException(status_code=409, detail=f"cannot escalate: review already {item.status}")
@@ -154,6 +162,6 @@ def escalate_review(
         "assigned_to": "compliance",
         "by": x_approver,
         "notes": body.notes,
-    })
+    }, tenant_id=tenant_id)
     db.commit()
     return _to_out(item, action)

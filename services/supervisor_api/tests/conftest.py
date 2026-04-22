@@ -41,5 +41,18 @@ def client() -> Iterator[TestClient]:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
+    # Phase 2 tenancy: seed the "default" tenant that migration 0011 creates
+    # in production. Tests bypass migrations (create_all) so we replicate the
+    # post-migration state manually. Also resets the auth module's default-
+    # tenant cache so each test sees a fresh lookup.
+    from supervisor_api import auth as auth_module
+    from supervisor_api.db import SessionLocal
+    from supervisor_api.models import Tenant
+
+    auth_module._DEFAULT_TENANT_CACHE.clear()
+    with SessionLocal() as s:
+        s.add(Tenant(name="default", active=True))
+        s.commit()
+
     with TestClient(app) as c:
         yield c

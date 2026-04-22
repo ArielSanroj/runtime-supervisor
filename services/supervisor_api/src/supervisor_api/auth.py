@@ -72,6 +72,11 @@ class Principal:
     integration_id: str
     name: str
     scopes: list[str]
+    # Phase 1 multi-tenant: every verified request carries the tenant the
+    # integration was registered against. Phase 2 filters queries by this.
+    # Nullable for legacy integrations that haven't been assigned a tenant
+    # yet — those fall through to the "default" tenant in the backfilled DB.
+    tenant_id: str | None = None
 
 
 def _match_scope(granted: list[str], required: str) -> bool:
@@ -119,13 +124,18 @@ def require_scope(required: str):
         db: Session = Depends(get_db),
     ) -> Principal:
         if not get_settings().require_auth:
-            return Principal(integration_id="dev", name="dev", scopes=["*"])
+            return Principal(integration_id="dev", name="dev", scopes=["*"], tenant_id=None)
 
         token = _extract_bearer(authorization)
         integration = _lookup_integration(db, token)
         if not _match_scope(integration.scopes or [], required):
             raise HTTPException(status_code=403, detail=f"scope '{required}' not granted")
-        return Principal(integration_id=integration.id, name=integration.name, scopes=integration.scopes or [])
+        return Principal(
+            integration_id=integration.id,
+            name=integration.name,
+            scopes=integration.scopes or [],
+            tenant_id=integration.tenant_id,
+        )
 
     return _dep
 
@@ -136,10 +146,15 @@ def require_any_scope(
 ) -> Principal:
     """For endpoints not tied to a single action_type (e.g. listing reviews)."""
     if not get_settings().require_auth:
-        return Principal(integration_id="dev", name="dev", scopes=["*"])
+        return Principal(integration_id="dev", name="dev", scopes=["*"], tenant_id=None)
     token = _extract_bearer(authorization)
     integration = _lookup_integration(db, token)
-    return Principal(integration_id=integration.id, name=integration.name, scopes=integration.scopes or [])
+    return Principal(
+        integration_id=integration.id,
+        name=integration.name,
+        scopes=integration.scopes or [],
+        tenant_id=integration.tenant_id,
+    )
 
 
 def require_admin(
@@ -150,3 +165,29 @@ def require_admin(
         raise HTTPException(status_code=503, detail="admin token not configured")
     if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=401, detail="invalid admin token")
+
+
+def require_tenant_id(principal: Principal = Depends(require_any_scope)) -> str:
+    """Dependency that returns the tenant_id bound to the caller's JWT.
+
+    Phase 2 uses this on every tenant-scoped route so queries can apply
+    `WHERE tenant_id = :tenant_id` without reaching into the Principal
+    themselves. Routes declare `tenant_id: str = Depends(require_tenant_id)`
+    and filter directly with that string.
+
+    Failure modes:
+      - No bearer → 401 (from require_any_scope).
+      - Verified integration but `tenant_id` column is NULL → 403. This
+        should not happen after Phase 1's backfill, but the explicit
+        rejection prevents silent cross-tenant leakage via unscoped rows.
+      - REQUIRE_AUTH=false (dev) → returns "default-dev-tenant" sentinel
+        so local tests don't need a real tenant row.
+    """
+    if principal.tenant_id is None:
+        if principal.integration_id == "dev":
+            return "default-dev-tenant"
+        raise HTTPException(
+            status_code=403,
+            detail="integration is not assigned to a tenant — assign via /v1/integrations/{id}",
+        )
+    return principal.tenant_id

@@ -30,6 +30,8 @@ class Action(Base):
     # the caller (no deny, no review-block). The real decision is still on
     # the joined Decision row for metrics/replay.
     shadow: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Phase 1 multi-tenant — nullable until Phase 2 backfills every writer.
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     decision: Mapped[Decision | None] = relationship(back_populates="action", uselist=False)
@@ -50,6 +52,7 @@ class Decision(Base):
     # End-to-end evaluate latency (threat pipeline + policy + risk). Null on
     # rows created before this column existed; populated going forward.
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     action: Mapped[Action] = relationship(back_populates="decision")
@@ -68,6 +71,7 @@ class ReviewItem(Base):
     assigned_to: Mapped[str | None] = mapped_column(String(64), nullable=True)
     approver: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approver_notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -119,6 +123,7 @@ class PolicyRecord(Base):
     yaml_source: Mapped[str] = mapped_column(String(20000), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -154,6 +159,7 @@ class ActionExecution(Base):
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     triggered_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -166,6 +172,7 @@ class WebhookSubscription(Base):
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -183,6 +190,7 @@ class WebhookDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="success")  # pending|success|failed|dead
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
 
 
 class ThreatAssessmentRow(Base):
@@ -195,6 +203,7 @@ class ThreatAssessmentRow(Base):
     owasp_ref: Mapped[str] = mapped_column(String(16), nullable=False)
     level: Mapped[str] = mapped_column(String(16), nullable=False)
     signals: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -209,6 +218,7 @@ class EvidenceEvent(Base):
     event_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     prev_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     action: Mapped[Action] = relationship(back_populates="events")

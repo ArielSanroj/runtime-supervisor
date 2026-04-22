@@ -134,6 +134,10 @@ class ReviewResolveRequest(BaseModel):
 class IntegrationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     scopes: list[str] = Field(default_factory=lambda: ["*"])
+    # When omitted, the server assigns the "default" tenant so legacy
+    # admin flows keep working. Explicit assignment is preferred once the
+    # admin UI (Phase 3) exposes a tenant selector.
+    tenant_id: str | None = None
 
 
 class IntegrationOut(BaseModel):
@@ -145,6 +149,7 @@ class IntegrationOut(BaseModel):
     revoked_at: UTCDateTime | None = None
     execute_url: str | None = None
     execute_method: str = "POST"
+    tenant_id: str | None = None
 
 
 class IntegrationCreated(IntegrationOut):

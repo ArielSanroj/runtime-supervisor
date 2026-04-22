@@ -86,6 +86,9 @@ def execute(action_id: str, *, triggered_by: str, integration_id: str | None = N
             method=integration.execute_method or "POST",
             state="pending",
             triggered_by=triggered_by,
+            # Inherit tenancy from the parent action so /metrics queries
+            # filtered by ActionExecution.tenant_id attribute cleanly.
+            tenant_id=action.tenant_id,
         )
         db.add(row)
         db.flush()
@@ -130,7 +133,7 @@ def execute(action_id: str, *, triggered_by: str, integration_id: str | None = N
             "url": row.url, "method": row.method,
             "status_code": status_code, "state": row.state,
             "attempts": attempts, "triggered_by": triggered_by,
-        })
+        }, tenant_id=action.tenant_id)
         db.commit()
         span.set_attribute("supervisor.execution_state", row.state)
         if status_code is not None:

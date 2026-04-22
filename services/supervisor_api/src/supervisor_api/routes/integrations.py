@@ -30,13 +30,34 @@ def _to_out(i: Integration) -> IntegrationOut:
         revoked_at=i.revoked_at,
         execute_url=i.execute_url,
         execute_method=i.execute_method or "POST",
+        tenant_id=i.tenant_id,
     )
 
 
 @router.post("", response_model=IntegrationCreated, status_code=201)
 def create_integration(body: IntegrationCreate, db: Session = Depends(get_db)) -> IntegrationCreated:
     secret = auth.generate_secret()
-    integration = Integration(name=body.name, shared_secret=secret, scopes=body.scopes, active=True)
+
+    # Resolve tenant: explicit assignment wins; otherwise fall through to
+    # the "default" tenant so post-migration installs keep working.
+    tenant_id = body.tenant_id
+    if tenant_id is None:
+        from ..auth import _default_tenant_id
+
+        tenant_id = _default_tenant_id(db)
+    else:
+        from ..models import Tenant
+
+        if db.get(Tenant, tenant_id) is None:
+            raise HTTPException(status_code=400, detail=f"unknown tenant_id: {tenant_id}")
+
+    integration = Integration(
+        name=body.name,
+        shared_secret=secret,
+        scopes=body.scopes,
+        active=True,
+        tenant_id=tenant_id,
+    )
     db.add(integration)
     try:
         db.commit()

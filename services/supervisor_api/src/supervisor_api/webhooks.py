@@ -86,6 +86,7 @@ def _deliver_one(sub: WebhookSubscription, event_type: str, payload: dict[str, A
                 state=state,
                 delivered_at=datetime.now(UTC) if error is None else None,
                 next_retry_at=None if error is None or state == "dead" else _next_retry_at(attempts),
+                tenant_id=sub.tenant_id,
             )
         )
         db.commit()

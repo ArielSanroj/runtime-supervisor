@@ -40,8 +40,14 @@ def create_subscription(
     body: WebhookSubscriptionCreate,
     db: Session = Depends(get_db),
 ) -> WebhookSubscriptionOut:
-    _guard_integration(db, integration_id)
-    sub = WebhookSubscription(integration_id=integration_id, url=body.url, events=list(body.events), active=True)
+    integration = _guard_integration(db, integration_id)
+    sub = WebhookSubscription(
+        integration_id=integration_id,
+        url=body.url,
+        events=list(body.events),
+        active=True,
+        tenant_id=integration.tenant_id,
+    )
     db.add(sub)
     db.commit()
     db.refresh(sub)

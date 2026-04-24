@@ -6,6 +6,7 @@ import { threatsApi, type ThreatAssessmentRow } from "@/lib/threats";
 import { getSession } from "@/lib/session";
 import { AutoRefresh } from "../review/AutoRefresh";
 import InfoTip from "../InfoTip";
+import RepoKpis from "./RepoKpis";
 
 export const dynamic = "force-dynamic";
 
@@ -209,7 +210,7 @@ export default async function Dashboard({
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 16 }}>
         <div>
           <div className="row" style={{ alignItems: "center", gap: 8 }}>
-            <h1 style={{ margin: 0 }}>Fix Queue</h1>
+            <h1 style={{ margin: 0 }}>Fix this first</h1>
             <InfoTip>
               <strong>What:</strong> the workbench for shipping safely: decide reviews, inspect blocks,
               scan static call-sites, and tune rules.<br /><br />
@@ -217,7 +218,7 @@ export default async function Dashboard({
             </InfoTip>
           </div>
           <p className="muted" style={{ margin: "8px 0 0" }}>
-            The next actions to fix before your agent executes something risky.
+            What your agent can do unchecked, where it is, and how to gate it.
           </p>
         </div>
         <div className="row" style={{ gap: 6 }}>
@@ -228,6 +229,8 @@ export default async function Dashboard({
           ))}
         </div>
       </div>
+
+      <RepoKpis />
 
       <section className="grid cols-3" style={{ marginTop: 20 }}>
         <MetricCard

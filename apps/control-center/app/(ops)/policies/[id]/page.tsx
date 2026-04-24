@@ -2,6 +2,7 @@ import Link from "next/link";
 import { policiesApi } from "@/lib/policies";
 import DiffPanel from "./DiffPanel";
 import PolicyActions from "./PolicyActions";
+import PolicyHumanView from "./PolicyHumanView";
 import ReplayPanel from "./ReplayPanel";
 import TestPanel from "./TestPanel";
 
@@ -67,6 +68,8 @@ export default async function PolicyDetail({
           </p>
         </div>
       )}
+
+      <PolicyHumanView yamlSource={policy.yaml_source} />
 
       <div className="grid cols-2">
         <div className="card">

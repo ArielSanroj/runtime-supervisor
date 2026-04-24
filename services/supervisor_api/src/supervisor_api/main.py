@@ -19,6 +19,7 @@ from .routes import (
     integrations,
     metrics,
     policies,
+    repos,
     review,
     scans,
     tenants,
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(tenants.router)
     app.include_router(users.router)
     app.include_router(scans.router)
+    app.include_router(repos.router)
     app.include_router(billing.router)
     app.include_router(auth_magic.router)
 

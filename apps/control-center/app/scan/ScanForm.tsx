@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { recordScan } from "@/lib/repo-history";
 import type { ScanResponse } from "@/lib/scans";
 import FindingsList from "./FindingsList";
 
@@ -33,7 +34,22 @@ export default function ScanForm() {
           return;
         }
         setScan(data);
-        if (data.status === "done" || data.status === "error") {
+        if (data.status === "done") {
+          if (data.github_url) {
+            const highCount = (data.findings ?? []).filter((f) => f.confidence === "high").length;
+            const criticalCombos = (data.combos ?? []).filter((c) => c.severity === "critical").length;
+            recordScan({
+              github_url: data.github_url,
+              scan_id: data.scan_id,
+              ran_at: data.completed_at ?? new Date().toISOString(),
+              high_findings: highCount,
+              critical_combos: criticalCombos,
+            });
+          }
+          setSubmitting(false);
+          return;
+        }
+        if (data.status === "error") {
           setSubmitting(false);
           return;
         }

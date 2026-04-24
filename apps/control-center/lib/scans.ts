@@ -44,6 +44,15 @@ export type RepoSummary = {
   repo_type?: string | null;
 };
 
+export type ScanCombo = {
+  id: string;
+  title: string;
+  severity: "critical" | "high" | "medium";
+  narrative: string;
+  evidence: string[];
+  mitigation: string;
+};
+
 export type ScanResponse = {
   scan_id: string;
   status: ScanStatus;
@@ -54,9 +63,52 @@ export type ScanResponse = {
   repo_summary?: RepoSummary | null;
   findings?: ScanFinding[] | null;
   findings_truncated: boolean;
+  combos?: ScanCombo[] | null;
   created_at?: string | null;
   completed_at?: string | null;
 };
+
+/**
+ * Build an English repo banner from structured RepoSummary fields.
+ *
+ * RepoSummary.one_liner is produced in Spanish by the scanner, which breaks
+ * the English product-voice rule in packages/supervisor-discover/VOICE.md.
+ * Until the scanner is re-localized, the UI composes its own banner from the
+ * structured fields — no literal numbers, all derived at render time.
+ */
+export function buildEnglishBanner(summary: RepoSummary): string {
+  const frameworks = summary.frameworks.filter(Boolean);
+  const stack = frameworks.length ? frameworks.join(" + ") : "agent";
+
+  if (summary.repo_type === "mcp-server" || summary.repo_type === "mcp-server+langchain") {
+    const toolCount = summary.mcp_tools?.length ?? 0;
+    const suffix = toolCount > 0 ? ` exposing ${toolCount} MCP tools` : " exposing MCP tools";
+    return `an MCP server${suffix}`;
+  }
+
+  const capabilities: string[] = [];
+  const realWorld = Object.keys(summary.real_world_actions ?? {});
+  if (realWorld.length > 0) capabilities.push(realWorld[0]);
+  if (summary.llm_providers.length > 0 && realWorld.length === 0) capabilities.push("LLM tool use");
+  if (Object.keys(summary.payment_integrations).length > 0) capabilities.push("payments");
+  if (summary.sensitive_tables.length > 0 && !capabilities.includes("customer data"))
+    capabilities.push("customer data");
+
+  if (summary.repo_type === "langchain-agent") {
+    return capabilities.length > 0
+      ? `a langchain agent with ${capabilities.slice(0, 2).join(" and ")}`
+      : "a langchain agent";
+  }
+
+  if (summary.repo_type === "claude-skill") {
+    return "a Claude Code skill / plugin";
+  }
+
+  if (capabilities.length === 0) {
+    return `a ${stack} app`;
+  }
+  return `a ${stack} app with ${capabilities.slice(0, 2).join(" and ")}`;
+}
 
 async function authHeaders(): Promise<Record<string, string>> {
   if (!APP_ID || !SECRET) return {};

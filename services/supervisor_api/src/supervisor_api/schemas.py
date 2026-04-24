@@ -364,6 +364,20 @@ class ScanFinding(BaseModel):
     tier: str | None = None
 
 
+class ScanCombo(BaseModel):
+    """Deterministic attack-path detection emitted by `detect_combos()` in
+    supervisor-discover. One-to-one with the scanner's `Combo` dataclass so the
+    UI can render the official "critical combos" section per VOICE.md template
+    (Why / Evidence / Minimum guard / Ideal guard) without recomputing."""
+
+    id: str
+    title: str
+    severity: Literal["critical", "high", "medium"]
+    narrative: str
+    evidence: list[str] = Field(default_factory=list)
+    mitigation: str
+
+
 class ScanResponse(BaseModel):
     scan_id: str
     status: ScanStatus
@@ -374,5 +388,6 @@ class ScanResponse(BaseModel):
     repo_summary: dict[str, Any] | None = None
     findings: list[ScanFinding] | None = None
     findings_truncated: bool = False
+    combos: list[ScanCombo] | None = None
     created_at: UTCDateTime | None = None
     completed_at: UTCDateTime | None = None

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { ScanFinding, ScanResponse } from "@/lib/scans";
+import { buildEnglishBanner, type ScanFinding, type ScanResponse } from "@/lib/scans";
+import CombosList from "./CombosList";
+import NotWorriedAbout from "./NotWorriedAbout";
 
 const TIER_ORDER = ["money", "real_world_actions", "customer_data", "business_data", "llm", "general"] as const;
 
@@ -171,9 +173,13 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
   const priorityCount = findings.filter((f) => isPriorityFinding(f)).length;
   const generalCount = grouped.general?.length ?? 0;
 
+  const combos = scan.combos ?? [];
+
   return (
     <div className="mt-8 space-y-8">
       {summary && <SummaryCard summary={summary} elapsedMs={scan.elapsed_ms ?? 0} />}
+      {combos.length > 0 && <CombosList combos={combos} />}
+      {summary && <NotWorriedAbout summary={summary} findings={rawFindings} />}
       <BuilderUnlock
         findingsCount={findings.length}
         priorityCount={priorityCount}
@@ -308,22 +314,31 @@ function BuilderUnlock({
 }) {
   return (
     <div className="rounded-xl border border-emerald-900/50 bg-emerald-500/5 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-6">
+        <div className="max-w-2xl">
           <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">free scan complete</div>
-          <p className="mt-2 max-w-2xl text-sm leading-7 text-zinc-300">
-            This preview shows the risk shape of the repo. Builder unlocks private repos,
-            full exports, scan history, and CI comments so you can turn these findings into fixes.
+          <p className="mt-2 text-sm leading-7 text-zinc-300">
+            This preview shows the risk shape of the repo.
           </p>
+          <div className="mt-4 text-sm text-zinc-300">
+            <div className="font-mono text-xs uppercase tracking-widest text-zinc-500">Builder unlocks</div>
+            <ul className="mt-2 space-y-1 text-sm">
+              <BuilderBullet>private GitHub repos</BuilderBullet>
+              <BuilderBullet>full runtime-supervisor/ export</BuilderBullet>
+              <BuilderBullet>copy-paste stubs</BuilderBullet>
+              <BuilderBullet>YAML policies</BuilderBullet>
+              <BuilderBullet>scan history and diffs</BuilderBullet>
+              <BuilderBullet>CI and PR comments</BuilderBullet>
+            </ul>
+          </div>
           {hiddenCount > 0 && (
-            <p className="mt-2 text-xs text-emerald-400">
-              + {hiddenCount} medium-confidence finding{hiddenCount === 1 ? "" : "s"} hidden —
-              Builder unlocks the full set.
+            <p className="mt-4 font-mono text-xs text-emerald-400">
+              + {hiddenCount} medium-confidence finding{hiddenCount === 1 ? "" : "s"} hidden
             </p>
           )}
           {truncated && (
-            <p className="mt-2 text-xs text-amber-400">
-              Preview truncated after priority sorting. Builder and local CLI exports include the complete finding set.
+            <p className="mt-2 font-mono text-xs text-amber-400">
+              preview truncated — Builder returns the full set
             </p>
           )}
         </div>
@@ -343,6 +358,15 @@ function MiniStat({ value, label }: { value: string; label: string }) {
       <div className="font-mono text-xl font-semibold text-zinc-100">{value}</div>
       <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-600">{label}</div>
     </div>
+  );
+}
+
+function BuilderBullet({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex gap-2 text-zinc-300">
+      <span className="text-emerald-400">✓</span>
+      <span>{children}</span>
+    </li>
   );
 }
 
@@ -538,11 +562,14 @@ function groupByFamily(findings: ScanFinding[]): ScanFinding[][] {
 }
 
 function SummaryCard({ summary, elapsedMs }: { summary: NonNullable<ScanResponse["repo_summary"]>; elapsedMs: number }) {
+  // RepoSummary.one_liner is produced in Spanish by the scanner; rebuild in
+  // English from structured fields (see buildEnglishBanner in lib/scans.ts).
+  const banner = buildEnglishBanner(summary);
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-6">
       <div className="text-xs font-mono uppercase tracking-widest text-emerald-400">what we found</div>
       <p className="mt-3 text-xl leading-relaxed text-zinc-100">
-        <OneLiner text={summary.one_liner || "no critical integrations detected"} />
+        Scanned <strong className="font-semibold text-emerald-300">{banner}</strong>.
       </p>
       <RepoTypeCallout summary={summary} />
       <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -636,24 +663,6 @@ function RepoTypeCallout({ summary }: { summary: NonNullable<ScanResponse["repo_
     );
   }
   return null;
-}
-
-function OneLiner({ text }: { text: string }) {
-  // The one_liner from the backend can embed **bold** markers — render them.
-  const parts = text.split(/(\*\*[^*]+\*\*)/);
-  return (
-    <>
-      {parts.map((part, i) =>
-        part.startsWith("**") && part.endsWith("**") ? (
-          <strong key={i} className="font-semibold text-emerald-300">
-            {part.slice(2, -2)}
-          </strong>
-        ) : (
-          <span key={i}>{part}</span>
-        ),
-      )}
-    </>
-  );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

@@ -331,6 +331,7 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
 
         try:
             from supervisor_discover.classifier import tier_of, validate
+            from supervisor_discover.combos import detect_combos
             from supervisor_discover.scanners import scan_all
             from supervisor_discover.summary import build_summary
         except ImportError as e:
@@ -340,6 +341,7 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         try:
             findings = validate(scan_all(tmp_path))
             repo_summary = build_summary(findings).to_dict()
+            detected_combos = detect_combos(findings)
         except Exception as e:
             log.exception("scan.scanner_crash scan_id=%s", scan_id)
             _finalize_error(scan_id, base, f"scanner error: {type(e).__name__}: {e}"[:500], started)
@@ -361,11 +363,23 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         out_findings.append(d)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    out_combos = [
+        {
+            "id": c.id,
+            "title": c.title,
+            "severity": c.severity,
+            "narrative": c.narrative,
+            "evidence": list(c.evidence),
+            "mitigation": c.mitigation,
+        }
+        for c in detected_combos
+    ]
     base.update({
         "status": "done",
         "repo_summary": repo_summary,
         "findings": out_findings,
         "findings_truncated": len(findings) > _MAX_FINDINGS_RETURNED,
+        "combos": out_combos,
         "elapsed_ms": elapsed_ms,
         "completed_at": datetime.now(UTC).isoformat(),
     })

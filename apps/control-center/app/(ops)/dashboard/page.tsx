@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { getMetrics, type MetricsSummary } from "@/lib/metrics";
 import { api, type RecentAction, type ReviewCase } from "@/lib/api";
+import { listScans, type ScanSummary } from "@/lib/scans";
 import { threatsApi, type ThreatAssessmentRow } from "@/lib/threats";
+import { getSession } from "@/lib/session";
 import { AutoRefresh } from "../review/AutoRefresh";
 import InfoTip from "../InfoTip";
 
@@ -68,6 +70,7 @@ function buildFixQueue(
   blocks: RecentAction[],
   pending: ReviewCase[],
   threats: ThreatAssessmentRow[],
+  latestScan: ScanSummary | null,
 ): FixItem[] {
   const items: FixItem[] = [];
 
@@ -119,15 +122,30 @@ function buildFixQueue(
     });
   }
 
-  items.push({
-    id: "scan-static-surface",
-    title: "Scan static call-sites",
-    body: "Run the scanner to find unwrapped payment, DB, LLM, filesystem, and agent chokepoints before they execute.",
-    meta: "free public scan - Builder unlocks private repos",
-    href: "/scan",
-    cta: "scan",
-    tone: "muted",
-  });
+  // Live hook into the last persisted scan. If the most recent scan has
+  // priority findings, surface them as a fix-queue item linking to the
+  // detail page. No scan yet → fall back to the generic "run a scan" CTA.
+  if (latestScan && latestScan.status === "done" && latestScan.priority_count > 0) {
+    items.push({
+      id: `scan-${latestScan.id}`,
+      title: `${latestScan.priority_count} priority finding${latestScan.priority_count === 1 ? "" : "s"} from last scan`,
+      body: "Wrap these call-sites before they fire in prod.",
+      meta: `${latestScan.repo_url.replace(/^https?:\/\/github\.com\//, "").replace(/\.git\/?$/, "")} - ${latestScan.total_findings} total`,
+      href: `/findings/${latestScan.id}`,
+      cta: "review",
+      tone: "warn",
+    });
+  } else {
+    items.push({
+      id: "scan-static-surface",
+      title: "Scan static call-sites",
+      body: "Run the scanner to find unwrapped payment, DB, LLM, filesystem, and agent chokepoints before they execute.",
+      meta: "free public scan - Builder unlocks private repos",
+      href: "/scan",
+      cta: "scan",
+      tone: "muted",
+    });
+  }
 
   return items.slice(0, 8);
 }
@@ -139,19 +157,29 @@ export default async function Dashboard({
 }) {
   const sp = await searchParams;
   const win = (sp.window as Window) ?? "24h";
+  const session = await getSession();
+  const tenantId = session?.user.tenant_id ?? null;
+
   let m: MetricsSummary | null = null;
   let err: string | null = null;
   let blocks: RecentAction[] = [];
   let pending: ReviewCase[] = [];
   let threats: ThreatAssessmentRow[] = [];
+  let latestScan: ScanSummary | null = null;
 
   try {
-    [m, blocks, pending, threats] = await Promise.all([
+    const [metrics, blocksRes, pendingRes, threatsRes, scansRes] = await Promise.all([
       getMetrics(win),
       api.listRecentActions({ decision: "deny", limit: 12 }).catch(() => []),
       api.listReviews("pending").catch(() => []),
       threatsApi.list(12).catch(() => []),
+      listScans(tenantId, 1).catch(() => []),
     ]);
+    m = metrics;
+    blocks = blocksRes;
+    pending = pendingRes;
+    threats = threatsRes;
+    latestScan = scansRes[0] ?? null;
   } catch (e) {
     err = (e as Error).message;
   }
@@ -169,7 +197,7 @@ export default async function Dashboard({
     );
   }
 
-  const fixQueue = buildFixQueue(m, blocks, pending, threats);
+  const fixQueue = buildFixQueue(m, blocks, pending, threats, latestScan);
   const totalDecisions = m.decisions.allow + m.decisions.deny + m.decisions.review;
   const threatRate = m.actions_total ? Math.round((m.threats.total / m.actions_total) * 100) : 0;
   const isZeroState = m.actions_total === 0;

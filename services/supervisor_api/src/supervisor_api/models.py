@@ -107,6 +107,38 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Scan(Base):
+    """Persisted record of a supervisor-discover scan.
+
+    Each run of `POST /v1/scans` creates one row. tenant_id is nullable so
+    anonymous landing-page scans still persist (NULL = public demo); Builder
+    users get their tenant_id recorded and can list past scans via
+    `GET /v1/scans?tenant_id=...`.
+
+    The full findings + repo_summary payload is kept as JSON so the detail
+    page can render the same `<FindingsList>` component used by the
+    post-scan page, without re-deriving anything from the blob.
+    """
+
+    __tablename__ = "scans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    repo_url: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Full payload: repo_summary + findings (truncated to the same limit the
+    # UI receives). Kept as JSON to avoid a second schema / migrations dance
+    # every time discover adds a field.
+    repo_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    findings: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    total_findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    priority_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scan_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="done")  # done|error
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class MagicLinkToken(Base):
     """Single-use email-bound token for passwordless login.
 

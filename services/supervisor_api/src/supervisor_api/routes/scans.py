@@ -23,9 +23,14 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from .. import storage
+from ..db import SessionLocal, get_db
+from ..models import Scan
 from ..schemas import ScanRequest, ScanResponse
 
 log = logging.getLogger(__name__)
@@ -84,6 +89,53 @@ def _load(scan_id: str) -> dict[str, Any] | None:
     except (FileNotFoundError, KeyError):
         return None
     return json.loads(body)
+
+
+def _priority_count(findings: list[dict[str, Any]]) -> int:
+    """Findings in any tier other than `general` count as priority."""
+    return sum(1 for f in findings if f.get("tier") and f["tier"] != "general")
+
+
+def _save_scan_row(
+    scan_id: str,
+    repo_url: str,
+    ref: str | None,
+    repo_summary: dict[str, Any],
+    findings: list[dict[str, Any]],
+    elapsed_ms: int,
+    *,
+    tenant_id: str | None = None,
+    status: str = "done",
+    error: str | None = None,
+) -> None:
+    """Persist the scan to the `scans` table.
+
+    Background task — creates its own Session because the request's Session
+    is long gone by the time _run_scan_sync runs. Failure here is best-effort:
+    the blob copy still exists and the user sees their result.
+    """
+    db: Session = SessionLocal()
+    try:
+        row = Scan(
+            id=scan_id,
+            tenant_id=tenant_id,
+            repo_url=repo_url,
+            ref=ref,
+            repo_summary=repo_summary,
+            findings=findings,
+            total_findings=len(findings),
+            priority_count=_priority_count(findings),
+            scan_seconds=elapsed_ms / 1000.0,
+            status=status,
+            error=error,
+        )
+        db.add(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        log.exception("scan.persist_failed scan_id=%s", scan_id)
+    finally:
+        db.close()
 
 
 def _directory_bytes(path: Path) -> int:
@@ -163,6 +215,50 @@ async def get_scan(scan_id: str) -> ScanResponse:
         raise HTTPException(status_code=404, detail="scan not found")
     # Dates round-trip as ISO strings — Pydantic re-parses via UTCDateTime.
     return ScanResponse(**data)
+
+
+class ScanSummary(BaseModel):
+    """Lightweight row for the dashboard `/findings` list. No full findings
+    payload — the detail page fetches that separately via /v1/scans/{id}."""
+
+    id: str
+    repo_url: str
+    ref: str | None
+    total_findings: int
+    priority_count: int
+    scan_seconds: float | None
+    status: str
+    created_at: datetime
+
+
+@router.get("/scans", response_model=list[ScanSummary])
+def list_scans(
+    tenant_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[ScanSummary]:
+    """List past scans, newest first. Optional `tenant_id` filter so the
+    dashboard only shows the logged-in user's runs. Anonymous landing
+    scans (`tenant_id IS NULL`) are never returned unless the caller
+    explicitly asks for them (omit the filter → all scans). MVP is
+    permissive; once the dashboard is strictly tenant-gated we'll tighten."""
+    stmt = select(Scan).order_by(Scan.created_at.desc()).limit(limit)
+    if tenant_id is not None:
+        stmt = stmt.where(Scan.tenant_id == tenant_id)
+    rows = db.execute(stmt).scalars().all()
+    return [
+        ScanSummary(
+            id=r.id,
+            repo_url=r.repo_url,
+            ref=r.ref,
+            total_findings=r.total_findings,
+            priority_count=r.priority_count,
+            scan_seconds=r.scan_seconds,
+            status=r.status,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 # ---- worker ------------------------------------------------------------------
@@ -274,6 +370,15 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         "completed_at": datetime.now(UTC).isoformat(),
     })
     _persist(scan_id, base)
+    _save_scan_row(
+        scan_id=scan_id,
+        repo_url=base.get("github_url", ""),
+        ref=base.get("ref"),
+        repo_summary=repo_summary,
+        findings=out_findings,
+        elapsed_ms=elapsed_ms,
+        status="done",
+    )
     log.info(
         "scan.done scan_id=%s findings=%d truncated=%s elapsed_ms=%d",
         scan_id, len(out_findings), len(findings) > _MAX_FINDINGS_RETURNED, elapsed_ms,
@@ -289,4 +394,14 @@ def _finalize_error(scan_id: str, base: dict[str, Any], reason: str, started: fl
         "completed_at": datetime.now(UTC).isoformat(),
     })
     _persist(scan_id, base)
+    _save_scan_row(
+        scan_id=scan_id,
+        repo_url=base.get("github_url", ""),
+        ref=base.get("ref"),
+        repo_summary={},
+        findings=[],
+        elapsed_ms=elapsed_ms,
+        status="error",
+        error=reason[:1000],
+    )
     log.warning("scan.error scan_id=%s reason=%s", scan_id, reason)

@@ -89,3 +89,28 @@ export async function getScan(scan_id: string): Promise<ScanResponse> {
   }
   return JSON.parse(body) as ScanResponse;
 }
+
+export type ScanSummary = {
+  id: string;
+  repo_url: string;
+  ref: string | null;
+  total_findings: number;
+  priority_count: number;
+  scan_seconds: number | null;
+  status: "done" | "error";
+  created_at: string;
+};
+
+export async function listScans(tenantId?: string | null, limit = 20): Promise<ScanSummary[]> {
+  const params = new URLSearchParams();
+  if (tenantId) params.set("tenant_id", tenantId);
+  params.set("limit", String(limit));
+  const res = await fetch(`${API}/v1/scans?${params}`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(await res.text()), { status: res.status });
+  }
+  return (await res.json()) as ScanSummary[];
+}

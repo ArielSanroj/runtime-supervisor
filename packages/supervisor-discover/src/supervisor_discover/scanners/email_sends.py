@@ -6,6 +6,11 @@ refunds. Once email leaves your SMTP, you can't recall it.
 
 Providers: SendGrid, Mailgun, Resend, AWS SES, Postmark, SparkPost, Mailchimp
 transactional, Nodemailer (SMTP), Python smtplib.
+
+Python detection: AST-based — iterates `ast.Call` and matches the resolved
+dotted name against `_PY_CALL_TARGETS`. Immune to matches inside comments,
+docstrings, f-strings, or plain string literals. URL patterns still use regex
+because they're useful for both languages and URLs rarely appear in prose.
 """
 from __future__ import annotations
 
@@ -13,32 +18,55 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import iter_python_calls, match_dotted_call, python_files, safe_read, ts_js_files
 
-_SIGNATURES: list[tuple[re.Pattern, str, str]] = [
-    # SendGrid
-    (re.compile(r"\bSendGridAPIClient\b|\bsgMail\.send\s*\("), "sendgrid", "high"),
-    (re.compile(r"api\.sendgrid\.com/\S*/mail/send"), "sendgrid", "high"),
-    # Mailgun
-    (re.compile(r"\bmailgun[\w.]*\.messages\.create\s*\("), "mailgun", "high"),
-    (re.compile(r"api\.mailgun\.net/\S*/messages"), "mailgun", "high"),
+
+# Python SDK call signatures — matched via AST. Key: dotted-name or suffix;
+# value: (provider, confidence).
+_PY_CALL_TARGETS: dict[str, tuple[str, str]] = {
+    # SendGrid — fully-qualified (avoid cross-vendor collisions).
+    "sgMail.send":              ("sendgrid", "high"),
+    "SendGridAPIClient":        ("sendgrid", "high"),
+    # Mailgun — the vendor prefix is required so we don't collide with
+    # `anthropic.messages.create` or `twilio.messages.create`.
+    "mailgun.messages.create":  ("mailgun", "high"),
+    "mg.messages.create":       ("mailgun", "high"),
     # Resend
-    (re.compile(r"\bresend\.emails\.send\s*\("), "resend", "high"),
-    (re.compile(r"api\.resend\.com/\S*/emails"), "resend", "high"),
+    "resend.emails.send":       ("resend", "high"),
     # AWS SES
-    (re.compile(r"\bses[\w.]*\.send_email\s*\(|\bSES\.Client\b"), "aws-ses", "high"),
-    (re.compile(r"\bSendEmailCommand\s*\("), "aws-ses", "high"),
+    "ses.send_email":           ("aws-ses", "high"),
+    "SendEmailCommand":         ("aws-ses", "high"),
     # Postmark
-    (re.compile(r"\bpostmark[\w.]*\.(sendEmail|emails\.send|Mail\.send)\s*\("), "postmark", "high"),
-    (re.compile(r"api\.postmarkapp\.com/email"), "postmark", "high"),
-    # SparkPost
-    (re.compile(r"api\.sparkpost\.com/\S*/transmissions"), "sparkpost", "high"),
-    # Nodemailer (SMTP, any provider)
-    (re.compile(r"\bnodemailer\.createTransport\b|\btransporter\.sendMail\s*\("), "nodemailer", "high"),
+    "postmark.sendEmail":       ("postmark", "high"),
+    "postmark.emails.send":     ("postmark", "high"),
+    "postmark.Mail.send":       ("postmark", "high"),
     # Python smtplib
-    (re.compile(r"\bsmtplib\.SMTP(_SSL)?\s*\(|\bserver\.send_message\s*\(|\bserver\.sendmail\s*\("),
-     "smtplib", "high"),
+    "smtplib.SMTP":             ("smtplib", "high"),
+    "smtplib.SMTP_SSL":         ("smtplib", "high"),
+    "server.send_message":      ("smtplib", "high"),
+    "server.sendmail":          ("smtplib", "high"),
+}
+
+# URL regex patterns — language-agnostic, useful for JS too. These rarely
+# appear verbatim in prose, so FP risk is low.
+_URL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"api\.sendgrid\.com/\S*/mail/send"), "sendgrid", "high"),
+    (re.compile(r"api\.mailgun\.net/\S*/messages"), "mailgun", "high"),
+    (re.compile(r"api\.resend\.com/\S*/emails"), "resend", "high"),
+    (re.compile(r"api\.postmarkapp\.com/email"), "postmark", "high"),
+    (re.compile(r"api\.sparkpost\.com/\S*/transmissions"), "sparkpost", "high"),
 ]
+
+# JS/TS SDK patterns — no cheap AST, stick with regex anchored on vendor ids.
+_JS_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"\bSendGridAPIClient\b|\bsgMail\.send\s*\("), "sendgrid", "high"),
+    (re.compile(r"\bmailgun[\w.]*\.messages\.create\s*\("), "mailgun", "high"),
+    (re.compile(r"\bresend\.emails\.send\s*\("), "resend", "high"),
+    (re.compile(r"\bSendEmailCommand\s*\("), "aws-ses", "high"),
+    (re.compile(r"\bpostmark[\w.]*\.(sendEmail|emails\.send|Mail\.send)\s*\("), "postmark", "high"),
+    (re.compile(r"\bnodemailer\.createTransport\b|\btransporter\.sendMail\s*\("), "nodemailer", "high"),
+]
+
 
 _NARRATIVES: dict[str, str] = {
     "sendgrid": (
@@ -81,23 +109,71 @@ _FALLBACK = (
 )
 
 
+def _scan_python(path: Path, text: str) -> list[Finding]:
+    out: list[Finding] = []
+    source_lines = text.splitlines()
+    for call in iter_python_calls(text):
+        hit = match_dotted_call(call, _PY_CALL_TARGETS)
+        if hit is None:
+            continue
+        _, (provider, severity) = hit
+        line = call.lineno
+        snippet = source_lines[line - 1].strip()[:80] if 0 <= line - 1 < len(source_lines) else provider
+        out.append(Finding(
+            scanner="email-sends",
+            file=str(path),
+            line=line,
+            snippet=snippet,
+            suggested_action_type="tool_use",
+            confidence=severity,
+            rationale=_NARRATIVES.get(provider, _FALLBACK),
+            extra={"provider": provider},
+        ))
+    # URL string matches — still regex (low FP risk)
+    for pattern, provider, severity in _URL_PATTERNS:
+        for m in pattern.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            out.append(Finding(
+                scanner="email-sends",
+                file=str(path),
+                line=line,
+                snippet=m.group(0)[:80],
+                suggested_action_type="tool_use",
+                confidence=severity,
+                rationale=_NARRATIVES.get(provider, _FALLBACK),
+                extra={"provider": provider},
+            ))
+    return out
+
+
+def _scan_js(path: Path, text: str) -> list[Finding]:
+    out: list[Finding] = []
+    for pattern, provider, severity in _JS_PATTERNS + _URL_PATTERNS:
+        for m in pattern.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            out.append(Finding(
+                scanner="email-sends",
+                file=str(path),
+                line=line,
+                snippet=m.group(0)[:80],
+                suggested_action_type="tool_use",
+                confidence=severity,
+                rationale=_NARRATIVES.get(provider, _FALLBACK),
+                extra={"provider": provider},
+            ))
+    return out
+
+
 def scan(root: Path) -> list[Finding]:
     findings: list[Finding] = []
-    for path in list(python_files(root)) + list(ts_js_files(root)):
+    for path in python_files(root):
         text = safe_read(path)
         if text is None:
             continue
-        for pattern, provider, severity in _SIGNATURES:
-            for m in pattern.finditer(text):
-                line = text[: m.start()].count("\n") + 1
-                findings.append(Finding(
-                    scanner="email-sends",
-                    file=str(path),
-                    line=line,
-                    snippet=m.group(0)[:80],
-                    suggested_action_type="tool_use",
-                    confidence=severity,
-                    rationale=_NARRATIVES.get(provider, _FALLBACK),
-                    extra={"provider": provider},
-                ))
+        findings.extend(_scan_python(path, text))
+    for path in ts_js_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
+        findings.extend(_scan_js(path, text))
     return findings

@@ -26,3 +26,4 @@ apps/control-center/tsconfig.tsbuildinfo
 .vscode/
 *.egg-info/
 uv.lock
+.vercel

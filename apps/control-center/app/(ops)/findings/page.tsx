@@ -6,94 +6,72 @@ export const dynamic = "force-static";
 export default function FindingsPage() {
   return (
     <div>
-      <h1 style={{ display: "flex", alignItems: "center" }}>
-        Findings
+      <h1 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        Scans
         <InfoTip>
-          <strong>Qué:</strong> análisis estático — los call-sites que el scanner detectó en tu código como candidatos a gatear antes de ejecutarse. Complementa el resto del dashboard (que es runtime).<br /><br />
-          <strong>Quién:</strong> dev que está en fase de rollout, para ver la superficie total y el avance de wrapping.<br /><br />
-          <strong>Estado:</strong> placeholder. El scanner (<code>supervisor-discover scan</code>) hoy escribe a <code>runtime-supervisor/</code> local. Para renderizar acá falta un endpoint de ingest en el supervisor API — en roadmap.
+          <strong>What:</strong> static analysis of risky call-sites before runtime.
+          Use it to find what needs a supervisor wrapper.<br /><br />
+          <strong>Paid path:</strong> Builder keeps scan history and diffs. The free web scan
+          shows a preview for public repos.
         </InfoTip>
       </h1>
       <p className="muted" style={{ marginTop: -8, marginBottom: 20 }}>
-        Static-analysis surface: what <code>supervisor-discover scan</code> found in your codebase.
+        Static surface area: the code paths your agent could execute unchecked.
       </p>
 
+      <div className="grid cols-2" style={{ marginBottom: 16 }}>
+        <div className="card">
+          <h2 style={{ marginTop: 0 }}>Run a free public scan</h2>
+          <p className="muted" style={{ lineHeight: 1.7 }}>
+            Paste a public GitHub URL and get a risk-ranked preview: payments, DB mutations,
+            LLM calls, shell/filesystem tools, agent chokepoints, and routes.
+          </p>
+          <Link className="badge approved" href="/scan" style={{ marginTop: 14 }}>
+            open /scan
+          </Link>
+        </div>
+
+        <div className="card" style={{ borderColor: "var(--accent)" }}>
+          <h2 style={{ marginTop: 0 }}>Builder export</h2>
+          <p className="muted" style={{ lineHeight: 1.7 }}>
+            Unlock private repos, the complete <code>runtime-supervisor/</code> export,
+            scan history, diffs, and CI comments.
+          </p>
+          <div className="row" style={{ justifyContent: "space-between", marginTop: 14 }}>
+            <strong style={{ fontSize: 24 }}>$29/mo</strong>
+            <Link className="badge approved" href="/scan?upgrade=builder">
+              upgrade
+            </Link>
+          </div>
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2 style={{ marginTop: 0 }}>No scan ingested yet</h2>
-        <p className="muted">
-          This page will show the output of <code>supervisor-discover scan</code> — priority
-          actions, combos detected, tier breakdown, call-sites to gate. For now, run the
-          scan from your repo root and open the generated files locally.
+        <h2 style={{ marginTop: 0 }}>Local CLI workflow</h2>
+        <p className="muted" style={{ lineHeight: 1.7 }}>
+          The CLI writes the full artifact bundle to <code>./runtime-supervisor/</code>.
+          Open <code>SUMMARY.md</code> first, then use stubs and policies to wrap the highest-risk paths.
         </p>
-
-        <h2>Run the scan</h2>
-        <pre>$ cd /path/to/your-repo
+        <pre>$ pipx install supervisor-discover
+$ cd /path/to/your-repo
 $ supervisor-discover scan</pre>
-        <p className="muted" style={{ fontSize: 13 }}>
-          Writes to <code>./runtime-supervisor/</code> with five files worth reading:
-        </p>
-
         <div className="grid cols-3" style={{ marginTop: 12 }}>
-          <FileCard
-            title="SUMMARY.md"
-            desc="Priority actions. What to wrap first, how long each takes, the timeline. Open this first."
-          />
-          <FileCard
-            title="ROLLOUT.md"
-            desc="Phased deploy playbook (shadow → sample → enforce) tailored to your risk surface."
-          />
-          <FileCard
-            title="report.md"
-            desc="Full technical detail. Tier breakdown, OWASP coverage, policies that would apply, every call-site found."
-          />
-          <FileCard
-            title="combos/"
-            desc="Per-combo playbooks for dangerous capability pairs (e.g. voice-clone + outbound-call)."
-          />
-          <FileCard
-            title="stubs/"
-            desc="Copy-paste wrappers for each high-confidence call-site, with on_review='shadow' by default."
-          />
-          <FileCard
-            title="policies/"
-            desc="YAML policies (payment, refund, account_change, tool_use, data_access, compliance) ready to promote."
-          />
+          <FileCard title="SUMMARY.md" desc="The prioritized fix list. Open this first." />
+          <FileCard title="ROLLOUT.md" desc="Shadow to enforce plan for risky call-sites." />
+          <FileCard title="report.md" desc="Full scanner detail, grouped by tier." />
+          <FileCard title="combos/" desc="Playbooks for dangerous capability pairs." />
+          <FileCard title="stubs/" desc="Copy-paste wrappers for Python and TS." />
+          <FileCard title="policies/" desc="YAML rules ready to promote." />
         </div>
       </div>
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>What this page will show once wired up</h2>
-        <ul style={{ paddingLeft: 20, lineHeight: 1.8 }}>
-          <li>
-            <strong>Surface summary</strong> — stack, payment integrations, LLM providers,
-            real-world-action capabilities, orchestrator frameworks detected.
-          </li>
-          <li>
-            <strong>Tier breakdown</strong> — Money / Real-world actions / Customer data /
-            LLM tool-use / General — high / medium / low counts per tier.
-          </li>
-          <li>
-            <strong>Priority actions</strong> — the 3-5 wrap points that cover the most surface
-            (orchestrator chokepoints first).
-          </li>
-          <li>
-            <strong>Combos detected</strong> — dangerous capability pairs with linked playbooks.
-          </li>
-          <li>
-            <strong>Rollout phase status</strong> — current <code>SUPERVISOR_ENFORCEMENT_MODE</code>,
-            volume observed per tier, exit criteria met/pending.
-          </li>
-          <li>
-            <strong>Cross-reference with runtime</strong> — each call-site in findings linked to the
-            decisions it's produced on the <Link href="/review">Review</Link> and{" "}
-            <Link href="/dashboard">Dashboard</Link> pages.
-          </li>
-        </ul>
-        <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
-          Pending work: ingestion endpoint <code>POST /v1/scans</code> in the supervisor API,
-          plus a <code>--upload</code> flag on <code>supervisor-discover scan</code>. Tracked as
-          its own epic — the CLI output is the single source of truth today.
-        </p>
+        <h2 style={{ marginTop: 0 }}>Builder scan history</h2>
+        <div className="grid cols-3">
+          <RoadmapCard title="Diff scans" desc="See new and resolved risks across commits." />
+          <RoadmapCard title="PR comments" desc="Comment risky new call-sites directly on GitHub." />
+          <RoadmapCard title="Runtime links" desc="Connect each finding to the blocks and reviews it produced." />
+        </div>
       </div>
     </div>
   );
@@ -101,20 +79,18 @@ $ supervisor-discover scan</pre>
 
 function FileCard({ title, desc }: { title: string; desc: string }) {
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 14,
-        background: "var(--panel-2)",
-      }}
-    >
-      <div className="mono" style={{ fontWeight: 600, marginBottom: 6 }}>
-        {title}
-      </div>
-      <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-        {desc}
-      </div>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14, background: "var(--panel-2)" }}>
+      <div className="mono" style={{ fontWeight: 600, marginBottom: 6 }}>{title}</div>
+      <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>{desc}</div>
+    </div>
+  );
+}
+
+function RoadmapCard({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div>
+      <div style={{ fontWeight: 600 }}>{title}</div>
+      <p className="muted" style={{ marginTop: 6, lineHeight: 1.6 }}>{desc}</p>
     </div>
   );
 }

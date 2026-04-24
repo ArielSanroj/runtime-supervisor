@@ -23,9 +23,108 @@ const TIER_COLOR: Record<string, string> = {
   general: "text-zinc-400 border-zinc-800",
 };
 
+// Family labels / colors for sub-grouping inside a tier. The fs-shell scanner
+// emits `extra.family` ∈ {shell-exec, fs-delete, fs-write}; agent-orchestrators
+// emits `extra.kind` ∈ {tool-registration, framework-import, agent-class,
+// agent-method}. Map both to a friendly label + tone so groups render with
+// distinct severity hints.
+const FAMILY_LABEL: Record<string, string> = {
+  "shell-exec": "Shell execution",
+  "fs-delete": "Destructive filesystem",
+  "fs-write": "Filesystem writes",
+  "tool-registration": "Tool registrations",
+  "framework-import": "Agent framework imports",
+  "agent-class": "Agent orchestrator classes",
+  "agent-method": "Agent orchestrator methods",
+};
+
+const FAMILY_TONE: Record<string, string> = {
+  "shell-exec": "text-rose-400",      // RCE-equivalent
+  "fs-delete": "text-rose-400",       // irreversible
+  "fs-write": "text-amber-400",       // context-dependent
+  "tool-registration": "text-emerald-400",
+  "framework-import": "text-emerald-400",
+  "agent-class": "text-emerald-400",
+  "agent-method": "text-emerald-300",
+};
+
+function familyOf(f: ScanFinding): string {
+  const extra = (f.extra ?? {}) as Record<string, unknown>;
+  const key = (extra.family as string | undefined) ?? (extra.kind as string | undefined);
+  return key ?? f.scanner;
+}
+
+// Copy-paste @supervised wrap pattern per family. Shown inline in each
+// FamilyGroup so the dev gets a fix to try without leaving the page.
+const FAMILY_REMEDY: Record<string, string> = {
+  "shell-exec": `from supervisor_guards import supervised
+
+@supervised("tool_use", payload=lambda cmd, **_: {"command": str(cmd)})
+def safe_run(cmd, *args, **kw):
+    return subprocess.run(cmd, *args, **kw)`,
+  "fs-delete": `from supervisor_guards import supervised
+
+@supervised("tool_use", payload=lambda path, **_: {"path": str(path)})
+def safe_unlink(path):
+    Path(path).unlink()`,
+  "fs-write": `from supervisor_guards import supervised
+
+@supervised("tool_use", payload=lambda path, **_: {"path": str(path)})
+def safe_write(path, content):
+    with open(path, "w") as f:
+        f.write(content)`,
+  "mcp-tool": `// Wrap each tool registration so every call goes through the supervisor.
+import { supervised } from "@runtime-supervisor/guards";
+
+server.tool("your-tool-name", supervised("tool_use",
+  async (args) => { /* your existing handler */ }
+));`,
+  "mcp-dispatcher": `// Wrap the CallTool dispatcher — gates EVERY tool with one decorator.
+import { supervised } from "@runtime-supervisor/guards";
+
+server.setRequestHandler(CallToolRequestSchema, supervised("tool_use",
+  async (request) => { /* your existing handler */ }
+));`,
+  "mcp-server-instance": `// Wrap the dispatcher (CallTool handler) on this Server instance —
+// see "Shell execution" / "Filesystem" sections for handler wrap patterns.`,
+  "tool-registration": `# Wrap the dispatcher OR each registered tool individually:
+from supervisor_guards import supervised
+
+@supervised("tool_use")
+def your_tool_handler(args):
+    # your existing handler
+    pass`,
+  "framework-import": `# Wrap the framework's executor entry-point — one wrap, all tools covered:
+from supervisor_guards import supervised
+
+executor = AgentExecutor(...)
+executor.invoke = supervised("tool_use")(executor.invoke)`,
+  "agent-class": `# Wrap the orchestrator method that dispatches to tools:
+from supervisor_guards import supervised
+
+class Controller:
+    @supervised("tool_use")
+    def handle(self, intent, ...):
+        # your existing handler
+        pass`,
+  "agent-method": `# This method is the dispatch point — wrap it:
+from supervisor_guards import supervised
+
+class Orchestrator:
+    @supervised("tool_use")
+    def dispatch(self, ...):
+        # your existing dispatch
+        pass`,
+};
+
 export default function FindingsList({ scan }: { scan: ScanResponse }) {
-  const findings = scan.findings ?? [];
+  const rawFindings = scan.findings ?? [];
   const summary = scan.repo_summary;
+  // Free tier: for priority tiers (money / real_world_actions / customer_data
+  // / business_data / llm), show only confidence=high. Everything in the
+  // `general` tier (http-routes inventory) stays visible regardless. Hidden
+  // count powers the Builder upsell — the cut is transparent, not a silent trim.
+  const { visible: findings, hidden: hiddenCount } = applyFreeConfidenceGate(rawFindings);
   const grouped = groupByTier(findings);
   const priorityCount = findings.filter((f) => isPriorityFinding(f)).length;
   const generalCount = grouped.general?.length ?? 0;
@@ -37,6 +136,7 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
         findingsCount={findings.length}
         priorityCount={priorityCount}
         generalCount={generalCount}
+        hiddenCount={hiddenCount}
         truncated={scan.findings_truncated}
       />
 
@@ -75,14 +175,10 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
           <div>
             Run the local CLI for the complete artifact bundle: stubs, YAML policies,
             combo playbooks, and CI workflow.
-            <div className="mt-2">
-              <code className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-200">
-                pipx install supervisor-discover
-              </code>{" "}
-              <code className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-200">
-                supervisor-discover scan
-              </code>
-            </div>
+            <pre className="mt-3 overflow-auto rounded-lg border border-zinc-800 bg-black/60 p-3 font-mono text-xs leading-6 text-zinc-200">
+              <span className="text-zinc-500">$ </span>pipx install supervisor-discover{"\n"}
+              <span className="text-zinc-500">$ </span>supervisor-discover scan
+            </pre>
           </div>
           <BuilderUpgradeButton />
         </div>
@@ -159,11 +255,13 @@ function BuilderUnlock({
   findingsCount,
   priorityCount,
   generalCount,
+  hiddenCount,
   truncated,
 }: {
   findingsCount: number;
   priorityCount: number;
   generalCount: number;
+  hiddenCount: number;
   truncated: boolean;
 }) {
   return (
@@ -175,6 +273,12 @@ function BuilderUnlock({
             This preview shows the risk shape of the repo. Builder unlocks private repos,
             full exports, scan history, and CI comments so you can turn these findings into fixes.
           </p>
+          {hiddenCount > 0 && (
+            <p className="mt-2 text-xs text-emerald-400">
+              + {hiddenCount} medium-confidence finding{hiddenCount === 1 ? "" : "s"} hidden —
+              Builder unlocks the full set.
+            </p>
+          )}
           {truncated && (
             <p className="mt-2 text-xs text-amber-400">
               Preview truncated after priority sorting. Builder and local CLI exports include the complete finding set.
@@ -253,6 +357,7 @@ function TierSection({
   const color = TIER_COLOR[tier] ?? TIER_COLOR.general;
   const visible = findings.slice(0, limit);
   const hiddenCount = Math.max(0, findings.length - visible.length);
+  const groups = groupByFamily(visible);
   return (
     <div className={`rounded-xl border bg-zinc-900/40 ${color}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-inherit px-5 py-3">
@@ -275,10 +380,10 @@ function TierSection({
           <summary className="cursor-pointer px-5 py-4 text-sm text-zinc-400 hover:text-zinc-200">
             Open general inventory
           </summary>
-          <FindingRows findings={visible} />
+          <FamilyGroups groups={groups} />
         </details>
       ) : (
-        <FindingRows findings={visible} />
+        <FamilyGroups groups={groups} />
       )}
       {hiddenCount > 0 && (
         <div className="border-t border-zinc-800 px-5 py-3 text-xs text-zinc-500">
@@ -289,14 +394,105 @@ function TierSection({
   );
 }
 
-function FindingRows({ findings }: { findings: ScanFinding[] }) {
+function FamilyGroups({ groups }: { groups: ScanFinding[][] }) {
   return (
-    <ul className="divide-y divide-zinc-800">
-      {findings.map((f, i) => (
-        <FindingRow key={`${f.file}:${f.line}:${f.scanner}:${i}`} f={f} />
-      ))}
-    </ul>
+    <div className="divide-y divide-zinc-800">
+      {groups.map((group, i) => {
+        if (group.length === 1) {
+          // Single finding — keep the original row layout so the rationale is
+          // visible for the only call-site in the group.
+          const f = group[0];
+          return (
+            <ul key={`${f.file}:${f.line}:${i}`} className="divide-y divide-zinc-800">
+              <FindingRow f={f} />
+            </ul>
+          );
+        }
+        return <FamilyGroup key={i} findings={group} />;
+      })}
+    </div>
   );
+}
+
+function FamilyGroup({ findings }: { findings: ScanFinding[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showRemedy, setShowRemedy] = useState(false);
+  const first = findings[0];
+  const family = familyOf(first);
+  const label = FAMILY_LABEL[family] ?? family;
+  const tone = FAMILY_TONE[family] ?? "text-zinc-400";
+  const remedy = FAMILY_REMEDY[family];
+  const visible = expanded ? findings : findings.slice(0, 5);
+  const hidden = findings.length - visible.length;
+  return (
+    <div className="px-5 py-4">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className={`font-mono text-xs uppercase tracking-widest ${tone}`}>{label}</span>
+        <span className="font-mono text-xs text-zinc-500">· {findings.length} call-sites</span>
+        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-400">
+          {first.suggested_action_type}
+        </span>
+      </div>
+      <p className="mt-2 max-w-3xl text-xs leading-6 text-zinc-400">{first.rationale}</p>
+      <ul className="mt-3 space-y-1">
+        {visible.map((f, i) => (
+          <li key={`${f.file}:${f.line}:${i}`} className="font-mono text-xs text-zinc-300">
+            <span className="text-zinc-600">·</span>{" "}
+            <span className="text-zinc-300">{f.file}</span>
+            <span className="text-zinc-500">:{f.line}</span>
+            {f.snippet && (
+              <span className="ml-3 text-zinc-500">{shortSnippet(f.snippet)}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="font-mono text-xs text-emerald-400 hover:text-emerald-300"
+          >
+            show {hidden} more ▾
+          </button>
+        )}
+        {remedy && (
+          <button
+            type="button"
+            onClick={() => setShowRemedy((v) => !v)}
+            className="font-mono text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            {showRemedy ? "hide fix ▴" : "see fix snippet ▾"}
+          </button>
+        )}
+      </div>
+      {remedy && showRemedy && (
+        <pre className="mt-3 overflow-auto rounded-lg border border-emerald-900/30 bg-emerald-500/5 p-3 font-mono text-xs leading-6 text-zinc-200">
+          {remedy}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function shortSnippet(s: string): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > 60 ? flat.slice(0, 57) + "…" : flat;
+}
+
+function groupByFamily(findings: ScanFinding[]): ScanFinding[][] {
+  // Preserve input order for first occurrences, then cluster.
+  const keyOrder: string[] = [];
+  const buckets = new Map<string, ScanFinding[]>();
+  for (const f of findings) {
+    const key = `${f.scanner}::${familyOf(f)}`;
+    if (!buckets.has(key)) {
+      keyOrder.push(key);
+      buckets.set(key, []);
+    }
+    buckets.get(key)!.push(f);
+  }
+  return keyOrder.map((k) => buckets.get(k)!);
 }
 
 function SummaryCard({ summary, elapsedMs }: { summary: NonNullable<ScanResponse["repo_summary"]>; elapsedMs: number }) {
@@ -306,6 +502,7 @@ function SummaryCard({ summary, elapsedMs }: { summary: NonNullable<ScanResponse
       <p className="mt-3 text-xl leading-relaxed text-zinc-100">
         <OneLiner text={summary.one_liner || "no critical integrations detected"} />
       </p>
+      <RepoTypeCallout summary={summary} />
       <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
         {summary.frameworks.length > 0 && (
           <Stat label="stack" value={summary.frameworks.join(" + ")} />
@@ -334,6 +531,9 @@ function SummaryCard({ summary, elapsedMs }: { summary: NonNullable<ScanResponse
         {summary.agent_tools.length > 0 && (
           <Stat label="tools exposed" value={String(summary.agent_tools.length)} />
         )}
+        {(summary.mcp_tools?.length ?? 0) > 0 && (
+          <Stat label="mcp tools" value={String(summary.mcp_tools?.length ?? 0)} />
+        )}
         {summary.sensitive_tables.length > 0 && (
           <Stat label="sensitive tables" value={summary.sensitive_tables.slice(0, 5).join(", ")} />
         )}
@@ -343,6 +543,44 @@ function SummaryCard({ summary, elapsedMs }: { summary: NonNullable<ScanResponse
       </div>
     </div>
   );
+}
+
+// Type-specific guidance shown above the stats grid. Each repo_type gets a
+// short callout that tells the dev what the highest-leverage wrap is for
+// THIS shape of repo, instead of the generic "review the findings list".
+function RepoTypeCallout({ summary }: { summary: NonNullable<ScanResponse["repo_summary"]> }) {
+  const type = summary.repo_type;
+  if (!type) return null;
+  const mcpToolCount = summary.mcp_tools?.length ?? 0;
+  if (type === "mcp-server" || type === "mcp-server+langchain") {
+    return (
+      <div className="mt-4 rounded-lg border border-cyan-900/40 bg-cyan-500/5 p-4 text-sm leading-7 text-zinc-300">
+        <span className="font-mono text-xs uppercase tracking-widest text-cyan-400">mcp server detected</span>
+        <p className="mt-1">
+          The MCP CallTool dispatcher is your highest-leverage wrap point. One{" "}
+          <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">@supervised(&quot;tool_use&quot;)</code>{" "}
+          on{" "}
+          <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">setRequestHandler(CallToolRequestSchema, …)</code>{" "}
+          gates all{mcpToolCount > 0 ? ` ${mcpToolCount}` : ""} tools at once — see the
+          <span className="font-mono"> mcp-dispatcher</span> finding below for the snippet.
+        </p>
+      </div>
+    );
+  }
+  if (type === "langchain-agent") {
+    return (
+      <div className="mt-4 rounded-lg border border-emerald-900/40 bg-emerald-500/5 p-4 text-sm leading-7 text-zinc-300">
+        <span className="font-mono text-xs uppercase tracking-widest text-emerald-400">langchain agent detected</span>
+        <p className="mt-1">
+          The AgentExecutor is your chokepoint. Wrap{" "}
+          <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">executor.invoke</code>{" "}
+          with <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">@supervised(&quot;tool_use&quot;)</code>{" "}
+          — covers every tool the agent calls, present and future. See the framework-import finding for the snippet.
+        </p>
+      </div>
+    );
+  }
+  return null;
 }
 
 function OneLiner({ text }: { text: string }) {
@@ -431,4 +669,28 @@ function groupByTier(findings: ScanFinding[]): Record<string, ScanFinding[]> {
 
 function isPriorityFinding(f: ScanFinding): boolean {
   return (f.tier ?? "general") !== "general";
+}
+
+/**
+ * Free-tier confidence gate. Priority-tier findings with confidence below
+ * `high` are hidden behind the Builder paywall; general-tier (route inventory)
+ * passes through untouched so the repo context stays visible.
+ *
+ * Returns both the visible set and the hidden count so the BuilderUnlock card
+ * can show an explicit upsell ("N findings hidden — unlock Builder…") rather
+ * than silently trimming.
+ */
+function applyFreeConfidenceGate(
+  findings: ScanFinding[],
+): { visible: ScanFinding[]; hidden: number } {
+  let hidden = 0;
+  const visible: ScanFinding[] = [];
+  for (const f of findings) {
+    if (isPriorityFinding(f) && f.confidence !== "high") {
+      hidden++;
+      continue;
+    }
+    visible.push(f);
+  }
+  return { visible, hidden };
 }

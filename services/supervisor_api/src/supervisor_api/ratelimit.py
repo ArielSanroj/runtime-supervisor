@@ -11,9 +11,10 @@ import time
 from collections import defaultdict, deque
 from threading import Lock
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
-from .auth import Principal
+from .auth import PUBLIC_DEMO_INTEGRATION_ID, Principal
+from .config import get_settings
 
 _WINDOW_SECONDS = 60.0
 
@@ -35,12 +36,34 @@ def reset() -> None:
         _buckets.clear()
 
 
-def check_and_consume(principal: Principal, *, limit_override: int | None = None) -> None:
+def _client_ip(request: Request | None) -> str:
+    if request is None:
+        return "unknown"
+    # Behind ngrok / a reverse proxy, the real client comes in X-Forwarded-For.
+    # First entry is the originating client; rest is the proxy chain.
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip() or "unknown"
+    return request.client.host if request.client else "unknown"
+
+
+def check_and_consume(
+    principal: Principal,
+    *,
+    limit_override: int | None = None,
+    request: Request | None = None,
+) -> None:
     if not _enabled() or principal.integration_id in ("dev", "simulator"):
         return
-    limit = limit_override if limit_override is not None else _current_limit()
+    # Public demo: bucket by client IP with its own (lower) limit so one
+    # anonymous visitor can't starve the shared synthetic principal.
+    if principal.integration_id == PUBLIC_DEMO_INTEGRATION_ID:
+        limit = get_settings().public_demo_rate_limit_per_minute
+        key = f"public-demo:{_client_ip(request)}"
+    else:
+        limit = limit_override if limit_override is not None else _current_limit()
+        key = principal.integration_id
     now = time.monotonic()
-    key = principal.integration_id
     with _lock:
         q = _buckets[key]
         # prune anything older than the window

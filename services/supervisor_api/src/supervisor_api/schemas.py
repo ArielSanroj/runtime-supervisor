@@ -342,3 +342,37 @@ class WebhookDeliveryOut(BaseModel):
     attempts: int
     delivered_at: UTCDateTime | None
     created_at: UTCDateTime
+
+
+ScanStatus = Literal["queued", "scanning", "done", "error"]
+
+
+class ScanRequest(BaseModel):
+    github_url: str = Field(min_length=1, max_length=256)
+    ref: str | None = Field(default=None, max_length=128)
+
+
+class ScanFinding(BaseModel):
+    scanner: str
+    file: str
+    line: int
+    snippet: str
+    suggested_action_type: str
+    confidence: Literal["low", "medium", "high"]
+    rationale: str
+    extra: dict[str, Any] = Field(default_factory=dict)
+    tier: str | None = None
+
+
+class ScanResponse(BaseModel):
+    scan_id: str
+    status: ScanStatus
+    github_url: str | None = None
+    ref: str | None = None
+    error: str | None = None
+    elapsed_ms: int | None = None
+    repo_summary: dict[str, Any] | None = None
+    findings: list[ScanFinding] | None = None
+    findings_truncated: bool = False
+    created_at: UTCDateTime | None = None
+    completed_at: UTCDateTime | None = None

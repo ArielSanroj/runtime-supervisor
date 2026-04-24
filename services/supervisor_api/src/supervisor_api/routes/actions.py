@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -36,14 +36,21 @@ def _policy(action_type: str, db: Session) -> Policy:
 def evaluate_action(
     body: EvaluateRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     dry_run: bool = Query(default=False, description="Return decision without persisting"),
     db: Session = Depends(get_db),
-    principal: auth.Principal = Depends(auth.require_any_scope),
-    tenant_id: str = Depends(auth.require_tenant_id),
+    principal: auth.Principal = Depends(auth.require_any_scope_or_public_demo),
+    tenant_id: str = Depends(auth.require_tenant_id_or_public_demo),
 ) -> DecisionOut:
-    if not (set(principal.scopes) & {"*", body.action_type}):
+    is_public_demo = principal.integration_id == auth.PUBLIC_DEMO_INTEGRATION_ID
+    if is_public_demo and not dry_run:
+        raise HTTPException(
+            status_code=401,
+            detail="public demo is dry_run only — authenticate to persist actions",
+        )
+    if not is_public_demo and not (set(principal.scopes) & {"*", body.action_type}):
         raise HTTPException(status_code=403, detail=f"scope '{body.action_type}' not granted")
-    ratelimit.check_and_consume(principal)
+    ratelimit.check_and_consume(principal, request=request)
     if body.action_type not in registry.LIVE_ACTION_TYPES:
         spec = registry.get(body.action_type)
         if spec is not None and spec.status == "planned":
@@ -191,7 +198,20 @@ def evaluate_action(
             threat_level=threat_assessment.level, threats=threats_out,
         )
 
-    dec = decision_engine.decide(policy, body.payload, action_type=body.action_type)
+    try:
+        dec = decision_engine.decide(policy, body.payload, action_type=body.action_type)
+    except Exception as e:
+        # Fail-safe: any unexpected engine failure (risk scorer, future plugins,
+        # etc.) degrades to review instead of HTTP 500. Policy-level errors
+        # already become review hits inside policy.evaluate.
+        dec = decision_engine.Decision(
+            decision="review",
+            reasons=[f"engine-error: {type(e).__name__}: {e}"],
+            hits=[],
+            risk_score=0,
+            risk_breakdown=[],
+            policy_version=policy.version_tag,
+        )
     # A warn-level threat escalates decision to review regardless of policy/risk outcome.
     if threat_assessment.needs_review and dec.decision == "allow":
         threat_reasons = [f"threat-{s.detector_id}" for s in threat_assessment.signals if s.level == "warn"]

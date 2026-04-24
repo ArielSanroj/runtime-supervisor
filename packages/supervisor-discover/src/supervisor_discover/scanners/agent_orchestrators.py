@@ -33,6 +33,7 @@ What this scanner detects:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -46,10 +47,37 @@ _AGENT_PATH_HINTS = (
     "/controllers/agents/", "/tool-registry/", "/tool_registry/",
 )
 
+# Paths that should NEVER be flagged as orchestrators even if they pattern-match.
+# These are tests, IDE webviews, build outputs — they may have agent-shaped class
+# names or method names but they don't run real agent code in production.
+_PATH_EXCLUDES = (
+    "/webview/", "/webviews/",                 # VS Code / Electron UI scripts
+    "/__tests__/", "/tests/", "/test/",        # test trees (any depth)
+    "/e2e/", "/spec/", "/specs/", "/__mocks__/",
+    "/node_modules/", "/dist/", "/build/", "/.next/", "/out/",
+    "/coverage/", "/htmlcov/",
+    "/examples/", "/example/", "/demo/", "/demos/", "/fixtures/",
+)
+_FILENAME_EXCLUDES = (
+    ".test.", ".spec.", ".stories.",
+    "_test.py", "_spec.py", "_tests.py",
+)
+
 
 def _in_agent_path(file: str) -> bool:
     lower = file.lower()
     return any(hint in lower for hint in _AGENT_PATH_HINTS)
+
+
+def _is_excluded_path(file: str) -> bool:
+    """True if this path should be skipped — tests, webviews, build output, etc."""
+    # Normalize: lowercase + backslash→slash + ensure leading slash so segments
+    # like "node_modules/..." at the path root match the "/node_modules/" hint.
+    lower = "/" + file.lower().replace("\\", "/").lstrip("/")
+    if any(seg in lower for seg in _PATH_EXCLUDES):
+        return True
+    name = lower.rsplit("/", 1)[-1]
+    return any(tok in name for tok in _FILENAME_EXCLUDES)
 
 
 # HIGH-confidence — direct evidence of tool registration.
@@ -107,28 +135,31 @@ _AGENT_METHOD_NAMES = (
     "handle", "execute", "dispatch", "plan", "reason", "decide",
     "process_intent", "processIntent", "route", "orchestrate",
 )
-_METHOD_DEFS = re.compile(
-    rf"\b(?:async\s+)?(?:def|function)?\s*({'|'.join(_AGENT_METHOD_NAMES)})\s*\("
+_AGENT_METHOD_NAMES_SET = frozenset(_AGENT_METHOD_NAMES)
+# JS/TS: no cheap AST available, stay on regex — but require the `function`
+# keyword so matches can't leak into comments or call sites. (Python uses
+# AST — see `_py_method_defs` below.)
+_METHOD_DEFS_JS = re.compile(
+    rf"\b(?:async\s+)?function\s+({'|'.join(_AGENT_METHOD_NAMES)})\s*\("
 )
 
 _RATIONALE_CHOKEPOINT = (
-    "🎯 AGENT CHOKEPOINT: este es un punto donde fluye toda decisión del agente "
-    "(una `Controller.handle()` o `Dispatcher.dispatch()` que despacha a N tools). "
-    "Wrappear AQUÍ con `@supervised('tool_use')` te da cobertura de TODOS los tools "
-    "— actuales y futuros — con una sola línea. Es la forma de más alto apalancamiento "
-    "de gatear un agente."
+    "🎯 AGENT CHOKEPOINT: a single point every agent decision flows through "
+    "(a `Controller.handle()` or `Dispatcher.dispatch()` that dispatches to N tools). "
+    "Wrapping HERE with `@supervised('tool_use')` covers ALL tools — present and future — "
+    "with one line. Highest-leverage way to gate an agent."
 )
 
 _RATIONALE_REGISTRATION = (
-    "Tool registration en agent dispatcher. El nombre del tool te dice qué acción "
-    "expone el agente. Protegé idealmente el dispatcher completo (cobertura total); "
-    "subsidiariamente, cada tool individualmente."
+    "Tool registration in an agent dispatcher. The tool name tells you what action "
+    "the agent exposes. Ideally protect the full dispatcher (total coverage); "
+    "as a fallback, wrap each tool individually."
 )
 
 _RATIONALE_FRAMEWORK = (
-    "Import de framework de agentes (langchain / langgraph / autogen / crewai / mastra). "
-    "El `AgentExecutor` / `Graph` / `Crew` de estos frameworks tiene un entry-point único "
-    "que orquesta LLM + tools — wrappear ese entry-point gatea el agente completo."
+    "Import of an agent framework (langchain / langgraph / autogen / crewai / mastra). "
+    "The `AgentExecutor` / `Graph` / `Crew` from these frameworks has a single entry-point "
+    "that orchestrates LLM + tools — wrapping that entry-point gates the entire agent."
 )
 
 
@@ -188,38 +219,93 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 extra={"kind": "agent-class", "class_name": class_name, "pattern": label},
             ))
 
-    # 4. Agent-method definitions — only flag when in agent path, MEDIUM
+    # 4. Agent-method definitions — only flag when in agent path, MEDIUM.
+    # Python uses AST (Layer 3 defense: immune to word-matches in comments
+    # or strings). JS/TS falls back to regex with required `function` keyword.
     if in_agent_path:
-        for m in _METHOD_DEFS.finditer(text):
-            method_name = m.group(1)
-            # Dedup: don't emit a method hit on a file that already got a class hit
-            # at approximately the same location (within 10 lines).
-            line = text[: m.start()].count("\n") + 1
-            if any(
-                f.scanner == "agent-orchestrators"
-                and f.file == str(path)
-                and abs(f.line - line) < 10
-                and f.extra.get("kind") == "agent-class"
-                for f in findings
-            ):
-                continue
-            findings.append(Finding(
-                scanner="agent-orchestrators",
-                file=str(path),
-                line=line,
-                snippet=m.group(0)[:80],
-                suggested_action_type="tool_use",
-                confidence="medium",
-                rationale=_RATIONALE_CHOKEPOINT,
-                extra={"kind": "agent-method", "method_name": method_name},
-            ))
+        if path.suffix == ".py":
+            findings.extend(_py_method_defs(path, text, findings))
+        else:
+            findings.extend(_js_method_defs(path, text, findings))
 
     return findings
+
+
+def _py_method_defs(path: Path, text: str, existing: list[Finding]) -> list[Finding]:
+    """AST-based Python method detection. Immune to word matches in comments,
+    docstrings, f-strings, and call sites — the AST only parses real defs."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    source_lines = text.splitlines()
+    out: list[Finding] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in _AGENT_METHOD_NAMES_SET:
+            continue
+        line = node.lineno
+        if _near_class_hit(existing, str(path), line):
+            continue
+        snippet = source_lines[line - 1].strip()[:80] if line - 1 < len(source_lines) else f"def {node.name}("
+        out.append(Finding(
+            scanner="agent-orchestrators",
+            file=str(path),
+            line=line,
+            snippet=snippet,
+            suggested_action_type="tool_use",
+            # HIGH: this branch is only reached when `in_agent_path` was true at
+            # the caller, so the path-hint is already strong signal. Same rule
+            # as agent-class (see line ~210). Keeps chokepoints visible when
+            # the public UI filters to high-confidence only.
+            confidence="high",
+            rationale=_RATIONALE_CHOKEPOINT,
+            extra={"kind": "agent-method", "method_name": node.name},
+        ))
+    return out
+
+
+def _js_method_defs(path: Path, text: str, existing: list[Finding]) -> list[Finding]:
+    """Regex-based JS/TS method detection. Requires `function` keyword so
+    we can't accidentally match a bare method name in a comment or call."""
+    out: list[Finding] = []
+    for m in _METHOD_DEFS_JS.finditer(text):
+        method_name = m.group(1)
+        line = text[: m.start()].count("\n") + 1
+        if _near_class_hit(existing, str(path), line):
+            continue
+        out.append(Finding(
+            scanner="agent-orchestrators",
+            file=str(path),
+            line=line,
+            snippet=m.group(0)[:80],
+            suggested_action_type="tool_use",
+            # See comment in _py_method_defs — same rationale.
+            confidence="high",
+            rationale=_RATIONALE_CHOKEPOINT,
+            extra={"kind": "agent-method", "method_name": method_name},
+        ))
+    return out
+
+
+def _near_class_hit(existing: list[Finding], path: str, line: int) -> bool:
+    """Dedup: don't emit a method hit on a file that already got a class
+    hit within 10 lines — the class is the more informative anchor."""
+    return any(
+        f.scanner == "agent-orchestrators"
+        and f.file == path
+        and abs(f.line - line) < 10
+        and f.extra.get("kind") == "agent-class"
+        for f in existing
+    )
 
 
 def scan(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in list(python_files(root)) + list(ts_js_files(root)):
+        if _is_excluded_path(str(path)):
+            continue
         text = safe_read(path)
         if text is None:
             continue

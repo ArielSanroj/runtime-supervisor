@@ -4,11 +4,12 @@ import { getSession } from "@/lib/session";
 import { tenantsApi } from "@/lib/tenants";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/review", label: "Review" },
+  { href: "/dashboard", label: "Fix" },
+  { href: "/scan", label: "Scan" },
+  { href: "/findings", label: "Scans" },
+  { href: "/review", label: "Reviews" },
   { href: "/threats", label: "Threats" },
-  { href: "/findings", label: "Findings" },
-  { href: "/policies", label: "Policies" },
+  { href: "/policies", label: "Rules" },
   { href: "/integrations", label: "Integrations" },
 ] as const;
 

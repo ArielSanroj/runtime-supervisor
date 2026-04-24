@@ -90,11 +90,21 @@ class RepoSummary:
     agent_chokepoints: list[AgentChokepoint] = field(default_factory=list)
     # Tool names the agent exposes (from dispatcher.register etc). Order-preserving.
     agent_tools: list[str] = field(default_factory=list)
+    # MCP-specific tool names exposed via @modelcontextprotocol/sdk. Reported
+    # separately from agent_tools because the wrap pattern differs (wrap the
+    # CallTool dispatcher, not a langchain executor).
+    mcp_tools: list[str] = field(default_factory=list)
     db_tables_touched: list[str] = field(default_factory=list)
     sensitive_tables: list[str] = field(default_factory=list)
     scheduled_jobs: int = 0
     total_findings: int = 0
     one_liner: str = ""
+    # High-level repo classification for the UI to specialize the headline:
+    #   "mcp-server"           — exposes MCP tools via @modelcontextprotocol/sdk
+    #   "langchain-agent"      — uses langchain AgentExecutor / langgraph
+    #   "mcp-server+langchain" — both
+    #   None                   — generic agent code
+    repo_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -156,6 +166,10 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     chokepoints: list[AgentChokepoint] = []
     tools: list[str] = []
     tools_seen: set[str] = set()
+    mcp_tools_list: list[str] = []
+    mcp_tools_seen: set[str] = set()
+    has_mcp_dispatcher = False
+    has_langchain_framework = False
 
     for f in findings:
         scanner = f.scanner
@@ -214,6 +228,26 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
                 chokepoints.append(AgentChokepoint(
                     file=f.file, line=f.line, kind=kind, label=str(label),
                 ))
+            if kind == "framework-import":
+                fw_name = str(extra.get("framework", "")).lower()
+                if "langchain" in fw_name or "langgraph" in fw_name:
+                    has_langchain_framework = True
+
+        elif scanner == "mcp-tools":
+            kind = extra.get("kind", "")
+            if kind == "mcp-tool":
+                name = extra.get("tool_name") or ""
+                if name and name != "?" and name not in mcp_tools_seen:
+                    mcp_tools_list.append(name)
+                    mcp_tools_seen.add(name)
+            # The MCP dispatcher is the highest-leverage chokepoint for an MCP
+            # server — wrapping it gates every tool. Promote it to chokepoint.
+            if kind in ("mcp-dispatcher", "mcp-server-instance") and f.confidence == "high":
+                chokepoints.append(AgentChokepoint(
+                    file=f.file, line=f.line, kind=kind, label="mcp-dispatcher",
+                ))
+            if kind == "mcp-dispatcher":
+                has_mcp_dispatcher = True
 
         elif scanner in _REAL_WORLD_CAPABILITY:
             capability = _REAL_WORLD_CAPABILITY[scanner]
@@ -247,6 +281,20 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     # with call-sites the reader can actually decorate.
     unique_chokepoints.sort(key=_chokepoint_rank)
 
+    # Repo type is inferred from what the scanner actually saw. The UI uses
+    # this to specialize the headline + remediation copy ("This is an MCP
+    # server: wrap your tool registrations" beats the generic "we found
+    # filesystem actions").
+    is_mcp = bool(mcp_tools_list) or has_mcp_dispatcher
+    if is_mcp and has_langchain_framework:
+        repo_type: str | None = "mcp-server+langchain"
+    elif is_mcp:
+        repo_type = "mcp-server"
+    elif has_langchain_framework:
+        repo_type = "langchain-agent"
+    else:
+        repo_type = None
+
     return RepoSummary(
         frameworks=primary_fw,
         http_routes=http_count,
@@ -255,6 +303,7 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
         real_world_actions=real_world_actions,
         agent_chokepoints=unique_chokepoints,
         agent_tools=tools,
+        mcp_tools=mcp_tools_list,
         db_tables_touched=all_tables,
         sensitive_tables=sensitive,
         scheduled_jobs=scheduled,
@@ -262,7 +311,10 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
         one_liner=_one_liner(
             primary_fw, payment_integrations, llms, real_world_actions, sensitive,
             has_agent=bool(unique_chokepoints or tools),
+            repo_type=repo_type,
+            mcp_tool_count=len(mcp_tools_list),
         ),
+        repo_type=repo_type,
     )
 
 
@@ -289,13 +341,13 @@ _RWA_PRIORITY = [
 ]
 
 
-def _es_join(items: list[str]) -> str:
-    """Natural Spanish join: ['a','b','c'] → 'a, b y c'."""
+def _en_join(items: list[str]) -> str:
+    """Natural English join: ['a','b','c'] → 'a, b and c'."""
     if len(items) == 1:
         return items[0]
     if len(items) == 2:
-        return f"{items[0]} y {items[1]}"
-    return f"{', '.join(items[:-1])} y {items[-1]}"
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 def _one_liner(
@@ -306,6 +358,8 @@ def _one_liner(
     sensitive_tables: list[str],
     *,
     has_agent: bool = False,
+    repo_type: str | None = None,
+    mcp_tool_count: int = 0,
 ) -> str:
     """Human-readable headline, derived — not LLM-written."""
     fw_label: str | None = None
@@ -313,38 +367,62 @@ def _one_liner(
         key = frameworks[0].lower()
         fw_label = _FRAMEWORK_LABELS.get(key, frameworks[0].capitalize())
 
+    # Specialized headlines per repo_type — these are the cases where the
+    # generic "a repo with X and Y" framing buries what actually matters.
+    if repo_type == "mcp-server" or repo_type == "mcp-server+langchain":
+        tools_part = (
+            f"exposing **{mcp_tool_count} tools** to the LLM client"
+            if mcp_tool_count > 0
+            else "exposing tools to the LLM client"
+        )
+        if real_world_actions:
+            caps = sorted(real_world_actions.keys())
+            ordered = [c for c in _RWA_PRIORITY if c in caps] + [c for c in caps if c not in _RWA_PRIORITY]
+            extra = f" with {ordered[0]}"
+        else:
+            extra = ""
+        return f"an **MCP server** {tools_part}{extra}"
+
+    if repo_type == "langchain-agent":
+        feature_extra = ""
+        if real_world_actions:
+            caps = sorted(real_world_actions.keys())
+            ordered = [c for c in _RWA_PRIORITY if c in caps] + [c for c in caps if c not in _RWA_PRIORITY]
+            feature_extra = f" with {ordered[0]}"
+        return f"a **langchain agent**{feature_extra}"
+
     features: list[str] = []
 
     # Agent orchestration is the most important feature when present —
-    # calling out "este repo tiene un agente" changes the reader's whole
-    # interpretation of the rest of the surface.
+    # calling it out changes the reader's whole interpretation of the rest
+    # of the surface.
     if has_agent:
-        features.append("orquestador de agente")
+        features.append("agent orchestrator")
 
     if real_world_actions:
         caps = sorted(real_world_actions.keys())
         ordered = [c for c in _RWA_PRIORITY if c in caps] + [c for c in caps if c not in _RWA_PRIORITY]
-        features.append(f"acciones reales ({', '.join(ordered[:2])})")
+        features.append(f"real-world actions ({', '.join(ordered[:2])})")
 
     if payments:
         vendors = sorted(v.capitalize() for v in payments.keys())
-        features.append(f"cobros vía {_es_join(vendors)}")
+        features.append(f"payments via {_en_join(vendors)}")
 
-    if llms and not has_agent:  # "LLM" is implied if we already said "agente"
-        features.append("agentes LLM")
+    if llms and not has_agent:  # "LLM" is implied if we already said "agent"
+        features.append("LLM agents")
     elif llms:
-        features.append("LLM explícito")
+        features.append("explicit LLM calls")
 
     if sensitive_tables:
-        features.append("datos de clientes")
+        features.append("customer data writes")
 
     if not fw_label and not features:
-        return "repo sin integraciones críticas detectadas"
+        return "no critical integrations detected"
     if fw_label and features:
-        return f"una app **{fw_label}** con {_es_join(features)}"
+        return f"a **{fw_label}** app with {_en_join(features)}"
     if fw_label:
-        return f"una app **{fw_label}**"
-    return f"un repo con {_es_join(features)}"
+        return f"a **{fw_label}** app"
+    return f"a repo with {_en_join(features)}"
 
 
 def render_markdown(summary: RepoSummary) -> str:

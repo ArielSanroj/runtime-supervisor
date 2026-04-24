@@ -47,6 +47,7 @@ _SCANNER_TO_TIER: dict[str, Tier] = {
     "fs-shell": "real_world_actions",
     "media-gen": "real_world_actions",
     "agent-orchestrators": "real_world_actions",
+    "mcp-tools": "real_world_actions",
     # http-routes, cron-schedules, anything else → general (fallback below)
 }
 

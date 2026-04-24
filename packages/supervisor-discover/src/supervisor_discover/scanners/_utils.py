@@ -1,6 +1,7 @@
 """Shared scanner helpers."""
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -72,6 +73,56 @@ def python_files(root: Path) -> Iterator[Path]:
 
 def ts_js_files(root: Path) -> Iterator[Path]:
     yield from _walk(root, _TS_GLOBS)
+
+
+def dotted_name(node: ast.AST) -> str | None:
+    """Resolve `a.b.c.d` AST attribute chain to a dotted string. Returns None
+    for expressions that aren't a straight attribute/name chain (subscripts,
+    nested calls, etc.).
+
+    Used by scanners to match SDK calls like `sgMail.send(...)` or
+    `subprocess.run(...)` against a known allow-list of call targets,
+    replacing text-regex matching that leaks into comments and strings.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = dotted_name(node.value)
+        if base is None:
+            return None
+        return f"{base}.{node.attr}"
+    return None
+
+
+def iter_python_calls(text: str) -> Iterator[ast.Call]:
+    """Yield every `ast.Call` node in `text`. Silently yields nothing for
+    files with syntax errors — scanners skip those rather than crash."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            yield node
+
+
+def match_dotted_call(call: ast.Call, targets: dict[str, object]) -> tuple[str, object] | None:
+    """If `call.func` resolves to a dotted name listed in `targets`, return
+    `(name, targets[name])`. Otherwise None. Also matches a suffix of the
+    dotted chain — e.g. target `messages.create` matches both
+    `client.messages.create(...)` and `anthropic.messages.create(...)` —
+    so scanners can use short suffixes as 'trailing path' signatures."""
+    name = dotted_name(call.func)
+    if name is None:
+        return None
+    if name in targets:
+        return name, targets[name]
+    # Allow suffix matches on dotted chains: target "messages.create"
+    # matches `x.y.messages.create`.
+    for target in targets:
+        if "." in target and name.endswith("." + target):
+            return target, targets[target]
+    return None
 
 
 def config_files(root: Path) -> Iterator[Path]:

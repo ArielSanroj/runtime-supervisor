@@ -76,11 +76,25 @@ def evaluate(policy: Policy, payload: dict[str, Any]) -> list[PolicyHit]:
         interp.symtable["payload"] = payload
         try:
             result = interp(rule["when"])
+            err_msg = (
+                "; ".join(str(err.get_error()) for err in interp.error)
+                if interp.error else None
+            )
         except Exception as e:  # defensive: malformed rule should not crash
-            raise ValueError(f"rule {rule['id']} eval error: {e}") from e
-        if interp.error:
-            msgs = "; ".join(str(err.get_error()) for err in interp.error)
-            raise ValueError(f"rule {rule['id']} eval error: {msgs}")
+            err_msg = f"{type(e).__name__}: {e}"
+            result = None
+        if err_msg:
+            # Fail-safe: surface the failure as a review case instead of HTTP
+            # 500. Includes the keys the caller actually sent so the dev can
+            # fix their payload extractor (or the policy author can fix the rule).
+            keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+            hits.append(PolicyHit(
+                rule_id=rule["id"],
+                action="review",
+                reason=f"policy rule could not evaluate: {err_msg}. payload keys: {keys}",
+                explanation=rule.get("explanation"),
+            ))
+            continue
         if bool(result):
             hits.append(PolicyHit(
                 rule_id=rule["id"],

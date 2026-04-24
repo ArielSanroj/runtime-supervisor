@@ -158,6 +158,44 @@ def require_any_scope(
     )
 
 
+PUBLIC_DEMO_INTEGRATION_ID = "public-demo"
+PUBLIC_DEMO_TENANT_ID = "public-demo-tenant"
+
+
+def require_any_scope_or_public_demo(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Principal:
+    """Same as require_any_scope, but when PUBLIC_DEMO_ENABLED is true and no
+    Authorization header is present, returns a synthetic public-demo principal
+    instead of raising 401. The caller (route handler) is responsible for
+    enforcing that public-demo principals can only reach dry_run paths.
+
+    When REQUIRE_AUTH is false (dev/test) we always delegate to require_any_scope
+    so the existing dev-principal shortcut keeps working unchanged.
+    """
+    settings = get_settings()
+    if not settings.require_auth or authorization:
+        return require_any_scope(authorization=authorization, db=db)
+    if settings.public_demo_enabled:
+        return Principal(
+            integration_id=PUBLIC_DEMO_INTEGRATION_ID,
+            name="public demo",
+            scopes=["demo"],
+            tenant_id=PUBLIC_DEMO_TENANT_ID,
+        )
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
+
+
+def require_tenant_id_or_public_demo(
+    principal: Principal = Depends(require_any_scope_or_public_demo),
+    db: Session = Depends(get_db),
+) -> str:
+    if principal.integration_id == PUBLIC_DEMO_INTEGRATION_ID:
+        return PUBLIC_DEMO_TENANT_ID
+    return require_tenant_id(principal=principal, db=db)
+
+
 def require_admin(
     x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
 ) -> None:

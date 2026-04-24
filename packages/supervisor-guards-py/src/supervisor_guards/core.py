@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
+import inspect
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -62,6 +63,34 @@ AF = TypeVar("AF", bound=Callable[..., Awaitable[Any]])
 
 def _default_payload(args: tuple, kwargs: dict[str, Any]) -> dict[str, Any]:
     return {"args": [str(a) for a in args], "kwargs": {k: str(v) for k, v in kwargs.items()}}
+
+
+def _make_default_extractor(fn: Callable[..., Any]) -> Callable[..., dict[str, Any]]:
+    # Bind by parameter name so policies that read `payload['amount']` work
+    # without the dev writing an explicit `payload=` lambda. Falls back to
+    # the args/kwargs blob when the signature can't be inspected (C builtins,
+    # partials with mismatched arity, etc.).
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        sig = None
+
+    def extract(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        base = _default_payload(args, kwargs)
+        if sig is None:
+            return base
+        try:
+            bound = sig.bind_partial(*args, **kwargs)
+        except TypeError:
+            return base
+        bound.apply_defaults()
+        named = {k: v for k, v in bound.arguments.items() if k not in ("self", "cls")}
+        # Named args win over the args/kwargs fallback so policies see
+        # `payload['amount']` directly. Values are sent raw (not stringified)
+        # so numeric comparisons in policy rules work.
+        return {**base, **named}
+
+    return extract
 
 
 def _pre_check(
@@ -129,9 +158,10 @@ def supervised(
     on_review: OnReview | None = None,
 ) -> Callable[[F], F]:
     """Decorator for sync functions."""
-    extractor = payload or (lambda *a, **kw: _default_payload(a, kw))
 
     def deco(fn: F) -> F:
+        extractor = payload or _make_default_extractor(fn)
+
         @functools.wraps(fn)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
             p = extractor(*args, **kwargs)
@@ -151,9 +181,10 @@ def supervised_async(
 ) -> Callable[[AF], AF]:
     """Decorator for async functions. Pre-check runs in a thread so it can
     still poll synchronously without blocking the event loop."""
-    extractor = payload or (lambda *a, **kw: _default_payload(a, kw))
 
     def deco(fn: AF) -> AF:
+        extractor = payload or _make_default_extractor(fn)
+
         @functools.wraps(fn)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
             p = extractor(*args, **kwargs)

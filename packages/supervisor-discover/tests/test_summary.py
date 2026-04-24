@@ -49,5 +49,5 @@ def test_summary_cli_stdout_is_three_lines():
 def test_summary_on_empty_findings():
     s = build_summary([])
     md = render_markdown(s)
-    assert "sin integraciones críticas" in s.one_liner.lower() or s.one_liner != ""
+    assert "no critical integrations" in s.one_liner.lower() or s.one_liner != ""
     assert "## Qué es este repo" in md

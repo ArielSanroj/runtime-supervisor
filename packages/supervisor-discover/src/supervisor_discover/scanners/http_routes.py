@@ -39,11 +39,14 @@ def _scan_python(root: Path) -> list[Finding]:
                     continue
                 last = name.rsplit(".", 1)[-1]
                 if last in _PY_HTTP_DECORATORS and ("route" in name or "." in name):
+                    # Point at the decorator line so file:line highlights `@app.get(...)`,
+                    # not the function body below it. Reading the route without its
+                    # decorator is useless for review.
                     findings.append(Finding(
                         scanner="http-routes",
                         file=str(path),
-                        line=node.lineno,
-                        snippet=f"{name}  # {node.name}",
+                        line=deco.lineno,
+                        snippet=f"@{name}  # {node.name}",
                         suggested_action_type="other",
                         confidence="medium",
                         rationale=f"Python HTTP handler `{node.name}` decorated with `@{name}`. "

@@ -36,12 +36,12 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 .ops-header nav { display: flex; gap: 16px; }
 .ops-shell .brand { display: flex; align-items: baseline; gap: 12px; }
 .ops-shell .brand .env { color: var(--muted); font-size: 12px; }
-.ops-main { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+.ops-main { max-width: 1180px; margin: 24px auto; padding: 0 24px; }
 
 .ops-shell h1 { font-size: 22px; margin: 0 0 16px; }
 .ops-shell h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
-.ops-shell .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+.ops-shell .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
 .ops-shell .grid { display: grid; gap: 16px; }
 .ops-shell .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .ops-shell .grid.cols-2 { grid-template-columns: 2fr 1fr; }
@@ -79,6 +79,38 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 .ops-shell .chain-bad { color: var(--danger); }
 .ops-shell .mono { font-family: var(--mono); }
 
+@media (max-width: 900px) {
+  .ops-header,
+  .ops-shell header > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .ops-header nav,
+  .ops-shell nav {
+    flex-wrap: wrap;
+    gap: 10px 14px;
+  }
+  .ops-shell .grid.cols-3,
+  .ops-shell .grid.cols-2 {
+    grid-template-columns: 1fr;
+  }
+  .ops-shell .row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .ops-main {
+    margin: 16px auto;
+    padding: 0 14px;
+  }
+  .ops-shell table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
 /* Info tooltip — inline "?" badge that reveals explanatory copy on hover/focus.
    Scoped to .ops-shell so it doesn't leak into the landing. */
 .ops-shell .info-tip {
@@ -86,18 +118,20 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px; height: 16px;
+  width: 18px; height: 18px;
   border-radius: 50%;
   border: 1px solid var(--border);
   color: var(--muted);
   background: var(--panel-2);
   font-size: 11px;
-  font-weight: 600;
-  font-family: var(--sans);
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
   cursor: help;
-  margin-left: 8px;
+  margin-left: 2px;
   vertical-align: middle;
   outline: none;
+  flex-shrink: 0;
 }
 .ops-shell .info-tip:hover, .ops-shell .info-tip:focus { border-color: var(--accent); color: var(--accent); }
 .ops-shell .info-tip .tip {

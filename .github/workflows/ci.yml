@@ -38,6 +38,11 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile=false
+      - name: Build internal packages
+        # apps/control-center imports `@runtime-supervisor/client` from
+        # packages/supervisor-client-ts. The package publishes dist/ via tsc,
+        # so we build it here before the typecheck can resolve the module.
+        run: pnpm --filter @runtime-supervisor/client build
       - name: Typecheck
         working-directory: apps/control-center
         run: pnpm typecheck

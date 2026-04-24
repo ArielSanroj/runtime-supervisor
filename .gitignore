@@ -25,5 +25,4 @@ apps/control-center/tsconfig.tsbuildinfo
 .idea/
 .vscode/
 *.egg-info/
-uv.lock
 .vercel

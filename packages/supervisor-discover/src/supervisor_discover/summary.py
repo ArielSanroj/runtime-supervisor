@@ -303,7 +303,13 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     # payments, DB writes) keep their app-style classification.
     is_mcp = bool(mcp_tools_list) or has_mcp_dispatcher
     has_app_surface = bool(
-        payment_integrations or all_tables or llms or http_count or unique_chokepoints
+        payment_integrations
+        or all_tables
+        or llms
+        or http_count
+        or unique_chokepoints
+        or real_world_actions  # fs-shell, voice, email, messaging, calendar, media-gen
+        or scheduled  # cron jobs imply a runtime, not a skill package
     )
     is_skill_repo = bool(skill_artifacts) and not has_app_surface and not is_mcp
 

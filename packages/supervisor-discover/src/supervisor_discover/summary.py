@@ -170,6 +170,8 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     mcp_tools_seen: set[str] = set()
     has_mcp_dispatcher = False
     has_langchain_framework = False
+    skill_artifacts: list[tuple[str, str]] = []  # (kind, name)
+    has_claude_md = False
 
     for f in findings:
         scanner = f.scanner
@@ -233,6 +235,14 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
                 if "langchain" in fw_name or "langgraph" in fw_name:
                     has_langchain_framework = True
 
+        elif scanner == "skills":
+            kind = str(extra.get("kind") or "")
+            name = str(extra.get("skill_name") or "")
+            if kind:
+                skill_artifacts.append((kind, name))
+            if kind == "claude-md":
+                has_claude_md = True
+
         elif scanner == "mcp-tools":
             kind = extra.get("kind", "")
             if kind == "mcp-tool":
@@ -277,7 +287,7 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     # Rank by wrap-value, not scan order: an actual Crew/Controller class in
     # a factory/orchestrator file is wrappable; a plain `from crewai import X`
     # in an agent definition file is signal but not a wrap-point. Put the
-    # wrappable ones first so the report's "wrappear UNO de estos" list leads
+    # wrappable ones first so the report's "wrap one of these" list leads
     # with call-sites the reader can actually decorate.
     unique_chokepoints.sort(key=_chokepoint_rank)
 
@@ -285,9 +295,22 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
     # this to specialize the headline + remediation copy ("This is an MCP
     # server: wrap your tool registrations" beats the generic "we found
     # filesystem actions").
+    #
+    # `claude-skill` wins over MCP/langchain when the repo is dominated by
+    # skill artifacts and has no significant code surface — that's a prompt
+    # package, not an app, and the guidance is to audit content not to wrap
+    # call-sites. Repos with BOTH skill files and a real backend (LLM calls,
+    # payments, DB writes) keep their app-style classification.
     is_mcp = bool(mcp_tools_list) or has_mcp_dispatcher
-    if is_mcp and has_langchain_framework:
-        repo_type: str | None = "mcp-server+langchain"
+    has_app_surface = bool(
+        payment_integrations or all_tables or llms or http_count or unique_chokepoints
+    )
+    is_skill_repo = bool(skill_artifacts) and not has_app_surface and not is_mcp
+
+    if is_skill_repo:
+        repo_type: str | None = "claude-skill"
+    elif is_mcp and has_langchain_framework:
+        repo_type = "mcp-server+langchain"
     elif is_mcp:
         repo_type = "mcp-server"
     elif has_langchain_framework:
@@ -313,6 +336,8 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
             has_agent=bool(unique_chokepoints or tools),
             repo_type=repo_type,
             mcp_tool_count=len(mcp_tools_list),
+            skill_count=len(skill_artifacts),
+            has_claude_md=has_claude_md,
         ),
         repo_type=repo_type,
     )
@@ -360,6 +385,8 @@ def _one_liner(
     has_agent: bool = False,
     repo_type: str | None = None,
     mcp_tool_count: int = 0,
+    skill_count: int = 0,
+    has_claude_md: bool = False,
 ) -> str:
     """Human-readable headline, derived — not LLM-written."""
     fw_label: str | None = None
@@ -369,6 +396,16 @@ def _one_liner(
 
     # Specialized headlines per repo_type — these are the cases where the
     # generic "a repo with X and Y" framing buries what actually matters.
+    if repo_type == "claude-skill":
+        if skill_count > 1:
+            return (
+                f"a **Claude Code skill / plugin** distributing "
+                f"**{skill_count}** instruction file(s) Claude reads at runtime"
+            )
+        if has_claude_md:
+            return "a **Claude Code skill / plugin** with a repo-wide CLAUDE.md"
+        return "a **Claude Code skill / plugin** distributing instructions Claude reads at runtime"
+
     if repo_type == "mcp-server" or repo_type == "mcp-server+langchain":
         tools_part = (
             f"exposing **{mcp_tool_count} tools** to the LLM client"
@@ -427,15 +464,15 @@ def _one_liner(
 
 def render_markdown(summary: RepoSummary) -> str:
     """Markdown block that goes at the top of report.md."""
-    lines: list[str] = ["## Qué es este repo", ""]
+    lines: list[str] = ["## What this repo is", ""]
 
     if summary.frameworks:
         fw_str = " + ".join(f"**{fw}**" for fw in summary.frameworks)
-        lines.append(f"Stack detectado: {fw_str} ({summary.http_routes} routes HTTP).")
+        lines.append(f"Stack: {fw_str} ({summary.http_routes} HTTP routes).")
     elif summary.http_routes:
-        lines.append(f"HTTP surface: {summary.http_routes} routes (framework no reconocido).")
+        lines.append(f"HTTP surface: {summary.http_routes} routes (framework not recognized).")
     else:
-        lines.append("Sin endpoints HTTP detectados.")
+        lines.append("No HTTP endpoints detected.")
     lines.append("")
 
     if summary.payment_integrations:
@@ -446,25 +483,25 @@ def render_markdown(summary: RepoSummary) -> str:
                 parts.append(f"**{v}** ({', '.join(caps)})")
             else:
                 parts.append(f"**{v}**")
-        lines.append(f"Integraciones de pago: {', '.join(parts)}.")
+        lines.append(f"Payment integrations: {', '.join(parts)}.")
     else:
-        lines.append("Sin SDKs de pago detectados.")
+        lines.append("No payment SDKs detected.")
 
     if summary.llm_providers:
         lines.append(f"LLM providers: {', '.join(f'**{p}**' for p in summary.llm_providers)}.")
     else:
-        lines.append("Sin LLM SDKs detectados.")
+        lines.append("No LLM SDKs detected.")
 
     if summary.real_world_actions:
         parts: list[str] = []
         for capability, providers in summary.real_world_actions.items():
             providers_str = ", ".join(providers)
             parts.append(f"**{capability}** ({providers_str})")
-        lines.append(f"Acciones reales del agente: {'; '.join(parts)}.")
+        lines.append(f"Real-world actions the agent can take: {'; '.join(parts)}.")
 
     if summary.agent_chokepoints or summary.agent_tools:
         lines.append("")
-        lines.append("### 🎯 Agent orchestration detectada")
+        lines.append("### 🎯 Agent orchestration detected")
         lines.append("")
 
         # Split by kind: wrappable call-sites (classes in factory files,
@@ -474,52 +511,52 @@ def render_markdown(summary: RepoSummary) -> str:
         imports = [cp for cp in summary.agent_chokepoints if cp.kind == "framework-import"]
 
         if wrappable:
-            lines.append("**Wrap aquí** — un solo `@supervised('tool_use')` en uno de estos puntos cubre todos los tools del agente (actuales y futuros):")
+            lines.append("**Wrap here** — a single `@supervised('tool_use')` at one of these points covers every tool the agent uses (current and future):")
             for cp in wrappable[:5]:
                 file_short = cp.file.rsplit("/", 2)
                 file_display = "/".join(file_short[-2:]) if len(file_short) > 1 else cp.file
                 kind_label = "class" if cp.kind == "agent-class" else "tool"
                 lines.append(f"- `{file_display}:{cp.line}` — {kind_label} `{cp.label}`")
             if len(wrappable) > 5:
-                lines.append(f"- _+{len(wrappable) - 5} más_")
+                lines.append(f"- _+{len(wrappable) - 5} more_")
             lines.append("")
 
         if imports:
             frameworks_seen = sorted({cp.label for cp in imports})
             fw_str = ", ".join(f"`{f}`" for f in frameworks_seen)
             lines.append(
-                f"**Framework detectado:** {fw_str} — imports en {len(imports)} archivo(s). "
-                "Los imports solos no son wrap-points; buscá el `Crew()` / `AgentExecutor()` / "
-                "`StateGraph()` que los usa (ese sí se wrappea)."
+                f"**Framework detected:** {fw_str} — imports in {len(imports)} file(s). "
+                "Imports alone aren't wrap points; look for the `Crew()` / `AgentExecutor()` / "
+                "`StateGraph()` that uses them (that's the one you wrap)."
             )
             lines.append("")
 
         if summary.agent_tools:
             tools_str = ", ".join(f"`{t}`" for t in summary.agent_tools[:10])
-            more = f" _+{len(summary.agent_tools) - 10} más_" if len(summary.agent_tools) > 10 else ""
-            lines.append(f"**Tools que el agente expone:** {tools_str}{more}.")
+            more = f" _+{len(summary.agent_tools) - 10} more_" if len(summary.agent_tools) > 10 else ""
+            lines.append(f"**Tools the agent exposes:** {tools_str}{more}.")
             lines.append("")
         lines.append(
-            "> _El supervisor recibe el nombre del tool en cada decisión → puedes "
-            "escribir políticas por tool sin tocar el código del agente. "
-            "Ver `runtime-supervisor/combos/agent-orchestrator.md` para el playbook._"
+            "> _The supervisor receives the tool name on every decision → you can "
+            "write per-tool policies without touching the agent code. "
+            "See `runtime-supervisor/combos/agent-orchestrator.md` for the playbook._"
         )
 
     if summary.scheduled_jobs:
-        lines.append(f"Scheduled jobs: {summary.scheduled_jobs} crons/tareas programadas.")
+        lines.append(f"Scheduled jobs: {summary.scheduled_jobs} crons / scheduled tasks.")
 
     lines.append("")
     if summary.sensitive_tables:
         lines.append(
-            "Tablas con nomenclatura sensible (users/orders/customers/...): "
+            "Tables with sensitive naming (users/orders/customers/...): "
             + ", ".join(f"`{t}`" for t in summary.sensitive_tables)
             + "."
         )
     elif summary.db_tables_touched:
-        lines.append(f"Tablas tocadas: {len(summary.db_tables_touched)}.")
+        lines.append(f"Tables touched: {len(summary.db_tables_touched)}.")
 
     lines.append("")
-    lines.append(f"En una frase: {summary.one_liner}.")
+    lines.append(f"In one line: {summary.one_liner}.")
     lines.append("")
     return "\n".join(lines)
 

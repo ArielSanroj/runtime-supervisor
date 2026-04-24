@@ -33,9 +33,9 @@ def test_summary_markdown_has_required_sections():
     findings = validate(scan_all(FLASK_FIXTURE))
     s = build_summary(findings)
     md = render_markdown(s)
-    assert "## Qué es este repo" in md
-    assert "Stack detectado" in md
-    assert "En una frase" in md
+    assert "## What this repo is" in md
+    assert "Stack:" in md
+    assert "In one line:" in md
 
 
 def test_summary_cli_stdout_is_three_lines():
@@ -50,4 +50,4 @@ def test_summary_on_empty_findings():
     s = build_summary([])
     md = render_markdown(s)
     assert "no critical integrations" in s.one_liner.lower() or s.one_liner != ""
-    assert "## Qué es este repo" in md
+    assert "## What this repo is" in md

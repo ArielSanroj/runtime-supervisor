@@ -119,19 +119,19 @@ def test_render_summary_emits_priority_emojis():
 
 
 def test_render_summary_every_item_has_tri_part_labels():
-    """Each priority item must emit 🔴 Problema / 📍 Archivos / ✅ Solución."""
+    """Each priority item must emit 🔴 Problem / 📍 Where / ✅ Fix."""
     findings = [
         _f("/repo/handler.py", scanner="email-sends", confidence="high"),
     ]
     summary = build_summary(findings)
     md = render_summary(summary, findings)
-    assert "🔴 **Problema:**" in md
-    assert "📍 **Archivos:**" in md
-    assert "✅ **Solución:**" in md
+    assert "🔴 **Problem:**" in md
+    assert "📍 **Where:**" in md
+    assert "✅ **Fix:**" in md
 
 
 def test_render_summary_problem_copy_is_scanner_specific():
-    """email-sends ítem menciona phishing; fs-shell shell-exec menciona RCE."""
+    """email-sends item mentions phishing; fs-shell shell-exec mentions RCE."""
     email_finding = _f("/repo/mail.py", scanner="email-sends", confidence="high")
     shell_finding = _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec")
 
@@ -145,7 +145,7 @@ def test_render_summary_problem_copy_is_scanner_specific():
 
 
 def test_render_summary_solution_links_to_combo_playbook_when_applicable():
-    """shell-exec finding debe mencionar el combo playbook."""
+    """shell-exec finding should reference the combo playbook."""
     shell_finding = _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec")
     summary = build_summary([shell_finding])
     md = render_summary(summary, [shell_finding])
@@ -161,8 +161,8 @@ def test_render_summary_no_owasp_in_visible_headlines():
     ]
     summary = build_summary(findings)
     md = render_summary(summary, findings)
-    # Inspect the priority-items block only (stop at the "Lo que NO me preocupa" or "##"):
-    priority_block = md.split("## Lo que NO me preocupa")[0]
+    # Inspect the priority-items block only (stop at the "What I'm not worried about" or "##"):
+    priority_block = md.split("## What I'm not worried about")[0]
     assert "OWASP" not in priority_block
     assert "LLM01" not in priority_block
     assert "action_type" not in priority_block
@@ -171,7 +171,8 @@ def test_render_summary_no_owasp_in_visible_headlines():
 def test_render_summary_empty_repo_says_nothing_to_do():
     summary = build_summary([])
     md = render_summary(summary, [])
-    assert "no encontré" in md.lower() or "nada" in md.lower()
+    lower = md.lower()
+    assert "no call-sites that need a gate" in lower or "nothing" in lower
 
 
 def test_render_summary_flask_fixture_integration():
@@ -184,9 +185,9 @@ def test_render_summary_flask_fixture_integration():
 
     assert "fake_flask_app" in md  # repo name in title
     assert "security review" in md.lower()
-    assert "Timeline sugerido" in md
-    # fixture has Stripe → "no me preocupa" should NOT say "sin SDKs de pago"
-    assert "Sin SDKs de pago" not in md
+    assert "Suggested timeline" in md
+    # fixture has Stripe → the no-worries note should NOT say "no payment SDKs"
+    assert "No payment SDKs" not in md
 
 
 def test_render_summary_clean_tiers_note_when_no_money_no_pii():
@@ -195,8 +196,8 @@ def test_render_summary_clean_tiers_note_when_no_money_no_pii():
     findings = [_f("/repo/handler.py", scanner="fs-shell", confidence="high")]
     summary = build_summary(findings)
     md = render_summary(summary, findings)
-    assert "Sin SDKs de pago" in md
-    assert "Sin mutaciones directas" in md
+    assert "No payment SDKs" in md
+    assert "No direct mutations" in md
 
 
 def test_render_summary_includes_combos_section_when_passed():
@@ -210,7 +211,7 @@ def test_render_summary_includes_combos_section_when_passed():
     summary = build_summary(findings)
     combos = detect_combos(findings)
     md = render_summary(summary, findings, combos)
-    assert "Combos detectados" in md
+    assert "Critical combos" in md
     assert "runtime-supervisor/combos/" in md
 
 

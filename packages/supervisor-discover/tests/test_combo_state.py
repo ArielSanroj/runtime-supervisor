@@ -163,7 +163,7 @@ def test_generator_respects_resolved_combos_end_to_end(tmp_path):
 
     # Primer scan: el combo aparece en la sección de combos del SUMMARY
     summary_v1 = (out / "SUMMARY.md").read_text()
-    assert "## Combos detectados" in summary_v1
+    assert "## Critical combos" in summary_v1
     assert "voice-clone-plus-outbound-call" in summary_v1
 
     # Usuario marca resolved
@@ -174,17 +174,17 @@ def test_generator_respects_resolved_combos_end_to_end(tmp_path):
     generate(findings, out)
     summary_v2 = (out / "SUMMARY.md").read_text()
 
-    # La sección dedicada "## Combos detectados" desaparece (ese era el único combo).
+    # La sección dedicada "## Critical combos" desaparece (ese era el único combo).
     # NOTE: el combo_id puede seguir apareciendo en los solution links de la
     # priority list (`→ ver combos/X.md`) — esos links son estáticos al playbook
     # en disco, no al combo detectado. Eso es correcto: el playbook sigue siendo
     # útil como referencia después de resuelto.
-    assert "## Combos detectados" not in summary_v2
+    assert "## Critical combos" not in summary_v2
 
     # Con include_resolved=True la sección vuelve a aparecer
     generate(findings, out, include_resolved=True)
     summary_v3 = (out / "SUMMARY.md").read_text()
-    assert "## Combos detectados" in summary_v3
+    assert "## Critical combos" in summary_v3
     assert "voice-clone-plus-outbound-call" in summary_v3
 
 

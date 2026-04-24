@@ -58,10 +58,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
 
-    # Nivel 2 (opt-in) — auto-fix a combo. Stub; prints roadmap for now.
+    # Level 2 (opt-in) — auto-fix a combo. Stub; prints roadmap for now.
     fix_p = sub.add_parser(
         "fix",
-        help="Nivel 2 (opt-in): auto-apply a combo playbook. Currently a stub — "
+        help="Level 2 (opt-in): auto-apply a combo playbook. Currently a stub — "
              "use the markdown playbook in runtime-supervisor/combos/ instead.",
     )
     fix_p.add_argument("combo_id", help="Combo id from runtime-supervisor/combos/README.md")
@@ -71,50 +71,50 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fix_p.add_argument("--out", default="runtime-supervisor", help="Output directory")
 
-    # Nivel 3 — combo state tracking. Marca combos como resolved y el próximo
-    # scan los suprime del report. State file: runtime-supervisor/combos.state.yaml.
+    # Level 3 — combo state tracking. Mark combos as resolved and the next scan
+    # suppresses them from the report. State file: runtime-supervisor/combos.state.yaml.
     combos_p = sub.add_parser(
         "combos",
-        help="Nivel 3: gestiona el estado de los combos detectados "
-             "(open / in-progress / resolved). `resolved` se suprime del próximo scan.",
+        help="Level 3: manage the state of detected combos "
+             "(open / in-progress / resolved). `resolved` is suppressed from the next scan.",
     )
     combos_p.add_argument(
         "--out", default="runtime-supervisor",
-        help="Directorio con combos.state.yaml (default: ./runtime-supervisor)",
+        help="Directory with combos.state.yaml (default: ./runtime-supervisor)",
     )
     combos_sub = combos_p.add_subparsers(
         dest="combos_verb", required=False,
-        help="Verbo a ejecutar — sin argumento = list.",
+        help="Verb to run — no argument = list.",
     )
 
     combos_sub.add_parser(
         "list",
-        help="Muestra el estado de cada combo detectado (default si se omite).",
+        help="Show the state of each detected combo (default if omitted).",
     )
     resolve_p = combos_sub.add_parser(
         "resolve",
-        help="Marca un combo como resolved. El próximo scan no lo reporta.",
+        help="Mark a combo as resolved. The next scan won't report it.",
     )
-    resolve_p.add_argument("combo_id", help="ID del combo (ej: voice-clone-plus-outbound-call)")
-    resolve_p.add_argument("--note", default="", help="Nota breve del por qué se cerró.")
-    resolve_p.add_argument("--by", default=None, help="Quién lo cerró (email o handle).")
+    resolve_p.add_argument("combo_id", help="Combo ID (e.g. voice-clone-plus-outbound-call)")
+    resolve_p.add_argument("--note", default="", help="Brief note on why it was closed.")
+    resolve_p.add_argument("--by", default=None, help="Who closed it (email or handle).")
 
     in_progress_p = combos_sub.add_parser(
         "in-progress",
-        help="Marca un combo como in-progress (se sigue reportando pero con nota).",
+        help="Mark a combo as in-progress (still reported, but annotated).",
     )
     in_progress_p.add_argument("combo_id")
     in_progress_p.add_argument("--note", default="")
 
     reopen_p = combos_sub.add_parser(
         "reopen",
-        help="Revierte un combo a open — vuelve a aparecer en scans futuros.",
+        help="Reopen a combo — it reappears in future scans.",
     )
     reopen_p.add_argument("combo_id")
 
     combos_sub.add_parser(
         "clear",
-        help="Borra combos.state.yaml — todos los combos vuelven a reportarse.",
+        help="Delete combos.state.yaml — every combo is reported again.",
     )
 
     return p
@@ -220,19 +220,19 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
 
     # Interactive prompt.
     print("", file=sys.stderr)
-    print(f"Combinaciones críticas detectadas: {len(combos)}", file=sys.stderr)
+    print(f"Critical combos detected: {len(combos)}", file=sys.stderr)
     print("", file=sys.stderr)
-    print("¿Cómo quieres resolver los combos?", file=sys.stderr)
-    print("  [1] Ver playbooks markdown (default, no toca tu código)", file=sys.stderr)
-    print("      → runtime-supervisor/combos/ con pasos copy-paste", file=sys.stderr)
+    print("How do you want to handle them?", file=sys.stderr)
+    print("  [1] Open the markdown playbooks (default, doesn't touch your code)", file=sys.stderr)
+    print("      → runtime-supervisor/combos/ with copy-paste steps", file=sys.stderr)
     print("  [2] Auto-fix (experimental, stub)", file=sys.stderr)
-    print("      → el CLI aplica el playbook por ti. No implementado todavía.", file=sys.stderr)
-    print("  [3] Tracking de estado (opt-in, stub)", file=sys.stderr)
-    print("      → marca combos resueltos para que scans futuros no los re-reporten.", file=sys.stderr)
+    print("      → the CLI applies the playbook for you. Not implemented yet.", file=sys.stderr)
+    print("  [3] State tracking (opt-in, stub)", file=sys.stderr)
+    print("      → mark combos resolved so future scans don't re-report them.", file=sys.stderr)
     print("", file=sys.stderr)
 
     try:
-        choice = input("  Elige [1]: ").strip()
+        choice = input("  Pick [1]: ").strip()
     except (EOFError, KeyboardInterrupt):
         print("", file=sys.stderr)
         choice = ""
@@ -242,7 +242,7 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
     elif choice in ("1", "2", "3"):
         level = int(choice)
     else:
-        print(f"  Opción inválida '{choice}', usando default 1.", file=sys.stderr)
+        print(f"  Invalid option '{choice}', falling back to default 1.", file=sys.stderr)
         level = 1
 
     _execute_level(level, combos, out, prompted=True)
@@ -256,7 +256,7 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         if prompted:
             print("", file=sys.stderr)
         print(f"-> {readme.relative_to(out.parent) if out.parent in readme.parents else readme}  ({len(combos)} combos)", file=sys.stderr)
-        print(f"-> abre primero: {first.name}  ← más crítico", file=sys.stderr)
+        print(f"-> open first: {first.name}  ← most critical", file=sys.stderr)
         return
 
     if level == 2:
@@ -264,7 +264,7 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         print("", file=sys.stderr)
         print(explain(), file=sys.stderr)
         print("", file=sys.stderr)
-        print("Cayendo a Nivel 1: runtime-supervisor/combos/ tiene los playbooks.", file=sys.stderr)
+        print("Falling back to Level 1: runtime-supervisor/combos/ has the playbooks.", file=sys.stderr)
         return
 
     if level == 3:
@@ -272,15 +272,15 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
         print("", file=sys.stderr)
         print(explain(), file=sys.stderr)
         print("", file=sys.stderr)
-        print("Combos detectados ahora mismo (aplica el playbook primero, luego marca resolved):", file=sys.stderr)
+        print("Combos detected right now (apply the playbook first, then mark resolved):", file=sys.stderr)
         for c in combos:
             print(f"  · {c.id}", file=sys.stderr)
         print("", file=sys.stderr)
-        print("Cuando termines:", file=sys.stderr)
+        print("When you're done:", file=sys.stderr)
         for c in combos:
             print(f"  supervisor-discover combos resolve {c.id} --note \"...\"", file=sys.stderr)
         print("", file=sys.stderr)
-        print("El próximo scan no los va a reportar. `combos list` muestra el estado.", file=sys.stderr)
+        print("The next scan will suppress them. `combos list` shows the state.", file=sys.stderr)
         return
 
 
@@ -288,12 +288,12 @@ def _execute_level(level: int, combos: list, out: Path, *, prompted: bool) -> No
 # add. Keeps the terminal output useful on repos with surfaces the scanner
 # hasn't mapped yet.
 _TIER_FALLBACK: dict[str, str] = {
-    "money": "stripe · paypal · plaid (nada detectado)",
-    "real_world_actions": "voice · email · slack · shell (nada detectado)",
+    "money": "stripe · paypal · plaid (nothing detected)",
+    "real_world_actions": "voice · email · slack · shell (nothing detected)",
     "customer_data": "UPDATE/DELETE users/customers/orders",
     "business_data": "UPDATE/DELETE trades/positions/inventory/events",
-    "llm": "anthropic · openai (nada detectado)",
-    "general": "http routes · cron schedules · informativo",
+    "llm": "anthropic · openai (nothing detected)",
+    "general": "http routes · cron schedules · informational",
 }
 
 

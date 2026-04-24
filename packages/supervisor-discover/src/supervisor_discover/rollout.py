@@ -139,9 +139,10 @@ def _shadow_config_block(stack: Stack) -> str:
     """Code snippet + env-var note. Emphasize env var as the operational
     lever — it works stack-agnostic and doesn't need a code redeploy."""
     env_note = (
-        "`configure()` sin argumentos ya lee `SUPERVISOR_ENFORCEMENT_MODE` del "
-        "entorno y defaultea a shadow. Para cambiar de modo (shadow/sample/enforce) "
-        "en runtime, cambia la env var y reinicia — no requiere redeploy de código."
+        "`configure()` with no arguments reads `SUPERVISOR_ENFORCEMENT_MODE` from "
+        "the environment and defaults to shadow. To switch modes "
+        "(shadow/sample/enforce) at runtime, change the env var and restart — "
+        "no code redeploy needed."
     )
     if stack == "typescript":
         code = (
@@ -174,13 +175,13 @@ def _shadow_config_block(stack: Stack) -> str:
 
 
 def _surface_block(summary: RepoSummary, findings: list[Finding], stack: Stack) -> str:
-    lines: list[str] = ["## Superficie detectada", ""]
+    lines: list[str] = ["## Surface detected", ""]
 
     stack_label = {
         "python": "Python",
         "typescript": "TypeScript/JavaScript",
         "mixed": "Python + TypeScript",
-        "unknown": "no identificado por framework",
+        "unknown": "framework not identified",
     }[stack]
     fw_str = ", ".join(summary.frameworks) if summary.frameworks else "—"
     lines.append(f"- **Stack:** {stack_label} ({fw_str})")
@@ -189,7 +190,7 @@ def _surface_block(summary: RepoSummary, findings: list[Finding], stack: Stack) 
         parts = []
         for vendor, caps in summary.payment_integrations.items():
             parts.append(f"{vendor.capitalize()} ({', '.join(caps)})" if caps else vendor.capitalize())
-        lines.append(f"- **Pagos:** {', '.join(parts)}")
+        lines.append(f"- **Payments:** {', '.join(parts)}")
 
     if summary.llm_providers:
         lines.append(f"- **LLMs:** {', '.join(summary.llm_providers)}")
@@ -207,7 +208,7 @@ def _surface_block(summary: RepoSummary, findings: list[Finding], stack: Stack) 
         title = TIER_COPY[tier]["title"]
         tier_lines.append(f"  - {title}: {high} high / {med} medium")
     if tier_lines:
-        lines.append("- **Call-sites a gatear:**")
+        lines.append("- **Call-sites to gate:**")
         lines.extend(tier_lines)
 
     lines.append("")
@@ -287,24 +288,24 @@ def _why_volume_floor(tier: Tier, items: list[Finding]) -> str:
     title = TIER_COPY[tier]["title"].lower()
     if count == 0:
         return (
-            f"el scanner no encontró call-sites en este tier, así que el umbral "
-            f"mínimo de {floor} observaciones aplica sólo si aparecen nuevos "
-            f"call-sites en próximos scans."
+            f"the scanner didn't find any call-sites in this tier, so the "
+            f"minimum threshold of {floor} observations only applies if new "
+            f"call-sites appear in future scans."
         )
     noun = _pluralize(count, "call-site", "call-sites")
     if count < floor:
         return (
-            f"tu repo tiene {noun} de {title} detectado{'' if count == 1 else 's'} — poca "
-            f"superficie estática. El umbral mínimo es {floor} **observaciones en "
-            f"runtime** (no call-sites) porque cada call-site puede invocarse "
-            f"con múltiples patrones de argumentos distintos. Necesitas ver la "
-            f"variedad en runtime, no sólo el happy path."
+            f"your repo has {noun} of {title} — small static surface. The "
+            f"floor is {floor} **runtime observations** (not call-sites) "
+            f"because each call-site can fire with many different argument "
+            f"patterns. You need to see the runtime variety, not just the "
+            f"happy path."
         )
     return (
-        f"tu repo tiene {noun} de {title} detectados. Con menos de "
-        f"{floor} observaciones en runtime, el supervisor ve sólo una muestra "
-        f"del happy path — no puedes distinguir un call-site legítimo raro de "
-        f"un positivo real. Si tu tráfico es alto, cumples este criterio en horas."
+        f"your repo has {noun} of {title}. Below {floor} runtime "
+        f"observations, the supervisor sees only a happy-path sample — you "
+        f"can't tell a legit rare call-site from a real positive. On high-"
+        f"traffic repos you clear this criterion in hours."
     )
 
 
@@ -313,17 +314,17 @@ def _why_fp_threshold(tier: Tier, items: list[Finding]) -> str:
     title = TIER_COPY[tier]["title"].lower()
     if count == 0:
         return (
-            "mientras no haya observaciones, este criterio es trivial. Aplica "
-            "cuando aparezca tráfico real — más de 1 de cada 20 llamadas "
-            "bloqueadas indebidamente erosiona la confianza en el supervisor."
+            "while there are no observations, this criterion is trivial. It "
+            "kicks in once real traffic arrives — more than 1 in 20 wrongly "
+            "blocked calls erodes trust in the supervisor."
         )
     tolerance = _fp_tolerance(count)
     possessive = _possessive_count(count, "call-site", "call-sites")
     return (
-        f"sobre {possessive} de {title}, 5% = {tolerance} por "
-        f"pasada del policy engine. Más que eso y el supervisor se siente como "
-        f"fricción, no como protección — el equipo deja de confiar y busca "
-        f"forma de desactivarlo."
+        f"over {possessive} of {title}, 5% = {tolerance} per pass of the "
+        f"policy engine. More than that and the supervisor feels like "
+        f"friction, not protection — the team stops trusting it and looks "
+        f"for ways to turn it off."
     )
 
 
@@ -331,22 +332,23 @@ def _why_no_legitimate_blocks(tier: Tier, items: list[Finding]) -> str:
     title = TIER_COPY[tier]["title"].lower()
     if not items:
         return (
-            "sin call-sites detectados, este criterio es preventivo. Aplica al "
-            "aparecer el primer finding high/medium del tier."
+            "with no call-sites detected, this criterion is preventive. It "
+            "applies once the first high/medium finding appears in this tier."
         )
     top = _top_evidence_for_tier(items, limit=2)
     top_str = " · ".join(top)
-    more = f" + {len(items) - len(top)} más" if len(items) > len(top) else ""
+    more = f" + {len(items) - len(top)} more" if len(items) > len(top) else ""
     # Singular vs plural intro
     if len(top) == 1 and not more:
-        intro = f"el call-site de {title} en tu repo es {top_str}"
+        intro = f"the {title} call-site in your repo is {top_str}"
     else:
-        intro = f"los top call-sites de {title} en tu repo son {top_str}{more}"
+        intro = f"the top {title} call-sites in your repo are {top_str}{more}"
     return (
         f"{intro}. "
-        f"Si alguno aparece como \"habría bloqueado\" en shadow, al flipar a "
-        f"enforce rompes ese flow en prod. Se arregla antes editando el YAML "
-        f"de `policies/` o excluyendo el call-site con `skip_policies`."
+        f"If any of them shows up as \"would have blocked\" in shadow, "
+        f"flipping to enforce breaks that flow in prod. Fix it first by "
+        f"editing the YAML in `policies/` or by excluding the call-site "
+        f"with `skip_policies`."
     )
 
 
@@ -355,13 +357,13 @@ def _why_actually_blocked(tier: Tier, items: list[Finding]) -> str:
     providers = _tier_providers(items)
     if providers:
         providers_str = ", ".join(f"`{p}`" for p in providers[:3])
-        tail = f" (sobre tus providers detectados: {providers_str})"
+        tail = f" (on your detected providers: {providers_str})"
     else:
         tail = ""
     return (
-        f"si nunca bloqueó durante sample, o el guard no está conectado{tail}, "
-        f"o no hay tráfico que matchee la policy. En cualquier caso, pasar a "
-        f"enforce de {title} es ciego — no sabes qué va a pasar."
+        f"if sample never blocked anything, the guard isn't wired up{tail}, "
+        f"or no traffic matches the policy. Either way, flipping {title} to "
+        f"enforce is blind — you don't know what happens next."
     )
 
 
@@ -370,15 +372,15 @@ def _why_fp_in_sample(tier: Tier, items: list[Finding]) -> str:
     title = TIER_COPY[tier]["title"].lower()
     if count == 0:
         return (
-            "aunque no haya call-sites detectados, la policy podría matchear "
-            "tráfico futuro — mantener el umbral protege de sobre-enforzar "
-            "cuando aparezca."
+            "even with no call-sites detected, the policy could match future "
+            "traffic — keeping the threshold prevents over-enforcing when it "
+            "shows up."
         )
     return (
-        f"al muestrear 10% de {title}, cualquier FP es visible en producción "
-        f"real (no en shadow). Sobre {_possessive_count(count, 'call-site detectado', 'call-sites detectados')}, un FP "
-        f"rate sostenido > 5% significa que algún flow legítimo está siendo "
-        f"bloqueado y nadie en el equipo sabe por qué. Pausar y ajustar."
+        f"when sampling 10% of {title}, any FP is visible in real production "
+        f"(not shadow). Over {_possessive_count(count, 'detected call-site', 'detected call-sites')}, a sustained FP "
+        f"rate > 5% means some legit flow is being blocked and nobody on the "
+        f"team knows why. Pause and tune."
     )
 
 
@@ -386,9 +388,9 @@ def _why_sample_call_count(tier: Tier, items: list[Finding]) -> str:
     floor = _MIN_CALLS_BY_TIER[tier]
     title = TIER_COPY[tier]["title"].lower()
     return (
-        f"≥ {floor} llamadas sampleadas te da cobertura estadística del 10% "
-        f"sobre {title}. Menos que eso y el enforce completo es una apuesta "
-        f"— no tienes evidencia de que la policy sostiene el ritmo real."
+        f"≥ {floor} sampled calls gives you statistical coverage at 10% over "
+        f"{title}. Less than that and the full enforce flip is a bet — you "
+        f"don't have evidence the policy holds under real throughput."
     )
 
 
@@ -398,26 +400,25 @@ def _why_latency_targets(tier: Tier, items: list[Finding]) -> str:
         tail = ""
     else:
         tail = (
-            f" Sobre {_possessive_count(count, 'call-site de este tier', 'call-sites de este tier')}, p99 > 500ms se "
-            f"percibe como timeout en cualquier flow interactivo."
+            f" Over {_possessive_count(count, 'call-site in this tier', 'call-sites in this tier')}, p99 > 500ms "
+            f"shows up as a timeout in any interactive flow."
         )
     return (
-        "el supervisor corre en el path crítico. p95 > 200ms significa que "
-        "el 5% más lento de las llamadas agrega latencia perceptible al "
-        f"usuario; los usuarios perciben al supervisor como \"lentitud\", no "
-        f"como protección.{tail}"
+        "the supervisor runs on the critical path. p95 > 200ms means the "
+        "slowest 5% of calls add user-visible latency; users perceive the "
+        f"supervisor as \"slowness\", not protection.{tail}"
     )
 
 
 def _exit_criteria(tier: Tier, findings: list[Finding]) -> list[Criterion]:
     """Per-tier exit criteria for the Shadow phase — each rule paired with
-    a repo-derived 'por qué'. Takes findings (not just tier) so the rationale
+    a repo-derived 'why'. Takes findings (not just tier) so the rationale
     can reference real counts, top providers, and evidence file:line."""
     floor = _MIN_CALLS_BY_TIER[tier]
     tier_items = group_by_risk_tier(findings)[tier]
     return [
         Criterion(
-            rule=f"≥ {floor} llamadas observadas en runtime",
+            rule=f"≥ {floor} runtime calls observed",
             why=_why_volume_floor(tier, tier_items),
         ),
         Criterion(
@@ -425,7 +426,7 @@ def _exit_criteria(tier: Tier, findings: list[Finding]) -> list[Criterion]:
             why=_why_fp_threshold(tier, tier_items),
         ),
         Criterion(
-            rule="`would_block_in_shadow` no incluye paths legítimos",
+            rule="`would_block_in_shadow` contains no legitimate paths",
             why=_why_no_legitimate_blocks(tier, tier_items),
         ),
     ]
@@ -459,17 +460,17 @@ def _enforce_rollback_criterion(active: list[Tier], findings: list[Finding]) -> 
         tail = ""
     else:
         tier_labels = ", ".join(TIER_COPY[t]["title"] for t in active)
-        tail = f" Tiers activos en tu repo: {tier_labels}."
+        tail = f" Active tiers in your repo: {tier_labels}."
     return Criterion(
         rule=(
-            "Si en cualquier tier enforzado el FP rate > 5% → ese tier vuelve "
-            "a `shadow`, ajustar la policy, y retomar desde Fase 1 o 2 para "
-            "ese tier específico."
+            "If any enforced tier's FP rate > 5% → roll that tier back to "
+            "`shadow`, tune the policy, and restart from Phase 1 or 2 for "
+            "that specific tier."
         ),
         why=(
-            "el rollback es **por tier**, no global — los demás tiers ya "
-            "enforzados siguen protegiendo. Esto deja reparar una policy mal "
-            "calibrada sin perder cobertura en el resto del supervisor."
+            "rollback is **per tier**, not global — the other enforced tiers "
+            "keep protecting. That lets you fix a miscalibrated policy "
+            "without losing coverage across the rest of the supervisor."
             f"{tail}"
         ),
     )
@@ -480,7 +481,7 @@ def _render_criteria(criteria: list[Criterion], *, indent: str = "") -> str:
     out: list[str] = []
     for c in criteria:
         out.append(f"{indent}- [ ] {c.rule}")
-        out.append(f"{indent}   _Por qué: {c.why}_")
+        out.append(f"{indent}   _Why: {c.why}_")
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -489,35 +490,35 @@ def _metrics_block() -> str:
     """Short pointer block — the tier-specific metrics live inside each phase
     now. This just tells the reader where to look."""
     return (
-        "## Dónde mirar las métricas\n\n"
-        "- **Dashboard local:** `http://localhost:3099/dashboard` si instalaste con "
-        "`ac start`. Entries recientes, decisiones por tier, casos pendientes de "
-        "review. Refresh cada 5s.\n"
-        "- **API programática:** `GET ${SUPERVISOR_BASE_URL}/v1/metrics/enforcement?window=24h` "
-        "para CI, dashboards externos, o cuando necesites la data en JSON.\n\n"
-        "Cada fase arriba define qué métricas mirar en ese momento específico "
-        "— mira el 📊 de cada fase activa.\n"
+        "## Where to watch metrics\n\n"
+        "- **Local dashboard:** `http://localhost:3099/dashboard` if you installed "
+        "with `ac start`. Recent entries, decisions per tier, review queue. "
+        "Refreshes every 5s.\n"
+        "- **Programmatic API:** `GET ${SUPERVISOR_BASE_URL}/v1/metrics/enforcement?window=24h` "
+        "for CI, external dashboards, or when you need the data as JSON.\n\n"
+        "Every phase above defines which metrics to watch at that specific "
+        "moment — check the 📊 in the active phase.\n"
     )
 
 
 def _rollback_block() -> str:
     return (
         "## Rollback\n\n"
-        "Escape hatch sin redeploy:\n\n"
+        "Escape hatch, no redeploy needed:\n\n"
         "```bash\n"
         "export SUPERVISOR_ENFORCEMENT_MODE=shadow\n"
-        "# restart el proceso; los guards vuelven a observar sin bloquear\n"
+        "# restart the process; guards go back to observe-only\n"
         "```\n\n"
-        "Si el problema es el guard mismo (errores de red, latencia al supervisor), "
-        "configura `SUPERVISOR_ENFORCEMENT_MODE=off` y los guards hacen bypass completo. "
-        "El código sigue compilando y pasando tests — sólo deja de evaluar.\n"
+        "If the issue is the guard itself (network errors, supervisor latency), "
+        "set `SUPERVISOR_ENFORCEMENT_MODE=off` and guards bypass entirely. "
+        "Code keeps compiling and tests keep passing — it just stops evaluating.\n"
     )
 
 
 _CRITERIA_GATED_NOTE = (
-    "La fase termina cuando se cumplen los criterios de salida — no se "
-    "mide en semanas de calendario. Un repo con poco tráfico puede tardar "
-    "más en acumular el volumen mínimo; uno con tráfico alto avanza en días."
+    "A phase ends when the exit criteria are met — not on a calendar week. "
+    "A low-traffic repo may take longer to accumulate the minimum volume; a "
+    "high-traffic one advances in days."
 )
 
 
@@ -526,46 +527,46 @@ def _phase_shadow(
 ) -> str:
     tiers_label = (
         ", ".join(TIER_COPY[t]["title"].lower() for t in active)
-        or "todos los call-sites relevantes"
+        or "every relevant call-site"
     )
-    # Exit criteria grouped by tier — each with its repo-derived "por qué".
+    # Exit criteria grouped by tier — each with its repo-derived "why".
     exit_blocks: list[str] = []
     for t in active:
         title = TIER_COPY[t]["title"]
         criteria = _exit_criteria(t, findings)
         exit_blocks.append(
-            f"**{title}** — los {len(criteria)} criterios deben cumplirse:\n\n"
+            f"**{title}** — all {len(criteria)} criteria must pass:\n\n"
             + _render_criteria(criteria)
         )
     exit_section = "\n".join(exit_blocks) if exit_blocks else (
-        "Sin tiers activos — re-escanea cuando agregues call-sites críticos.\n"
+        "No active tiers — re-scan once you add critical call-sites.\n"
     )
 
     # Metrics bullets — each with repo-derived rationale.
     metric_lines = _render_shadow_metrics(active, findings)
 
     return (
-        f"## Fase {n} — Shadow\n\n"
-        f"🎯 **Qué es esta fase:**\n"
-        f"El supervisor observa cada llamada y registra qué HABRÍA hecho, pero no "
-        f"bloquea. Seguro para deployar en day 1.\n\n"
-        f"🔧 **Qué haces:**\n"
-        f"1. `SUPERVISOR_ENFORCEMENT_MODE=shadow` en el env.\n"
-        f"2. Bootstrap en el arranque:\n\n"
+        f"## Phase {n} — Shadow\n\n"
+        f"🎯 **What this phase does:**\n"
+        f"The supervisor watches every call and logs what it WOULD have done, "
+        f"without blocking anything. Safe to deploy on day 1.\n\n"
+        f"🔧 **What you do:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=shadow` in the env.\n"
+        f"2. Bootstrap at startup:\n\n"
         f"{_shadow_config_block(stack)}\n\n"
-        f"3. Pega los stubs de `stubs/` en tu código — cubren {tiers_label}.\n"
-        f"4. Deploy normal. Nada bloquea.\n\n"
-        f"📊 **Qué mides:**\n\n"
+        f"3. Paste the stubs from `stubs/` into your code — they cover {tiers_label}.\n"
+        f"4. Normal deploy. Nothing blocks.\n\n"
+        f"📊 **What you watch:**\n\n"
         f"{metric_lines}\n"
-        f"✅ **Cuándo avanzas a la fase siguiente:**\n\n"
+        f"✅ **When to advance to the next phase:**\n\n"
         f"{exit_section}\n"
         f"_{_CRITERIA_GATED_NOTE}_\n"
     )
 
 
 def _render_shadow_metrics(active: list[Tier], findings: list[Finding]) -> str:
-    """Compose the '📊 Qué mides' bullets for shadow phase. Each bullet
-    gets a repo-derived 'por qué' inline so the reader knows why that
+    """Compose the '📊 What you watch' bullets for shadow phase. Each bullet
+    gets a repo-derived 'why' inline so the reader knows why that
     metric matters for THEIR findings."""
     # Total items across active tiers — used to frame the FP-rate context.
     buckets = group_by_risk_tier(findings)
@@ -573,8 +574,8 @@ def _render_shadow_metrics(active: list[Tier], findings: list[Finding]) -> str:
     out: list[str] = []
 
     out.append(
-        "- `would_block_in_shadow` — cuántas llamadas habría bloqueado "
-        "(target: no incluir paths legítimos)."
+        "- `would_block_in_shadow` — how many calls would have been blocked "
+        "(target: no legitimate paths in the list)."
     )
     if active:
         # Show up to 2 top paths as concrete example of what to watch.
@@ -585,34 +586,34 @@ def _render_shadow_metrics(active: list[Tier], findings: list[Finding]) -> str:
                 break
         if all_top:
             out.append(
-                f"   _Por qué: te deja construir allowlists con data real — "
-                f"si {all_top[0]} aparece como 'habría bloqueado' pero es un "
-                f"flow normal, ajustas la policy antes de que afecte prod._"
+                f"   _Why: lets you build allowlists with real data — if "
+                f"{all_top[0]} shows up as 'would have blocked' but it's a "
+                f"normal flow, you tune the policy before it affects prod._"
             )
         else:
             out.append(
-                "   _Por qué: te deja construir allowlists con data real "
-                "antes de enforzar._"
+                "   _Why: lets you build allowlists with real data before "
+                "you enforce._"
             )
     out.append("")
 
     out.append("- `estimated_false_positive_rate` — target < 5%.")
     if total_active > 0:
         out.append(
-            f"   _Por qué: sobre {_possessive_count(total_active, 'call-site activo', 'call-sites activos')} "
-            f"(high + medium), {_fp_tolerance(total_active)} por pasada. "
-            f"Arriba de eso y el equipo percibe al supervisor como ruido._"
+            f"   _Why: over {_possessive_count(total_active, 'active call-site', 'active call-sites')} "
+            f"(high + medium), {_fp_tolerance(total_active)} per pass. "
+            f"Above that the team perceives the supervisor as noise._"
         )
     else:
         out.append(
-            "   _Por qué: más de 1 de cada 20 llamadas bloqueadas "
-            "indebidamente erosiona la confianza del equipo en el supervisor._"
+            "   _Why: more than 1 in 20 wrongly blocked calls erodes the "
+            "team's trust in the supervisor._"
         )
     out.append("")
 
     out.append(
-        "- Si `would_block_in_shadow` incluye paths legítimos → ajustar el "
-        "YAML en `policies/` o excluir ese call-site de la policy."
+        "- If `would_block_in_shadow` includes legitimate paths → tune the "
+        "YAML in `policies/` or exclude that call-site from the policy."
     )
     out.append("")
     return "\n".join(out).rstrip() + "\n"
@@ -629,43 +630,43 @@ def _phase_sample(n: int, primary: Tier, findings: list[Finding]) -> str:
 
     if primary_count > 0:
         actually_blocked_why = (
-            f"_Por qué: de {_possessive_count(primary_count, 'call-site', 'call-sites')} de {title}, el 10% "
-            f"sampleado debería tocar al menos los high-confidence "
-            f"({sum(1 for f in primary_items if f.confidence == 'high')} en tu repo). "
-            f"Si `actually_blocked = 0` después de días de tráfico, o el guard "
-            f"no se instaló, o la policy no matchea nada real._"
+            f"_Why: of {_possessive_count(primary_count, 'call-site', 'call-sites')} in {title}, the 10% "
+            f"sample should at least hit the high-confidence ones "
+            f"({sum(1 for f in primary_items if f.confidence == 'high')} in your repo). "
+            f"If `actually_blocked = 0` after days of traffic, either the guard "
+            f"isn't installed or the policy matches nothing real._"
         )
         fp_why = (
-            f"_Por qué: ahora los bloqueos son reales — no shadow. Sobre tus "
+            f"_Why: blocks are now real — not shadow. Over your "
             f"{primary_count} call-sites, {_fp_tolerance(primary_count)}. "
-            f"Sobre eso, pausar a shadow inmediatamente._"
+            f"Above that, roll back to shadow immediately._"
         )
     else:
         actually_blocked_why = (
-            "_Por qué: sin call-sites detectados aún, este criterio es preventivo._"
+            "_Why: with no call-sites detected yet, this criterion is preventive._"
         )
         fp_why = (
-            "_Por qué: cualquier FP en sample es un bloqueo real — no shadow._"
+            "_Why: any FP during sample is a real block — not shadow._"
         )
 
     return (
-        f"## Fase {n} — Sample 10% en {title}\n\n"
-        f"🎯 **Qué es esta fase:**\n"
-        f"Enforce-a el 10% de las llamadas de {title}; el resto de los tiers sigue "
-        f"en shadow. Primera fase donde el supervisor puede bloquear tráfico real, "
-        f"pero acotado.\n\n"
-        f"🔧 **Qué haces:**\n"
-        f"1. `SUPERVISOR_ENFORCEMENT_MODE=sample` + `SUPERVISOR_SAMPLE_PERCENT=10` en el env.\n"
-        f"2. Reiniciar el proceso — los guards leen la env al arrancar.\n"
-        f"3. Los stubs de otros tiers mantienen `on_review=\"shadow\"` (no los toques).\n\n"
-        f"📊 **Qué mides:**\n\n"
-        f"- `actually_blocked` — cuántas bloqueó el supervisor de verdad.\n"
+        f"## Phase {n} — Sample 10% on {title}\n\n"
+        f"🎯 **What this phase does:**\n"
+        f"Enforces 10% of the calls in {title}; the other tiers stay in "
+        f"shadow. First phase where the supervisor can block real traffic, "
+        f"but narrowly.\n\n"
+        f"🔧 **What you do:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=sample` + `SUPERVISOR_SAMPLE_PERCENT=10` in the env.\n"
+        f"2. Restart the process — guards read the env at startup.\n"
+        f"3. Leave the other tiers' stubs on `on_review=\"shadow\"` (don't touch them).\n\n"
+        f"📊 **What you watch:**\n\n"
+        f"- `actually_blocked` — how many blocks the supervisor actually fired.\n"
         f"   {actually_blocked_why}\n\n"
         f"- `estimated_false_positive_rate` — target < 5%.\n"
         f"   {fp_why}\n\n"
-        f"- Si aparecen falsos positivos → volver a shadow "
-        f"(`SUPERVISOR_ENFORCEMENT_MODE=shadow`) y ajustar la policy antes de reintentar.\n\n"
-        f"✅ **Cuándo avanzas a enforce completo:**\n\n"
+        f"- If false positives show up → roll back to shadow "
+        f"(`SUPERVISOR_ENFORCEMENT_MODE=shadow`) and tune the policy before retrying.\n\n"
+        f"✅ **When to advance to full enforce:**\n\n"
         f"{_render_criteria(criteria)}\n"
         f"_{_CRITERIA_GATED_NOTE}_\n"
     )
@@ -684,39 +685,39 @@ def _phase_enforce(n: int, active: list[Tier], findings: list[Finding]) -> str:
     # actually_blocked per-tier rationale
     if total_active > 0:
         ab_why = (
-            f"_Por qué: sobre {_possessive_count(total_active, 'call-site activo', 'call-sites activos')}, el "
-            f"número de bloqueos reales te dice si la policy cubre lo que "
-            f"importa. Cero bloqueos durante 48h con tráfico = guard "
-            f"desconectado o policy inerte._"
+            f"_Why: over {_possessive_count(total_active, 'active call-site', 'active call-sites')}, the "
+            f"number of real blocks tells you if the policy covers what "
+            f"matters. Zero blocks for 48h with real traffic = guard "
+            f"disconnected or dead policy._"
         )
         fp_why_enforce = (
-            f"_Por qué: por tier, {_fp_tolerance(total_active)} es la "
-            f"tolerancia antes de rollback. Sostenido arriba de 5% significa "
-            f"que la policy está generando fricción para users legítimos._"
+            f"_Why: per tier, {_fp_tolerance(total_active)} is the "
+            f"tolerance before rollback. Sustained above 5% means the "
+            f"policy is creating friction for legitimate users._"
         )
     else:
-        ab_why = "_Por qué: sin findings, mide que el guard esté respondiendo._"
-        fp_why_enforce = "_Por qué: umbral genérico de confianza._"
+        ab_why = "_Why: with no findings, this just confirms the guard is responding._"
+        fp_why_enforce = "_Why: generic trust threshold._"
 
     return (
-        f"## Fase {n} — Enforce progresivo\n\n"
-        f"🎯 **Qué es esta fase:**\n"
-        f"El supervisor bloquea por policy en los tiers activos. Progresión "
-        f"sugerida (mayor severidad primero): **{progression}**.\n\n"
-        f"🔧 **Qué haces:**\n"
-        f"1. `SUPERVISOR_ENFORCEMENT_MODE=enforce` en el env.\n"
-        f"2. Para el tier actual en la progresión, cambiar sus stubs a "
-        f"`on_review=\"block\"` (poll por decisión de revisor humano). Los demás "
-        f"tiers mantienen `on_review=\"shadow\"` hasta llegarles el turno.\n"
-        f"3. Esperar a que el tier actual mantenga FP rate < 5% antes de pasar al siguiente.\n\n"
-        f"📊 **Qué mides:**\n\n"
-        f"- `actually_blocked` por tier — estable durante 48h antes de pasar al siguiente.\n"
+        f"## Phase {n} — Progressive enforce\n\n"
+        f"🎯 **What this phase does:**\n"
+        f"The supervisor blocks per policy on the active tiers. Suggested "
+        f"progression (highest severity first): **{progression}**.\n\n"
+        f"🔧 **What you do:**\n"
+        f"1. `SUPERVISOR_ENFORCEMENT_MODE=enforce` in the env.\n"
+        f"2. For the current tier in the progression, switch its stubs to "
+        f"`on_review=\"block\"` (poll for the human reviewer's decision). The "
+        f"other tiers stay on `on_review=\"shadow\"` until their turn.\n"
+        f"3. Wait until the current tier holds FP rate < 5% before moving on.\n\n"
+        f"📊 **What you watch:**\n\n"
+        f"- `actually_blocked` per tier — steady for 48h before advancing.\n"
         f"   {ab_why}\n\n"
-        f"- `estimated_false_positive_rate` por tier — target < 5%.\n"
+        f"- `estimated_false_positive_rate` per tier — target < 5%.\n"
         f"   {fp_why_enforce}\n\n"
         f"- `latency_ms.p95 / p99` — target p95 < 200ms, p99 < 500ms.\n"
-        f"   _Por qué: {latency_why}_\n\n"
-        f"✅ **Rollback si algo sale mal:**\n\n"
+        f"   _Why: {latency_why}_\n\n"
+        f"✅ **Rollback if something breaks:**\n\n"
         f"{_render_criteria([rollback])}\n"
         f"_{_CRITERIA_GATED_NOTE}_\n"
     )
@@ -725,29 +726,29 @@ def _phase_enforce(n: int, active: list[Tier], findings: list[Finding]) -> str:
 def _short_rollout(summary: RepoSummary, findings: list[Finding], stack: Stack) -> str:
     """For minimal repos — skip the multi-phase plan."""
     active = _active_tiers(findings)
-    tiers_label = ", ".join(TIER_COPY[t]["title"].lower() for t in active) if active else "los call-sites informativos"
+    tiers_label = ", ".join(TIER_COPY[t]["title"].lower() for t in active) if active else "the informational call-sites"
 
     lines = [
         f"# Rollout playbook — {summary.one_liner}",
         "",
-        "Superficie chica: no hay call-sites HIGH en ningún tier, "
-        "así que el rollout se colapsa a una fase de observación. "
-        "Cuando aparezcan findings HIGH (nuevas integraciones, call-sites agregados), "
-        "re-escaneá y el playbook extendido se regenera solo.",
+        "Small surface: no HIGH call-sites in any tier, so the rollout "
+        "collapses to a single observation phase. Once HIGH findings show up "
+        "(new integrations, added call-sites), re-scan and the extended "
+        "playbook regenerates automatically.",
         "",
         _surface_block(summary, findings, stack),
-        "## Fase única — Shadow indefinido",
+        "## Single phase — indefinite Shadow",
         "",
-        "Setup: `SUPERVISOR_ENFORCEMENT_MODE=shadow`. Bootstrap en el arranque:",
+        "Setup: `SUPERVISOR_ENFORCEMENT_MODE=shadow`. Bootstrap at startup:",
         "",
         _shadow_config_block(stack),
         "",
-        "Qué hacer:",
-        f"1. Pega los stubs (cubren {tiers_label}).",
-        "2. Deploy normal.",
-        "3. Re-escanea (`supervisor-discover scan`) cuando agregues integraciones nuevas "
-        "(payments, LLM providers, jobs programados). Si aparecen call-sites HIGH, "
-        "regenera este ROLLOUT.md y sigue el playbook extendido.",
+        "What to do:",
+        f"1. Paste the stubs (they cover {tiers_label}).",
+        "2. Normal deploy.",
+        "3. Re-scan (`supervisor-discover scan`) when you add new integrations "
+        "(payments, LLM providers, scheduled jobs). If HIGH call-sites show up, "
+        "regenerate this ROLLOUT.md and follow the extended playbook.",
         "",
         _metrics_block(),
         _rollback_block(),
@@ -758,14 +759,14 @@ def _short_rollout(summary: RepoSummary, findings: list[Finding], stack: Stack) 
 def _empty_rollout(summary: RepoSummary) -> str:
     return (
         f"# Rollout playbook — {summary.one_liner}\n\n"
-        "El scan no encontró call-sites que justifiquen un rollout por fases.\n\n"
-        "Re-escanea cuando:\n"
-        "- Agregues un SDK de pagos (Stripe, Adyen, etc.)\n"
-        "- Agregues un LLM provider (OpenAI, Anthropic, etc.)\n"
-        "- Agregues mutaciones directas a tablas sensibles (users/orders/customers/...)\n\n"
-        "El supervisor no tiene nada para gatear en este repo hoy. Dejalo instalado "
-        "con `SUPERVISOR_ENFORCEMENT_MODE=shadow` para que futuros cambios aparezcan "
-        "en el próximo scan.\n"
+        "The scan found no call-sites that justify a phased rollout.\n\n"
+        "Re-scan when you:\n"
+        "- Add a payment SDK (Stripe, Adyen, etc.)\n"
+        "- Add an LLM provider (OpenAI, Anthropic, etc.)\n"
+        "- Add direct mutations on sensitive tables (users/orders/customers/...)\n\n"
+        "The supervisor has nothing to gate in this repo today. Leave it "
+        "installed with `SUPERVISOR_ENFORCEMENT_MODE=shadow` so future "
+        "changes show up in the next scan.\n"
     )
 
 
@@ -792,8 +793,8 @@ def render_rollout_md(summary: RepoSummary, findings: list[Finding]) -> str:
     blocks = [
         f"# Rollout playbook — {summary.one_liner}",
         "",
-        "Este playbook te lleva desde *shadow* (observar sin bloquear) hasta *enforce* "
-        "(bloquear según política), midiendo volumen y falsos positivos en cada paso.",
+        "This playbook walks you from *shadow* (observe, never block) to *enforce* "
+        "(block per policy), measuring volume and false positives at every step.",
         "",
         _surface_block(summary, findings, stack),
         _phase_shadow(1, active, stack, findings),

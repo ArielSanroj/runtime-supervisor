@@ -56,19 +56,19 @@ def test_report_is_tiered_with_rollout_guidance(tmp_path):
     assert "/v1/metrics/enforcement" in report
     # Tier summary table at the top.
     assert "| Tier | High | Medium | Low | Total |" in report
-    # Tri-part framing: 🔴 Problema / 📍 En tu repo / ✅ La solución.
-    assert "🔴 **Problema:**" in report
-    assert "📍 **En tu repo:**" in report
-    assert "✅ **La solución:**" in report
-    # 💡 En runtime: block/review/shadow semantics — preserves the detail
-    # that the old "Intervendría" copy had (what the supervisor actually does
-    # at call time, not just the wrap pattern).
-    assert "💡 **En runtime:**" in report
+    # Tri-part framing: 🔴 Problem / 📍 In your repo / ✅ Fix.
+    assert "🔴 **Problem:**" in report
+    assert "📍 **In your repo:**" in report
+    assert "✅ **Fix:**" in report
+    # 💡 Runtime behavior: block/review/shadow semantics — preserves the detail
+    # about what the supervisor actually does at call time, not just the wrap
+    # pattern.
+    assert "💡 **Runtime behavior:**" in report
     # Operational note about env-var switching without redeploy survives
     # in ROLLOUT.md's shadow phase.
     rollout = (tmp_path / "rs" / "ROLLOUT.md").read_text()
     assert "SUPERVISOR_ENFORCEMENT_MODE" in rollout
-    assert "no requiere redeploy" in rollout
+    assert "no code redeploy" in rollout
 
 
 def test_rollout_md_is_stack_aware_for_python_repo(tmp_path):
@@ -94,9 +94,9 @@ def test_rollout_md_is_stack_aware_for_python_repo(tmp_path):
     assert "tier 1" not in rollout.lower()
     assert "tier 2" not in rollout.lower()
     # Phases are criteria-gated, not calendar-gated.
-    assert "semana 1" not in rollout
-    assert "semana 2-3" not in rollout
-    assert "criterios de salida" in rollout.lower()
+    assert "week 1" not in rollout.lower()
+    assert "week 2-3" not in rollout.lower()
+    assert "exit criteria" in rollout.lower()
 
 
 def test_rollout_md_is_stack_aware_for_typescript_repo(tmp_path):
@@ -120,8 +120,8 @@ def test_rollout_md_adapts_to_empty_findings(tmp_path):
     generate([], out)
     rollout = (out / "ROLLOUT.md").read_text()
     # No call-sites → no multi-phase playbook, just a re-scan prompt.
-    assert "Fase 1" not in rollout
-    assert "re-escane" in rollout.lower() or "rescan" in rollout.lower()
+    assert "Phase 1" not in rollout
+    assert "re-scan" in rollout.lower() or "rescan" in rollout.lower()
 
 
 def test_rollout_md_progression_orders_by_max_confidence(tmp_path):
@@ -201,8 +201,8 @@ def test_generated_output_has_no_rioplatense_voseo(tmp_path):
 
 
 def test_rollout_exit_criteria_include_repo_context(tmp_path):
-    """El 'por qué' de cada criterio de salida debe mencionar el count real
-    de findings del tier (no el umbral genérico hardcodeado)."""
+    """Each exit-criterion 'why' must mention the real tier count
+    (not the generic hardcoded floor)."""
     # Fixture con 5 findings de real_world_actions
     findings_small = validate([
         Finding(
@@ -217,9 +217,9 @@ def test_rollout_exit_criteria_include_repo_context(tmp_path):
     generate(findings_small, out)
     rollout_small = (out / "ROLLOUT.md").read_text()
 
-    # Debe mencionar "5 call-sites" en algún "Por qué"
+    # Must mention "5 call-sites" in some "Why" rationale
     assert "5 call-sites" in rollout_small, (
-        "el rationale de repo pequeño debe citar su count real (5), no 20 genérico"
+        "small-repo rationale should cite its real count (5), not the generic 20"
     )
 
     # Fixture con 50 findings
@@ -237,13 +237,13 @@ def test_rollout_exit_criteria_include_repo_context(tmp_path):
     rollout_big = (out2 / "ROLLOUT.md").read_text()
 
     assert "50 call-sites" in rollout_big, (
-        "repo grande debe citar su count real (50)"
+        "large-repo rationale should cite its real count (50)"
     )
 
 
 def test_rollout_por_que_is_not_identical_between_repos(tmp_path):
-    """Dos fixtures distintas → los _Por qué:_ generados no son idénticos
-    byte-a-byte. Si lo fueran, el rationale seguiría hardcoded."""
+    """Two distinct fixtures → the generated _Why:_ lines are not byte-
+    identical. If they were, the rationale would still be hardcoded."""
     findings_a = validate([
         Finding(
             scanner="email-sends", file="/repo_a/mailer.py", line=42,
@@ -265,16 +265,16 @@ def test_rollout_por_que_is_not_identical_between_repos(tmp_path):
     generate(findings_a, out_a)
     generate(findings_b, out_b)
 
-    por_que_a = [l for l in (out_a / "ROLLOUT.md").read_text().splitlines() if "_Por qué:" in l]
-    por_que_b = [l for l in (out_b / "ROLLOUT.md").read_text().splitlines() if "_Por qué:" in l]
+    por_que_a = [l for l in (out_a / "ROLLOUT.md").read_text().splitlines() if "_Why:" in l]
+    por_que_b = [l for l in (out_b / "ROLLOUT.md").read_text().splitlines() if "_Why:" in l]
 
-    # Ambas superficies son reales — deben tener "Por qué" lines.
+    # Both surfaces are real — both must produce "Why" lines.
     assert por_que_a and por_que_b
 
-    # El set de rationales debe diferir (si todos son iguales, copy hardcoded).
+    # The rationale sets must differ (identical → copy is still hardcoded).
     assert set(por_que_a) != set(por_que_b), (
-        "dos repos con findings distintos generaron idénticos '_Por qué:_' — "
-        "el rationale sigue hardcoded"
+        "two repos with different findings produced identical '_Why:_' lines — "
+        "the rationale is still hardcoded"
     )
 
     # Spot-check: el rationale de A menciona smtplib o mailer; el de B menciona twilio o phone.

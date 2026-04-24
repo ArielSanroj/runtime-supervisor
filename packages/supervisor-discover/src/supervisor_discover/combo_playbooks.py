@@ -64,10 +64,10 @@ def _intro_block(combo: Combo, evidence_lines: list[str] | None = None) -> list[
     playbook. Returns markdown lines.
 
     Structure:
-      ## Qué pasa si no haces nada
-      🔴 El problema: combo.narrative
-      📍 Dónde está en tu repo: evidence_lines (or combo.evidence)
-      ✅ Cómo se resuelve (pasos abajo): combo.mitigation
+      ## What happens if you don't act
+      🔴 The problem: combo.narrative
+      📍 Where it lives in your repo: evidence_lines (or combo.evidence)
+      ✅ How to fix it (steps below): combo.mitigation
 
     `evidence_lines` lets the caller pass richer evidence (e.g. provider +
     path instead of just path). When None, falls back to `combo.evidence`.
@@ -79,19 +79,19 @@ def _intro_block(combo: Combo, evidence_lines: list[str] | None = None) -> list[
     # include their own markdown.
     def _fmt(e: str) -> str:
         return e if "`" in e else f"`{e}`"
-    ev = "\n".join(f"- {_fmt(e)}" for e in lines) if lines else "- (sin evidencia concreta en este scan)"
+    ev = "\n".join(f"- {_fmt(e)}" for e in lines) if lines else "- (no concrete evidence in this scan)"
     return [
-        "## Qué pasa si no haces nada",
+        "## What happens if you don't act",
         "",
-        "🔴 **El problema:**",
+        "🔴 **The problem:**",
         "",
         combo.narrative,
         "",
-        "📍 **Dónde está en tu repo:**",
+        "📍 **Where it lives in your repo:**",
         "",
         ev,
         "",
-        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "✅ **How to fix it** (detailed steps below):",
         "",
         combo.mitigation,
         "",
@@ -143,17 +143,17 @@ rules:
     md_lines: list[str] = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
     ]
     md_lines.extend(_intro_block(combo, evidence_lines=ev_lines))
 
     md_lines.extend([
-        "## Paso 1 — Policy combo-specific",
+        "## Step 1 — Combo-specific policy",
         "",
-        "Ya escrita en `runtime-supervisor/policies/tool_use.voice-clone-plus-outbound-call.v1.yaml`.",
+        "Already written to `runtime-supervisor/policies/tool_use.voice-clone-plus-outbound-call.v1.yaml`.",
         "",
-        "Edita la constante `ALLOWED_NUMBERS` con tus números válidos (ej. números de emergencia, support line) y promuévela:",
+        "Set `ALLOWED_NUMBERS` to the phone numbers you trust (emergency contact, support line, etc.) and promote it:",
         "",
         "```bash",
         "POLICY=$(cat runtime-supervisor/policies/tool_use.voice-clone-plus-outbound-call.v1.yaml | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')",
@@ -163,9 +163,9 @@ rules:
         f"  -d \"{{\\\"action_type\\\":\\\"tool_use\\\",\\\"yaml_source\\\":$POLICY,\\\"promote\\\":true}}\"",
         "```",
         "",
-        "## Paso 2 — Wrappear los 2 tipos de call-site",
+        "## Step 2 — Wrap both call-site types",
         "",
-        "El scanner ya generó stubs. Copia el contenido a cada archivo original:",
+        "The scanner already generated stubs. Copy the contents into each original file:",
         "",
     ])
     for f in clone_sites + call_sites:
@@ -174,7 +174,7 @@ rules:
 
     if lang == "typescript":
         md_lines.extend([
-            "Pattern TypeScript mínimo (ambos call-sites):",
+            "Minimum TypeScript pattern (both call-sites):",
             "",
             "```typescript",
             "import { guarded } from \"@runtime-supervisor/guards\";",
@@ -197,7 +197,7 @@ rules:
         ])
     else:
         md_lines.extend([
-            "Pattern Python mínimo (ambos call-sites):",
+            "Minimum Python pattern (both call-sites):",
             "",
             "```python",
             "from supervisor_guards import guarded",
@@ -220,34 +220,34 @@ rules:
         ])
 
     md_lines.extend([
-        "## Paso 3 — Test de verificación",
+        "## Step 3 — Verification test",
         "",
-        "Con el supervisor corriendo local (`ac start`), corre este test:",
+        "With the supervisor running locally (`ac start`), run this check:",
         "",
         "```bash",
-        "# debería DENEGAR: número fuera del allowlist",
+        "# should DENY: number outside the allowlist",
         "curl -X POST $SUPERVISOR_BASE_URL/v1/actions/evaluate \\",
         "  -H \"authorization: Bearer $JWT\" -H 'content-type: application/json' \\",
         "  -d '{\"action_type\":\"tool_use\",\"payload\":{\"tool\":\"twilio.calls.create\",\"to\":\"+1-555-FAKE-999\"}}'",
         "",
-        "# respuesta esperada: { \"decision\": \"deny\", \"reasons\": [\"destination-not-in-allowlist\"] }",
+        "# expected response: { \"decision\": \"deny\", \"reasons\": [\"destination-not-in-allowlist\"] }",
         "```",
         "",
-        "## Paso 4 — Métricas a mirar post-deploy",
+        "## Step 4 — Metrics to watch after deploy",
         "",
-        "Una vez en producción, abre `$SUPERVISOR_BASE_URL/v1/metrics/enforcement?window=7d`:",
+        "Once in production, open `$SUPERVISOR_BASE_URL/v1/metrics/enforcement?window=7d`:",
         "",
-        "- `would_block_in_shadow` → si incluye números legítimos, expandí `ALLOWED_NUMBERS`.",
-        "- `actually_blocked` → >0 cuando llegue un intento real. 0 durante días = guard desconectado o sin tráfico.",
-        "- `latency_ms.p95` → target < 100ms (el check es solo un lookup a set).",
+        "- `would_block_in_shadow` → if it includes legitimate numbers, expand `ALLOWED_NUMBERS`.",
+        "- `actually_blocked` → >0 once a real attempt arrives. Zero for days = guard disconnected or no traffic.",
+        "- `latency_ms.p95` → target < 100ms (the check is a single set lookup).",
         "",
         "## ✅ Done when",
         "",
-        "- [ ] `tool_use.voice-clone-plus-outbound-call.v1` promoted con `is_active: true`",
-        "- [ ] Ambos call-sites (voice-clone + outbound-call) pasan por `guarded()`",
-        "- [ ] Test de Paso 3 devuelve `deny` con el número fake",
-        "- [ ] 7 días en shadow mode sin false-positives en `would_block_in_shadow`",
-        "- [ ] Flip a enforce: `SUPERVISOR_ENFORCEMENT_MODE=enforce`",
+        "- [ ] `tool_use.voice-clone-plus-outbound-call.v1` promoted with `is_active: true`",
+        "- [ ] Both call-sites (voice-clone + outbound-call) go through `guarded()`",
+        "- [ ] Step 3 check returns `deny` with the fake number",
+        "- [ ] 7 days in shadow mode with no false positives in `would_block_in_shadow`",
+        "- [ ] Flip to enforce: `SUPERVISOR_ENFORCEMENT_MODE=enforce`",
         "",
     ])
 
@@ -292,27 +292,27 @@ rules:
     md_lines = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
     ]
     md_lines.extend(_intro_block(combo, evidence_lines=ev_lines))
     md_lines.extend([
-        "## Paso 1 — Policy restrictiva",
+        "## Step 1 — Restrictive policy",
         "",
-        "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (ya escrita).",
+        "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (already written).",
         "",
-        "Edita `ALLOWED_COMMANDS` con los comandos exactos que el agente necesita correr (ej: `['ls', 'git', 'pytest']`). Promuévela vía `POST /v1/policies`.",
+        "Set `ALLOWED_COMMANDS` to the exact commands your agent needs to run (e.g. `['ls', 'git', 'pytest']`). Promote via `POST /v1/policies`.",
         "",
-        "## Paso 2 — Wrappear shell calls",
+        "## Step 2 — Wrap shell calls",
         "",
-        "Por cada call-site de arriba, envolver con `guarded(\"tool_use\", {\"tool\": \"shell\", \"command\": cmd, \"args\": args}, subprocess.run, ...)`.",
+        "For each call-site above, wrap with `guarded(\"tool_use\", {\"tool\": \"shell\", \"command\": cmd, \"args\": args}, subprocess.run, ...)`.",
         "",
-        "Los stubs ya están en `runtime-supervisor/stubs/`.",
+        "Stubs are already in `runtime-supervisor/stubs/`.",
         "",
-        "## Paso 3 — Test",
+        "## Step 3 — Check",
         "",
         "```bash",
-        "# debería DENEGAR: comando fuera del allowlist",
+        "# should DENY: command outside the allowlist",
         "curl -X POST $SUPERVISOR_BASE_URL/v1/actions/evaluate \\",
         "  -H \"authorization: Bearer $JWT\" -H 'content-type: application/json' \\",
         "  -d '{\"action_type\":\"tool_use\",\"payload\":{\"tool\":\"shell\",\"command\":\"rm\",\"args\":[\"-rf\",\"/\"]}}'",
@@ -320,10 +320,10 @@ rules:
         "",
         "## ✅ Done when",
         "",
-        "- [ ] Policy promoted con `ALLOWED_COMMANDS` explícita",
-        "- [ ] Todos los `subprocess.run` / `child_process.exec` envueltos en `guarded()`",
-        "- [ ] Test de Paso 3 devuelve `deny`",
-        "- [ ] 7 días shadow sin false-positives",
+        "- [ ] Policy promoted with explicit `ALLOWED_COMMANDS`",
+        "- [ ] Every `subprocess.run` / `child_process.exec` goes through `guarded()`",
+        "- [ ] Step 3 check returns `deny`",
+        "- [ ] 7 days in shadow mode with no false positives",
         "",
     ])
 
@@ -342,37 +342,37 @@ rules:
     action: deny
     reason: recipient-list-over-50
     explanation: >
-      Más de 50 destinatarios en una sola llamada = bulk send. El agente no
-      puede disparar eso sin pasar por el canal de marketing autorizado.
+      More than 50 recipients in a single call = bulk send. The agent
+      cannot trigger that without going through the authorized marketing channel.
   - id: recipient-cap-review
     when: "payload.get('tool', '').endswith('send') and len(payload.get('to', [])) > 5"
     action: review
     reason: bulk-send-needs-human
     explanation: >
-      Entre 5 y 50 destinatarios: revisión humana. Cap bajo para que un
-      prompt injection no pueda silenciosamente disparar un blast.
+      Between 5 and 50 recipients: human review. Low cap so a prompt
+      injection can't silently fire a blast.
 """
     header = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
     ]
     header.extend(_intro_block(combo))
-    body = f"""## Paso 1 — Policy con recipient caps
+    body = f"""## Step 1 — Policy with recipient caps
 
-En `runtime-supervisor/policies/tool_use.mass-email-plus-customer-db.v1.yaml`.
+At `runtime-supervisor/policies/tool_use.mass-email-plus-customer-db.v1.yaml`.
 
-## Paso 2 — Wrappear email sends
+## Step 2 — Wrap email sends
 
-Envolver cada `sendgrid.send` / `resend.emails.send` / `ses.send_email` con `guarded("tool_use", {{...}}, ...)`.
+Wrap every `sendgrid.send` / `resend.emails.send` / `ses.send_email` with `guarded("tool_use", {{...}}, ...)`.
 
 ## ✅ Done when
 
 - [ ] Policy promoted
 - [ ] Email sends gated
-- [ ] Test: `{{\"to\": [\"1\", ..., \"100\"]}}` → deny
-- [ ] 7 días shadow sin false-positives en transactional sends legítimos
+- [ ] Check: `{{\"to\": [\"1\", ..., \"100\"]}}` → deny
+- [ ] 7 days in shadow mode with no false positives on legitimate transactional sends
 """
     md = "\n".join(header) + body
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=policy_yaml)
@@ -383,7 +383,7 @@ def _generic_playbook(combo: Combo, findings: list[Finding], summary: RepoSummar
     header = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
     ]
     header.extend(_intro_block(combo))
@@ -433,55 +433,55 @@ def _imports_only_playbook(
     md = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Qué pasa si no haces nada",
+        "## What happens if you don't act",
         "",
-        "🔴 **El problema:**",
+        "🔴 **The problem:**",
         "",
-        f"Tu repo importa `{framework}` en {len(import_files)} archivo(s) — estás "
-        f"usando un framework de agentes. Cada vez que tu agente invoca `{entry}` "
-        f"pasa por un solo punto — si eso no está wrappeado, cualquier prompt "
-        f"injection controla qué tool se ejecuta sin supervisión.",
+        f"Your repo imports `{framework}` in {len(import_files)} file(s) — you're "
+        f"using an agent framework. Every time your agent calls `{entry}` the "
+        f"request goes through a single chokepoint; if that isn't wrapped, any "
+        f"prompt injection controls which tool runs, unsupervised.",
         "",
-        "📍 **Dónde está en tu repo:**",
+        "📍 **Where it lives in your repo:**",
         "",
-        "Archivos con imports del framework:",
+        "Files that import the framework:",
         "",
     ]
     for p in import_samples:
         md.append(f"- `{p}`")
     if len(import_files) > 5:
-        md.append(f"- _+{len(import_files) - 5} más_")
+        md.append(f"- _+{len(import_files) - 5} more_")
     md.extend([
         "",
-        "_El call-site exacto de wrap (`{entry}`) no está en estos archivos — el scanner "
-        "detecta la **presencia del framework** pero no la línea de invocación. El Paso 1 "
-        "abajo te dice cómo encontrarla._".replace("{entry}", entry),
+        "_The exact wrap call-site (`{entry}`) isn't in these files — the scanner "
+        "detects the **framework's presence** but not the invocation line. Step 1 "
+        "below tells you how to find it._".replace("{entry}", entry),
         "",
-        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "✅ **How to fix it** (detailed steps below):",
         "",
-        f"1. Encontrar el `{ctor}` en tu repo (grep).",
-        f"2. Envolver la llamada a `{entry}` con `guarded('tool_use', ...)`.",
-        f"3. Confirmar con re-escaneo que el scanner ahora detecta el wrap site.",
+        f"1. Find the `{ctor}` in your repo (grep).",
+        f"2. Wrap the call to `{entry}` with `guarded('tool_use', ...)`.",
+        f"3. Confirm with a re-scan that the scanner now detects the wrap site.",
         "",
     ])
 
     md.extend([
-        f"## Paso 1 — Encontrá tu `{ctor}` en el repo",
+        f"## Step 1 — Find your `{ctor}` in the repo",
         "",
-        f"Usa grep para encontrar dónde se construye el `{ctor}`:",
+        f"Use grep to find where `{ctor}` is built:",
         "",
         "```bash",
         f"rg '{ctor}' --type py --type ts",
         "```",
         "",
-        "Típicamente vive en un archivo tipo `main.py`, `app.py`, `crew_factory.py`, "
-        "`orchestrator.py`, o dentro del entry-point de tu API (Flask route / FastAPI "
-        f"endpoint). Lo que buscas es la **línea que llama a `{entry}`** — ese es tu "
-        "wrap point.",
+        "Usually it lives in a file like `main.py`, `app.py`, `crew_factory.py`, "
+        "`orchestrator.py`, or inside your API entry-point (Flask route / FastAPI "
+        f"endpoint). What you're looking for is the **line that calls `{entry}`** — that's "
+        "your wrap point.",
         "",
-        f"## Paso 2 — Envolver la llamada a `{entry}`",
+        f"## Step 2 — Wrap the call to `{entry}`",
         "",
     ])
 
@@ -490,10 +490,10 @@ def _imports_only_playbook(
             "```typescript",
             "import { guarded } from \"@runtime-supervisor/guards\";",
             "",
-            "// antes:",
+            "// before:",
             f"// const result = await {entry};",
             "",
-            "// después:",
+            "// after:",
             "const result = await guarded(",
             "  \"tool_use\",",
             "  {",
@@ -512,10 +512,10 @@ def _imports_only_playbook(
             "```python",
             "from supervisor_guards import guarded",
             "",
-            "# antes:",
+            "# before:",
             f"# result = {entry}",
             "",
-            "# después:",
+            "# after:",
             "result = guarded(",
             "    'tool_use',",
             "    {",
@@ -532,30 +532,30 @@ def _imports_only_playbook(
 
     md.extend([
         "",
-        "## Paso 3 — Policy base",
+        "## Step 3 — Base policy",
         "",
-        "El `tool_use.base.v1` ya cubre missing-tool-name / prompt length / privileged "
-        "namespaces. Suficiente para arrancar.",
+        "The `tool_use.base.v1` already covers missing-tool-name / prompt length / "
+        "privileged namespaces. Enough to get going.",
         "",
-        "Cuando identifiques los tools concretos que tu agente expone (revisar en tu "
-        f"definición de `{framework}` — las tools que le pasas al Agent/Crew/Graph), "
-        "agregas reglas específicas por tool en el mismo YAML.",
+        "Once you identify the concrete tools your agent exposes (look at your "
+        f"`{framework}` definition — the tools you hand to Agent/Crew/Graph), "
+        "add per-tool rules to the same YAML.",
         "",
         "## ✅ Done when",
         "",
-        f"- [ ] Encontré el call-site de `{entry}` en mi repo",
-        "- [ ] Envuelto con `guarded(\"tool_use\", ...)` o `@supervised(\"tool_use\")`",
-        "- [ ] Re-escaneo con `supervisor-discover scan` confirma el wrap (el finding "
-        "pasa de imports-only a wrap-site detectado)",
-        "- [ ] 7 días shadow sin false-positives en el flow normal del agente",
-        "- [ ] Flip a enforce",
+        f"- [ ] Found the call-site for `{entry}` in my repo",
+        "- [ ] Wrapped with `guarded(\"tool_use\", ...)` or `@supervised(\"tool_use\")`",
+        "- [ ] Re-scan with `supervisor-discover scan` confirms the wrap (the finding "
+        "moves from imports-only to wrap-site detected)",
+        "- [ ] 7 days in shadow mode with no false positives on the normal agent flow",
+        "- [ ] Flip to enforce",
         "",
         "---",
         "",
-        f"_Tip: si el framework no detectado aquí te parece raro para tu stack, o si sabes "
-        f"cuál es tu wrap point pero el scanner no lo vio, [abrí un issue]"
-        "(https://github.com/ArielSanroj/runtime-supervisor/issues) con el path exacto — "
-        "ampliamos los patrones del scanner._",
+        f"_Tip: if the framework detected here looks wrong for your stack, or you know "
+        f"where your wrap point is but the scanner didn't find it, [open an issue]"
+        "(https://github.com/ArielSanroj/runtime-supervisor/issues) with the exact path — "
+        "we'll extend the scanner patterns._",
     ])
 
     return Playbook(combo_id=combo.id, markdown="\n".join(md), policy_yaml=None)
@@ -590,40 +590,40 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
     md = [
         f"# Fix: {combo.title}",
         "",
-        f"**Severidad:** {combo.severity} · **Combo ID:** `{combo.id}`",
+        f"**Severity:** {combo.severity} · **Combo ID:** `{combo.id}`",
         "",
-        "## Qué pasa si no haces nada",
+        "## What happens if you don't act",
         "",
-        "🔴 **El problema:**",
+        "🔴 **The problem:**",
         "",
-        "Tu repo tiene un **orquestador de agente** — una `Controller.handle()` / "
-        "`Dispatcher.dispatch()` / `AgentExecutor` por donde pasa toda decisión que el "
-        "agente toma antes de ejecutar una tool. Hoy no está gateado: cualquier prompt "
-        "injection controla qué se ejecuta.",
+        "Your repo has an **agent orchestrator** — a `Controller.handle()` / "
+        "`Dispatcher.dispatch()` / `AgentExecutor` where every decision the "
+        "agent makes passes before firing a tool. It's ungated today: any prompt "
+        "injection controls what runs.",
         "",
-        "📍 **Dónde está en tu repo:**",
+        "📍 **Where it lives in your repo:**",
         "",
-        f"- `{primary_rel}` — chokepoint principal ({primary_label})",
+        f"- `{primary_rel}` — main chokepoint ({primary_label})",
     ]
-    # Include registered tools if present — they're the "superficie que protege
-    # este chokepoint".
+    # Include registered tools if present — they're the surface this chokepoint
+    # protects.
     if tools:
-        md.append(f"- Tools expuestos: {', '.join(f'`{t}`' for t in tools[:8])}"
+        md.append(f"- Tools exposed: {', '.join(f'`{t}`' for t in tools[:8])}"
                   f"{'...' if len(tools) > 8 else ''}")
     md.extend([
         "",
-        "✅ **Cómo se resuelve** (pasos detallados abajo):",
+        "✅ **How to fix it** (detailed steps below):",
         "",
-        f"**1 `guarded()` en `{primary_rel}` cubre los {len(tools) if tools else 'N'} "
-        "tools actuales + cualquiera que agregues después.** Estrictamente mejor que "
-        "wrappear cada leaf call-site (no se olvidan tools nuevos, el supervisor ve el "
-        "intent/session/user, zero mantenimiento).",
+        f"**One `guarded()` at `{primary_rel}` covers the {len(tools) if tools else 'N'} "
+        "current tools + any you add later.** Strictly better than wrapping every leaf "
+        "call-site (new tools never slip through, the supervisor sees the "
+        "intent/session/user, zero maintenance).",
         "",
     ])
 
     if tools:
         md.extend([
-            "## Tools que el agente expone hoy",
+            "## Tools the agent exposes today",
             "",
         ])
         for t in tools:
@@ -631,9 +631,9 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
         md.append("")
 
     md.extend([
-        "## Paso 1 — Wrappear el orquestador",
+        "## Step 1 — Wrap the orchestrator",
         "",
-        f"En `{primary_rel}` (el método `handle` / `dispatch` / `execute`):",
+        f"In `{primary_rel}` (the `handle` / `dispatch` / `execute` method):",
         "",
     ])
 
@@ -642,7 +642,7 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
             "```typescript",
             "import { guarded } from \"@runtime-supervisor/guards\";",
             "",
-            f"// dentro de {primary_label}.handle(input)",
+            f"// inside {primary_label}.handle(input)",
             "async handle(input: AgentInput): Promise<AgentResult> {",
             "  const tool = this.mapIntentToTool(input.intent);",
             "  return guarded(",
@@ -656,7 +656,7 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
             "      ...(input.entities ?? {}),",
             "    },",
             "    async () => {",
-            "      // ... tu lógica actual de handle() sin cambios",
+            "      // ... your existing handle() logic, unchanged",
             "    },",
             "  );",
             "}",
@@ -667,7 +667,7 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
             "```python",
             "from supervisor_guards import guarded",
             "",
-            f"# dentro de {primary_label}.handle(input)",
+            f"# inside {primary_label}.handle(input)",
             "def handle(self, input):",
             "    tool = self._map_intent_to_tool(input.intent)",
             "    payload = {",
@@ -684,12 +684,12 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
 
     md.extend([
         "",
-        "## Paso 2 — Policies por tool (sin tocar código)",
+        "## Step 2 — Per-tool policies (no code changes)",
         "",
-        "Ventaja del wrap en orquestador: las reglas de negocio las escribes en YAML, no "
-        "en código. El supervisor recibe `{tool: 'pay_order', ...}` y decide.",
+        "The advantage of wrapping at the orchestrator: business rules live in YAML, "
+        "not code. The supervisor receives `{tool: 'pay_order', ...}` and decides.",
         "",
-        "Sugerencia de rules iniciales (editar `runtime-supervisor/policies/tool_use.base.v1.yaml`):",
+        "Starter rules (edit `runtime-supervisor/policies/tool_use.base.v1.yaml`):",
         "",
         "```yaml",
         "rules:",
@@ -723,22 +723,22 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
     md.extend([
         "```",
         "",
-        "## Paso 3 — Test",
+        "## Step 3 — Check",
         "",
         "```bash",
         "curl -X POST $SUPERVISOR_BASE_URL/v1/actions/evaluate \\",
         "  -H \"authorization: Bearer $JWT\" -H 'content-type: application/json' \\",
         f"  -d '{{\"action_type\":\"tool_use\",\"payload\":{{\"tool\":\"{tools[0] if tools else 'pay_order'}\",\"amount\":9999}}}}'",
-        "# esperado: { \"decision\": \"deny\" | \"review\", \"reasons\": [...] }",
+        "# expected: { \"decision\": \"deny\" | \"review\", \"reasons\": [...] }",
         "```",
         "",
         "## ✅ Done when",
         "",
-        f"- [ ] `{primary_label}.handle()` envuelto con `guarded(\"tool_use\", ...)`",
-        "- [ ] Al menos 1 policy rule por tool crítico",
-        "- [ ] Test del Paso 3 devuelve una decisión ≠ allow",
-        "- [ ] 7 días en shadow sin false-positives en el flow normal",
-        "- [ ] Flip a enforce: `SUPERVISOR_ENFORCEMENT_MODE=enforce`",
+        f"- [ ] `{primary_label}.handle()` wrapped with `guarded(\"tool_use\", ...)`",
+        "- [ ] At least 1 policy rule per critical tool",
+        "- [ ] Step 3 check returns a decision ≠ allow",
+        "- [ ] 7 days in shadow mode with no false positives on the normal flow",
+        "- [ ] Flip to enforce: `SUPERVISOR_ENFORCEMENT_MODE=enforce`",
         "",
     ])
 
@@ -763,18 +763,20 @@ def render_playbook(combo: Combo, findings: list[Finding], summary: RepoSummary)
 def render_index(combos: list[Combo]) -> str:
     """README.md for the combos/ directory — links to each playbook."""
     if not combos:
-        return "# Combinaciones detectadas\n\n_Ninguna combinación crítica encontrada en este scan._\n"
+        return "# Combos detected\n\n_No critical combos found in this scan._\n"
 
     severity_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
 
     lines = [
-        "# Combinaciones detectadas — playbooks",
+        "# Combos detected — playbooks",
         "",
-        "Cada archivo en este directorio es un **playbook ejecutable** para una combinación de capacidades riesgosas que el scanner encontró en tu repo.",
+        "Each file in this directory is an **executable playbook** for a risky "
+        "combination of capabilities the scanner found in your repo.",
         "",
-        "Orden recomendado: arriba → abajo (más crítico primero). Cada uno se puede aplicar independiente.",
+        "Recommended order: top → bottom (most critical first). Each one can be "
+        "applied independently.",
         "",
-        "| Severidad | Combo | Playbook |",
+        "| Severity | Combo | Playbook |",
         "|---|---|---|",
     ]
     for c in combos:
@@ -783,15 +785,15 @@ def render_index(combos: list[Combo]) -> str:
 
     lines.extend([
         "",
-        "## Niveles de remediación disponibles",
+        "## Remediation levels available",
         "",
-        "**Nivel 1 (activo por default):** playbook markdown — copy-paste policy + code + test. Lo que ves acá.",
+        "**Level 1 (active by default):** markdown playbook — copy-paste policy + code + test. What you see here.",
         "",
-        "**Nivel 2 (opt-in):** `ac fix <combo-id>` — el CLI aplica el playbook automáticamente. Ver `ac fix --help`. Actualmente en stub, requiere el flag `--experimental`.",
+        "**Level 2 (opt-in):** `ac fix <combo-id>` — the CLI applies the playbook automatically. See `ac fix --help`. Currently a stub, requires the `--experimental` flag.",
         "",
-        "**Nivel 3 (opt-in):** tracking de estado (`combos.state.yaml`) — el scanner marca combos como `open` / `in-progress` / `resolved` y no los vuelve a reportar si están cerrados con evidencia. Ver `ac combos --track`. Actualmente en stub.",
+        "**Level 3 (opt-in):** state tracking (`combos.state.yaml`) — the scanner marks combos as `open` / `in-progress` / `resolved` and stops re-reporting them once closed with evidence. See `ac combos --track`. Currently a stub.",
         "",
-        "Para cambiar el default, configura `SUPERVISOR_REMEDIATION_LEVEL=2` o `3` en el entorno.",
+        "To change the default, set `SUPERVISOR_REMEDIATION_LEVEL=2` or `3` in the environment.",
         "",
     ])
 

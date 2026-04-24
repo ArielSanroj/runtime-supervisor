@@ -297,15 +297,16 @@ def _tier_summary(findings: list[Finding]) -> tuple[str, str]:
             headline_high += high
     if headline_high == 0:
         note = (
-            "_Ningún hallazgo de alta confianza en los tiers críticos. Esto normalmente "
-            "significa (a) tu repo no usa los SDKs que los scanners conocen, (b) los "
-            "imports son indirectos y necesitan rescan tras wrapping, o (c) realmente no "
-            "hay superficie crítica sin supervisar. Revisa los tiers abajo para confirmar._"
+            "_No high-confidence findings in the critical tiers. Usually that means "
+            "(a) your repo doesn't use the SDKs our scanners recognize, (b) the "
+            "imports are indirect and need a re-scan after wrapping, or (c) there "
+            "really isn't a critical unsupervised surface. Check the tiers below to confirm._"
         )
     else:
         note = (
-            f"**{headline_high} call-site(s) de alta confianza esperan stub.** Revisa los "
-            "tiers abajo en orden (los de arriba mueven dinero o tocan datos críticos)."
+            f"**{headline_high} high-confidence call-site(s) are waiting for a stub.** Work "
+            "through the tiers below in order (the ones at the top move money or touch "
+            "critical data)."
         )
     return "\n".join(rows), note
 
@@ -321,7 +322,7 @@ def _render_by_risk_tier(findings: list[Finding]) -> str:
         if not items:
             continue
         # The headline tiers (money, customer_data, llm) get the full
-        # Observa/Evalúa/Intervendría block and an expanded findings table.
+        # Problem / In your repo / Fix block and an expanded findings table.
         # `general` is demoted to a collapsed footer at the end.
         if tier == "general":
             continue
@@ -338,7 +339,7 @@ def _render_by_risk_tier(findings: list[Finding]) -> str:
 def _top_files_evidence(items: list[Finding], limit: int = 3) -> str:
     """Render the top-N findings (by confidence desc) as backticked
     `short-path:line` references joined with ` · `. Used in tier blocks'
-    '📍 En tu repo' line so the reader sees exactly which files matter."""
+    '📍 In your repo' line so the reader sees exactly which files matter."""
     order = {"high": 0, "medium": 1, "low": 2}
     sorted_items = sorted(items, key=lambda f: (order.get(f.confidence, 3), f.file))
     top = sorted_items[:limit]
@@ -366,23 +367,23 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         headline = f"## {copy['title']} — {len(high)} high / {len(medium)} medium / {len(low)} low"
         lines.append(headline)
         lines.append("")
-        # Tri-part block: 🔴 Problema · 📍 En tu repo · ✅ Solución · (footnote)
-        lines.append(f"🔴 **Problema:** {copy['problem']}")
+        # Tri-part block: 🔴 Problem · 📍 In your repo · ✅ Fix · (footnote)
+        lines.append(f"🔴 **Problem:** {copy['problem']}")
         lines.append("")
         top_files = _top_files_evidence(items, limit=3)
         in_repo_prefix = copy["in_your_repo_prefix"].format(total=len(items))
-        lines.append(f"📍 **En tu repo:** {in_repo_prefix}")
+        lines.append(f"📍 **In your repo:** {in_repo_prefix}")
         if top_files:
             lines.append(f"    Top call-sites: {top_files}.")
         lines.append("")
-        lines.append(f"✅ **La solución:** {copy['solution']}")
+        lines.append(f"✅ **Fix:** {copy['solution']}")
         lines.append("")
         # Optional 💡 runtime behavior — what the supervisor does at call time.
-        # This is the "old intervendría" detail, kept so the reader understands
-        # block vs review vs shadow semantics, not just the wrap pattern.
+        # Kept so the reader understands block vs review vs shadow semantics,
+        # not just the wrap pattern.
         runtime = copy.get("runtime_behavior", "")
         if runtime:
-            lines.append(f"💡 **En runtime:** {runtime}")
+            lines.append(f"💡 **Runtime behavior:** {runtime}")
             lines.append("")
         footnote = copy.get("technical_footnote", "")
         if footnote:

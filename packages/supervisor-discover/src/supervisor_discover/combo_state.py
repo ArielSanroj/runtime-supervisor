@@ -1,13 +1,13 @@
-"""Nivel 3 — combo state tracking.
+"""Level 3 — combo state tracking.
 
-Cada combo detectado puede estar en uno de 3 estados: `open` (default cuando
-se detecta), `in-progress` (el equipo lo está trabajando), o `resolved` (ya
-se aplicó el playbook y se verificó). Los combos `resolved` se suprimen del
-output del próximo scan, así el report se vuelve un tracker de progreso en
-vez de repetir el mismo catálogo cada vez.
+Every detected combo can be in one of 3 states: `open` (default on detection),
+`in-progress` (the team is working on it), or `resolved` (the playbook has
+been applied and verified). Resolved combos are suppressed from the next
+scan so the report becomes a progress tracker rather than the same catalog
+repeated every run.
 
-State file: `runtime-supervisor/combos.state.yaml` (convivencia explícita
-con `combos/` y `policies/`). Formato:
+State file: `runtime-supervisor/combos.state.yaml` (lives alongside
+`combos/` and `policies/`). Format:
 
     version: 1
     combos:
@@ -15,16 +15,16 @@ con `combos/` y `policies/`). Formato:
         status: resolved
         resolved_at: "2026-04-21T18:30:00Z"
         resolved_by: "ariel@clio.com"
-        note: "Allowlist con 12 números, shadow 2 semanas sin FPs."
+        note: "Allowlist of 12 numbers, 2 weeks shadow with zero FPs."
       llm-plus-shell-exec:
         status: in-progress
-        note: "Aplicando allowlist de comandos."
+        note: "Applying the command allowlist."
 
-**Trust model:** confiamos en que el humano marca como resolved solo cuando
-el playbook está aplicado. No verificamos evidence (policy promoted, wraps
-en código) en esta versión. Si el usuario remueve el wrap después de marcar
-resolved, el scan no lo re-detecta hasta que haga `combos reopen <id>`.
-Una versión futura puede agregar evidence checks.
+**Trust model:** we trust that the human only marks `resolved` once the
+playbook has actually been applied. No evidence verification (policy
+promoted, wraps in code) in this version. If a user removes the wrap
+after marking resolved, the scan won't re-detect it until they run
+`combos reopen <id>`. A future version can add evidence checks.
 
 CLI interaction (ver `cli._handle_combos`):
     supervisor-discover combos                    # list status
@@ -201,16 +201,16 @@ def explain() -> str:
     """Short description for `supervisor-discover combos --help` and
     for the interactive prompt when user picks option [3]."""
     return (
-        "Nivel 3 — state tracking\n"
+        "Level 3 — state tracking\n"
         "========================\n"
-        "Marca combos como open / in-progress / resolved. Los `resolved`\n"
-        "desaparecen del próximo scan para que el reporte sea un tracker\n"
-        "de progreso, no el mismo catálogo repetido cada vez.\n"
+        "Mark combos as open / in-progress / resolved. Resolved combos\n"
+        "disappear from the next scan so the report becomes a progress\n"
+        "tracker, not the same catalog repeated every run.\n"
         "\n"
-        "Verbos:\n"
+        "Verbs:\n"
         "  supervisor-discover combos                    # list status\n"
-        "  supervisor-discover combos resolve <id>       # marca resolved\n"
-        "  supervisor-discover combos reopen <id>        # vuelve a open\n"
+        "  supervisor-discover combos resolve <id>       # mark resolved\n"
+        "  supervisor-discover combos reopen <id>        # back to open\n"
         "  supervisor-discover combos clear              # wipe state file\n"
         "\n"
         "State file: runtime-supervisor/combos.state.yaml (commiteable)."

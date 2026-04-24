@@ -1,7 +1,7 @@
 # runtime-supervisor
 
 Runtime control layer that gates AI-agent actions against declarative policy + risk scoring, with a tamper-evident evidence log and a human review queue.
-
+> **Live demo:** [Vibefixing — AI agent security scanner for vibe coders](https://www.vibefixing.me)
 **Phase 1** ships refund supervision (live). **Phase 2** adds the integration API (JWT-auth per app, outbound webhooks, Python + TypeScript SDKs, MCP server, repo-aware agent).
 
 ## Quick start

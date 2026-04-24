@@ -7,7 +7,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from supervisor_api.engines.policy import compile_policy_yaml, evaluate
 
 POLICIES_DIR = Path(__file__).resolve().parents[4] / "packages" / "policies"

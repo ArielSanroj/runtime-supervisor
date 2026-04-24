@@ -20,12 +20,11 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..db import get_db
 from ..email import send_magic_link
 from ..models import MagicLinkToken, User
 from .billing import _issue_magic_link  # reuse the same insert + URL builder
-from .users import build_session_jwt, UserOut
+from .users import UserOut, build_session_jwt
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/auth", tags=["auth"])

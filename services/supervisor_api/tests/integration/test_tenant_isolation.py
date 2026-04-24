@@ -20,7 +20,6 @@ import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from supervisor_api.auth import sign_jwt
 from supervisor_api.db import SessionLocal
 from supervisor_api.models import Integration

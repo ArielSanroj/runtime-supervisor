@@ -278,14 +278,16 @@ export default async function Dashboard({
         )}
       </section>
 
-      <section style={{ marginTop: 24 }}>
-        <h2>Runtime health</h2>
-        <div className="grid cols-3">
-          <MetricCard value={String(m.actions_total)} label={`actions reviewed - ${windowLabel(m.window)}`} tone="muted" />
-          <MetricCard value={pct(m.decisions.deny + m.decisions.review, totalDecisions)} label="blocked or escalated" tone="warn" />
-          <MetricCard value={fmtAge(m.reviews.oldest_pending_age_minutes)} label="oldest pending review" tone={m.reviews.pending ? "warn" : "good"} />
-        </div>
-      </section>
+      {!isZeroState && (
+        <section style={{ marginTop: 24 }}>
+          <h2>Runtime health</h2>
+          <div className="grid cols-3">
+            <MetricCard value={String(m.actions_total)} label={`actions reviewed - ${windowLabel(m.window)}`} tone="muted" />
+            <MetricCard value={pct(m.decisions.deny + m.decisions.review, totalDecisions)} label="blocked or escalated" tone="warn" />
+            <MetricCard value={fmtAge(m.reviews.oldest_pending_age_minutes)} label="oldest pending review" tone={m.reviews.pending ? "warn" : "good"} />
+          </div>
+        </section>
+      )}
 
       {!isZeroState && (
         <>

@@ -11,6 +11,7 @@ events=["critical.alert"].
 """
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from .webhooks import dispatch
@@ -18,7 +19,5 @@ from .webhooks import dispatch
 
 def emit(source: str, details: dict[str, Any]) -> None:
     """Best-effort: never raise."""
-    try:
+    with contextlib.suppress(Exception):
         dispatch("critical.alert", {"source": source, **details})
-    except Exception:
-        pass

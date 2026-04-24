@@ -1,7 +1,6 @@
 """Contract: GET /v1/actions/recent feeds the dashboard's recent-blocks card."""
 from __future__ import annotations
 
-
 _CLEAN = {
     "amount": 50, "customer_id": "c-clean", "currency": "USD",
     "customer_age_days": 400, "refund_velocity_24h": 0, "reason": "defective",

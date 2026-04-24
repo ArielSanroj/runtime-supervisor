@@ -1,7 +1,6 @@
 """Contract: POST /v1/actions/evaluate with shadow=true + /v1/metrics/enforcement."""
 from __future__ import annotations
 
-
 _PAYLOAD_ALLOW = {
     "amount": 50, "customer_id": "c-shadow-1", "currency": "USD",
     "customer_age_days": 400, "refund_velocity_24h": 0, "reason": "defective",

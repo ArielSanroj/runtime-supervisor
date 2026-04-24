@@ -17,7 +17,7 @@ export default async function Landing() {
             <span className="text-pink-400">#</span> for vibe coders shipping agents
           </div>
           <h1 className="mt-6 max-w-3xl text-5xl font-bold leading-[1.03] tracking-tight sm:text-6xl">
-            Find the unsafe actions your AI agent can execute.
+              Scan your AI agent for unsafe actions before shipping.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-400">
             Paste a repo, get the risky tool calls, and ship with guardrails before an LLM

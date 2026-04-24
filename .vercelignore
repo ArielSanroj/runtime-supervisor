@@ -1,0 +1,16 @@
+.env
+.env.local
+.env.development
+.env.development.local
+.env.production
+.env.production.local
+.env.prod
+.env.prod.local
+**/.env
+**/.env.local
+**/.env.development
+**/.env.development.local
+**/.env.production
+**/.env.production.local
+**/.env.prod
+**/.env.prod.local

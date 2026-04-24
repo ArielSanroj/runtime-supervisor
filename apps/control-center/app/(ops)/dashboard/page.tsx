@@ -7,6 +7,19 @@ import InfoTip from "../InfoTip";
 
 export const dynamic = "force-dynamic";
 
+type Window = "24h" | "7d" | "30d";
+type FixTone = "danger" | "warn" | "good" | "muted";
+
+type FixItem = {
+  id: string;
+  title: string;
+  body: string;
+  meta: string;
+  href: string;
+  cta: string;
+  tone: FixTone;
+};
+
 function age(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60) return `${s}s`;
@@ -16,61 +29,107 @@ function age(iso: string): string {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-function payloadOneLiner(c: ReviewCase): string {
-  const amt = c.action_payload["amount"];
-  const cur = c.action_payload["currency"] ?? "USD";
-  const cust = c.action_payload["customer_id"];
-  const reason = c.action_payload["reason"];
-  const bits: string[] = [c.action_type];
-  if (typeof amt === "number") bits.push(`${amt.toLocaleString()} ${cur}`);
-  if (cust) bits.push(`to ${cust}`);
-  if (reason) bits.push(`· ${String(reason).slice(0, 40)}`);
-  return bits.join(" ");
-}
-
-type Window = "24h" | "7d" | "30d";
-
 function pct(num: number, total: number): string {
   if (!total) return "0%";
   return `${Math.round((num / total) * 100)}%`;
 }
 
 function fmtAge(minutes: number | null): string {
-  if (minutes === null) return "—";
+  if (minutes === null) return "none";
   if (minutes < 60) return `${minutes}m`;
   const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h < 24) return `${h}h ${m}m`;
-  const d = Math.floor(h / 24);
-  return `${d}d ${h % 24}h`;
+  if (h < 24) return `${h}h ${minutes % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-function DecisionBar({ m }: { m: MetricsSummary }) {
-  const t = m.decisions.allow + m.decisions.deny + m.decisions.review;
-  if (t === 0) return <p className="muted">No decisions yet in this window.</p>;
-  const allow = (m.decisions.allow / t) * 100;
-  const deny = (m.decisions.deny / t) * 100;
-  const review = (m.decisions.review / t) * 100;
-  return (
-    <div>
-      <div style={{ display: "flex", height: 24, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)" }}>
-        <div style={{ width: `${allow}%`, background: "rgba(52,211,153,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>
-          {allow >= 8 ? "allow" : ""}
-        </div>
-        <div style={{ width: `${review}%`, background: "rgba(245,182,66,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>
-          {review >= 8 ? "review" : ""}
-        </div>
-        <div style={{ width: `${deny}%`, background: "rgba(239,79,90,0.9)", color: "#0b0d12", fontSize: 11, fontWeight: 600, textAlign: "center", lineHeight: "24px" }}>
-          {deny >= 8 ? "deny" : ""}
-        </div>
-      </div>
-      <div className="row" style={{ gap: 16, marginTop: 8, fontSize: 13 }}>
-        <span><span className="chain-ok">●</span> allow {m.decisions.allow} · {pct(m.decisions.allow, t)}</span>
-        <span style={{ color: "var(--warn)" }}>● review {m.decisions.review} · {pct(m.decisions.review, t)}</span>
-        <span style={{ color: "var(--danger)" }}>● deny {m.decisions.deny} · {pct(m.decisions.deny, t)}</span>
-      </div>
-    </div>
-  );
+function windowLabel(w: string): string {
+  if (w === "24h") return "24 hours";
+  if (w === "7d") return "7 days";
+  if (w === "30d") return "30 days";
+  return w;
+}
+
+function payloadOneLiner(c: ReviewCase): string {
+  const amt = c.action_payload["amount"];
+  const cur = c.action_payload["currency"] ?? "USD";
+  const cust = c.action_payload["customer_id"];
+  const tool = c.action_payload["tool"] ?? c.action_payload["tool_name"];
+  const reason = c.action_payload["reason"];
+  const bits: string[] = [c.action_type];
+  if (tool) bits.push(String(tool));
+  if (typeof amt === "number") bits.push(`${amt.toLocaleString()} ${cur}`);
+  if (cust) bits.push(`for ${cust}`);
+  if (reason) bits.push(`- ${String(reason).slice(0, 42)}`);
+  return bits.join(" ");
+}
+
+function buildFixQueue(
+  m: MetricsSummary,
+  blocks: RecentAction[],
+  pending: ReviewCase[],
+  threats: ThreatAssessmentRow[],
+): FixItem[] {
+  const items: FixItem[] = [];
+
+  for (const c of pending.slice(0, 3)) {
+    items.push({
+      id: `review-${c.id}`,
+      title: `Decide ${c.action_type}`,
+      body: payloadOneLiner(c),
+      meta: `risk ${c.risk_score} - ${age(c.created_at)} ago - ${c.policy_hits[0]?.reason ?? "review required"}`,
+      href: `/review/${c.id}`,
+      cta: "decide",
+      tone: c.priority === "high" ? "danger" : "warn",
+    });
+  }
+
+  for (const b of blocks.slice(0, 3)) {
+    items.push({
+      id: `block-${b.action_id}`,
+      title: `Inspect blocked ${b.action_type}`,
+      body: b.reasons.slice(0, 2).join(", ") || "Denied by active policy or threat detector.",
+      meta: `${age(b.created_at)} ago - risk ${b.risk_score}${b.shadow ? " - shadow" : ""}`,
+      href: "/policies",
+      cta: "tune rule",
+      tone: "danger",
+    });
+  }
+
+  for (const t of threats.slice(0, 3)) {
+    items.push({
+      id: `threat-${t.id}`,
+      title: `Review ${t.detector_id}`,
+      body: t.signals[0]?.message ?? `${t.owasp_ref} threat detected.`,
+      meta: `${t.level} - ${age(t.created_at)} ago`,
+      href: `/threats/${t.id}`,
+      cta: "open",
+      tone: t.level === "critical" ? "danger" : "warn",
+    });
+  }
+
+  if (m.actions_total === 0) {
+    items.push({
+      id: "connect-first-action",
+      title: "Send the first supervised action",
+      body: "Connect an integration and call evaluate from one risky tool path so runtime data appears here.",
+      meta: "setup",
+      href: "/integrations",
+      cta: "connect",
+      tone: "good",
+    });
+  }
+
+  items.push({
+    id: "scan-static-surface",
+    title: "Scan static call-sites",
+    body: "Run the scanner to find unwrapped payment, DB, LLM, filesystem, and agent chokepoints before they execute.",
+    meta: "free public scan - Builder unlocks private repos",
+    href: "/scan",
+    cta: "scan",
+    tone: "muted",
+  });
+
+  return items.slice(0, 8);
 }
 
 export default async function Dashboard({
@@ -85,41 +144,53 @@ export default async function Dashboard({
   let blocks: RecentAction[] = [];
   let pending: ReviewCase[] = [];
   let threats: ThreatAssessmentRow[] = [];
+
   try {
     [m, blocks, pending, threats] = await Promise.all([
       getMetrics(win),
-      api.listRecentActions({ decision: "deny", limit: 10 }).catch(() => []),
+      api.listRecentActions({ decision: "deny", limit: 12 }).catch(() => []),
       api.listReviews("pending").catch(() => []),
-      threatsApi.list(10).catch(() => []),
+      threatsApi.list(12).catch(() => []),
     ]);
   } catch (e) {
     err = (e as Error).message;
   }
 
   if (err || !m) {
+    const baseUrl = process.env.SUPERVISOR_API_URL ?? "http://localhost:8000";
     return (
       <div>
-        <h1>Dashboard</h1>
+        <h1>Fix Queue</h1>
         <div className="card" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
-          Supervisor API unreachable: {err}
+          Cannot connect to the supervisor at <code>{baseUrl}</code>.
+          {err && <div className="muted mono" style={{ marginTop: 8, fontSize: 12 }}>{err}</div>}
         </div>
       </div>
     );
   }
 
+  const fixQueue = buildFixQueue(m, blocks, pending, threats);
+  const totalDecisions = m.decisions.allow + m.decisions.deny + m.decisions.review;
   const threatRate = m.actions_total ? Math.round((m.threats.total / m.actions_total) * 100) : 0;
+  const isZeroState = m.actions_total === 0;
 
   return (
     <div>
       <AutoRefresh intervalMs={5000} />
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <h1 style={{ margin: 0 }}>Dashboard</h1>
-          <InfoTip>
-            <strong>Para qué:</strong> ver el estado de salud del supervisor de un vistazo. Si el agente está siendo atacado o si tu policy está frenando pedidos legítimos, acá lo ves primero.<br /><br />
-            <strong>Quién:</strong> dev/founder (diario durante el rollout), compliance (semanal).<br /><br />
-            <strong>Refresh:</strong> auto cada 5s. Elegí ventana <code>24h</code>, <code>7d</code> o <code>30d</code> arriba a la derecha.
-          </InfoTip>
+
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+        <div>
+          <div className="row" style={{ alignItems: "center", gap: 8 }}>
+            <h1 style={{ margin: 0 }}>Fix Queue</h1>
+            <InfoTip>
+              <strong>What:</strong> the workbench for shipping safely: decide reviews, inspect blocks,
+              scan static call-sites, and tune rules.<br /><br />
+              <strong>Refresh:</strong> every 5 seconds.
+            </InfoTip>
+          </div>
+          <p className="muted" style={{ margin: "8px 0 0" }}>
+            The next actions to fix before your agent executes something risky.
+          </p>
         </div>
         <div className="row" style={{ gap: 6 }}>
           {(["24h", "7d", "30d"] as Window[]).map((w) => (
@@ -130,210 +201,225 @@ export default async function Dashboard({
         </div>
       </div>
 
-      <h2>Qué está pasando ahora<InfoTip>Los 3 feeds en vivo: acciones frenadas, casos que esperan decisión humana, y amenazas detectadas por el pipeline OWASP.</InfoTip></h2>
-      <div className="grid cols-3">
-        {/* Card 1 — Recent blocks */}
-        <div className="card">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
-              Bloqueos recientes
-              <InfoTip>
-                <strong>Qué:</strong> las últimas acciones que el supervisor frenó (decisión <code>deny</code>) según la policy. Ej.: un refund sobre el hard-cap, un DELETE sin <code>WHERE</code>, un pago a país sancionado.<br /><br />
-                <strong>Quién:</strong> dev/founder — <em>¿rompió algo anoche?</em>.<br /><br />
-                <strong>Acción:</strong> si un bloqueo es falso positivo, ajustá la regla en <code>/policies</code> y promové nueva versión.
-              </InfoTip>
-            </h3>
-            <span className="muted mono">{blocks.length}</span>
-          </div>
-          {blocks.length === 0 ? (
-            <p className="muted" style={{ marginTop: 8 }}>
-              Sin bloqueos todavía. Cuando el supervisor frene una acción real, aparece acá con razón + latencia.
-            </p>
-          ) : (
-            <table style={{ marginTop: 8 }}>
-              <tbody>
-                {blocks.slice(0, 8).map((b) => (
-                  <tr key={b.action_id}>
-                    <td className="muted mono" style={{ width: 52 }}>{age(b.created_at)}</td>
-                    <td><span className="mono">{b.action_type}</span></td>
-                    <td className="muted">{b.reasons.slice(0, 2).join(", ")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+      <section className="grid cols-3" style={{ marginTop: 20 }}>
+        <MetricCard
+          value={isZeroState ? "—" : String(pending.length)}
+          label="needs your decision"
+          tone={isZeroState ? "muted" : pending.length ? "warn" : "good"}
+          href="/review?status=pending"
+        />
+        <MetricCard
+          value={isZeroState ? "—" : String(blocks.length)}
+          label="recently blocked"
+          tone={isZeroState ? "muted" : blocks.length ? "danger" : "good"}
+          href="/policies"
+        />
+        <MetricCard
+          value={isZeroState ? "—" : String(m.threats.total)}
+          label={isZeroState ? "threats - awaiting traffic" : `threats - ${threatRate}% of traffic`}
+          tone={isZeroState ? "muted" : m.threats.critical ? "danger" : m.threats.total ? "warn" : "good"}
+          href="/threats"
+        />
+      </section>
 
-        {/* Card 2 — Pending reviews */}
+      <section style={{ marginTop: 24 }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+          <h2 style={{ marginTop: 0 }}>Fix first</h2>
+          <span className="muted mono" style={{ fontSize: 12 }}>auto-refreshing</span>
+        </div>
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          {fixQueue.map((item) => (
+            <FixRow key={item.id} item={item} />
+          ))}
+        </div>
+      </section>
+
+      <section className="grid cols-2" style={{ marginTop: 24 }}>
         <div className="card">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
-              Esperan humano
-              <InfoTip>
-                <strong>Qué:</strong> casos que superaron el umbral de risk score (≥50 por defecto) y la policy los mandó a review en vez de aprobar/bloquear automático.<br /><br />
-                <strong>Quién:</strong> operador on-call (dev de guardia o compliance). Uno por turno abre y decide.<br /><br />
-                <strong>Acción:</strong> click en el caso → ver payload + historial del cliente → <code>approve</code> o <code>reject</code>. El agente queda esperando (o timeout según policy).
-              </InfoTip>
-            </h3>
-            <Link href="/review?status=pending" className="muted mono">{pending.length} →</Link>
-          </div>
-          {pending.length === 0 ? (
-            <p className="muted" style={{ marginTop: 8 }}>
-              Nada en review. Cuando el supervisor escale a humano, aparece acá con resumen + botón para abrir.
+          <h3 style={{ marginTop: 0 }}>Shipping checklist</h3>
+          <ChecklistRow done label="Public repo scan available" href="/scan" />
+          <ChecklistRow done={m.active_integrations > 0} label="Integration connected" href="/integrations" />
+          <ChecklistRow done={m.actions_total > 0} label="First action evaluated" href="/integrations" />
+          <ChecklistRow done={m.decisions.deny + m.decisions.review > 0} label="At least one policy decision observed" href="/policies" />
+        </div>
+        {isZeroState ? (
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>What this catches</h3>
+            <p className="muted" style={{ lineHeight: 1.6, marginTop: 0 }}>
+              Once your app calls <code>evaluate</code>, the supervisor blocks or escalates these
+              before your tools execute:
             </p>
-          ) : (
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-              {pending.slice(0, 5).map((c) => (
-                <Link key={c.id} href={`/review/${c.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                  <div className="row" style={{ justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                    <div>
-                      <div>{payloadOneLiner(c)}</div>
-                      <div className="muted mono" style={{ fontSize: 11 }}>
-                        {age(c.created_at)} · {c.policy_hits[0]?.reason ?? "—"}
-                        {c.priority !== "normal" && ` · priority: ${c.priority}`}
-                      </div>
-                    </div>
-                    <span className="muted">open →</span>
-                  </div>
-                </Link>
-              ))}
+            <ul className="muted" style={{ marginTop: 10, paddingLeft: 18, lineHeight: 1.85, fontSize: 13.5 }}>
+              <li><strong>Prompt injections</strong> — agent told to ignore its rules</li>
+              <li><strong>PII / secret exfiltration</strong> in tool args</li>
+              <li><strong>Tool abuse</strong> — unbounded loops, off-scope calls</li>
+              <li><strong>Refunds &amp; payments</strong> over your caps</li>
+              <li><strong>DB writes</strong> without <code>WHERE</code>, sandbox escapes</li>
+            </ul>
+            <Link href="/threats" className="badge" style={{ marginTop: 14, display: "inline-block" }}>
+              see all detectors →
+            </Link>
+          </div>
+        ) : (
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Builder unlock</h3>
+            <p className="muted" style={{ lineHeight: 1.7 }}>
+              Upgrade when you need private repo scans, full <code>runtime-supervisor/</code> export,
+              scan history, and CI comments.
+            </p>
+            <div className="row" style={{ justifyContent: "space-between", marginTop: 18 }}>
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 700 }}>$29/mo</div>
+                <div className="muted mono" style={{ fontSize: 12 }}>solo builder</div>
+              </div>
+              <Link className="badge approved" href="/scan?upgrade=builder">upgrade</Link>
             </div>
-          )}
-        </div>
-
-        {/* Card 3 — Recent threats */}
-        <div className="card">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, display: "flex", alignItems: "center" }}>
-              Threats detectados
-              <InfoTip>
-                <strong>Qué:</strong> detecciones del threat pipeline (prompt-injection, jailbreak, PII exfil, excessive agency, etc.) mapeadas al <strong>OWASP LLM Top 10</strong>. Son señales independientes de la policy.<br /><br />
-                <strong>Quién:</strong> security / CISO — <em>¿nos están atacando?</em>.<br /><br />
-                <strong>Acción:</strong> si hay un patrón (mismo detector disparando seguido), revisá el ángulo de ataque en <code>/threats</code>. Si son falsos positivos recurrentes, ajustá la sensibilidad del detector.
-              </InfoTip>
-            </h3>
-            <Link href="/threats" className="muted mono">{threats.length} →</Link>
           </div>
-          {threats.length === 0 ? (
-            <p className="muted" style={{ marginTop: 8 }}>
-              Pipeline OWASP LLM Top 10 corriendo, sin hits. Si el agente recibe un prompt-injection, jailbreak o PII exfil, aparece acá.
-            </p>
-          ) : (
-            <table style={{ marginTop: 8 }}>
-              <tbody>
-                {threats.slice(0, 8).map((t) => (
-                  <tr key={t.id}>
-                    <td className="muted mono" style={{ width: 52 }}>{age(t.created_at)}</td>
-                    <td>
-                      <span className={`badge ${t.level === "critical" ? "" : ""}`} style={{ background: t.level === "critical" ? "var(--danger)" : t.level === "warn" ? "var(--warn, #b48a00)" : "var(--border)", color: "white" }}>
-                        {t.level}
-                      </span>
-                    </td>
-                    <td className="mono">{t.owasp_ref}</td>
-                    <td className="muted">{t.detector_id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+        )}
+      </section>
 
-      <h2>Volume<InfoTip>Totales agregados para la ventana elegida. Útil para ver tendencia (hoy vs. ayer) y detectar spikes. Si <code>Actions</code> cae a cero, el supervisor dejó de recibir tráfico — probable problema de conectividad del guard, no del agente.</InfoTip></h2>
-      <div className="grid cols-3">
-        <div className="card kpi">
-          {m.actions_total}
-          <span className="label">Actions ({m.window})</span>
+      <section style={{ marginTop: 24 }}>
+        <h2>Runtime health</h2>
+        <div className="grid cols-3">
+          <MetricCard value={String(m.actions_total)} label={`actions reviewed - ${windowLabel(m.window)}`} tone="muted" />
+          <MetricCard value={pct(m.decisions.deny + m.decisions.review, totalDecisions)} label="blocked or escalated" tone="warn" />
+          <MetricCard value={fmtAge(m.reviews.oldest_pending_age_minutes)} label="oldest pending review" tone={m.reviews.pending ? "warn" : "good"} />
         </div>
-        <div className="card kpi">
-          {m.threats.total}
-          <span className="label">Threats detected · {threatRate}% rate</span>
-        </div>
-        <div className="card kpi">
-          {m.reviews.pending}
-          <span className="label">Pending review · oldest {fmtAge(m.reviews.oldest_pending_age_minutes)}</span>
-        </div>
-      </div>
+      </section>
 
-      <h2>Decisions<InfoTip><strong>Allow</strong> (verde) = la policy dejó pasar.<br /><strong>Review</strong> (amarillo) = el caso fue escalado a humano.<br /><strong>Deny</strong> (rojo) = la acción fue bloqueada.<br /><br /><strong>Señal:</strong> si deny&gt;20% sostenido, tu policy está demasiado estricta o estás bajo ataque. Si allow=100%, el supervisor no está haciendo nada — revisá que las reglas estén promovidas.</InfoTip></h2>
-      <div className="card">
-        <DecisionBar m={m} />
-      </div>
-
-      {m.threats.top_detectors.length > 0 && (
+      {!isZeroState && (
         <>
-          <h2>Top threat detectors<InfoTip>Ranking de qué detector del pipeline OWASP se disparó más. Te dice <strong>qué vector de ataque estás recibiendo</strong>: <code>LLM01</code> (prompt injection), <code>LLM02</code> (PII disclosure), <code>LLM06</code> (jailbreak), <code>LLM10</code> (unbounded consumption). Si uno domina, ajustá la policy para ese detector específico.</InfoTip></h2>
-          <div className="card" style={{ padding: 0 }}>
-            <table>
-              <thead><tr><th>Detector</th><th>Hits</th></tr></thead>
-              <tbody>
-                {m.threats.top_detectors.map((t) => (
-                  <tr key={t.detector_id}>
-                    <td className="mono">{t.detector_id}</td>
-                    <td>{t.count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <section style={{ marginTop: 24 }}>
+            <h2>Decision mix</h2>
+            <div className="card">
+              <DecisionBar m={m} />
+            </div>
+          </section>
+
+          <section className="grid cols-2" style={{ marginTop: 24 }}>
+            <div className="card" style={{ padding: 0 }}>
+              <TableTitle title="Traffic by action type" />
+              <table>
+                <thead><tr><th>Type</th><th>Volume</th><th>Policy</th></tr></thead>
+                <tbody>
+                  {Object.keys(m.volume_by_action_type).length === 0 ? (
+                    <tr><td className="muted" colSpan={3} style={{ padding: 16 }}>No traffic in this window.</td></tr>
+                  ) : (
+                    Object.entries(m.volume_by_action_type).map(([at, n]) => (
+                      <tr key={at}>
+                        <td className="mono">{at}</td>
+                        <td>{n}</td>
+                        <td className="mono muted">{m.active_policies_by_type[at] ? `v${m.active_policies_by_type[at]}` : "YAML"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="card" style={{ padding: 0 }}>
+              <TableTitle title="Top threat detectors" />
+              <table>
+                <thead><tr><th>Detector</th><th>Attempts</th></tr></thead>
+                <tbody>
+                  {m.threats.top_detectors.length === 0 ? (
+                    <tr><td className="muted" colSpan={2} style={{ padding: 16 }}>No threats detected.</td></tr>
+                  ) : (
+                    m.threats.top_detectors.map((t) => (
+                      <tr key={t.detector_id}>
+                        <td className="mono">{t.detector_id}</td>
+                        <td>{t.count}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </>
       )}
+    </div>
+  );
+}
 
-      <h2>Executions (action_proxy)<InfoTip>Solo aplica si usás <strong>action_proxy mode</strong> (el supervisor ejecuta la acción en tu nombre tras aprobarla, no solo te devuelve un <code>allow</code>). Acá ves si esas ejecuciones salieron OK o fallaron después del permit. En el modo normal (<code>guard</code>) estos números quedan en 0.</InfoTip></h2>
-      <div className="grid cols-3">
-        <div className="card kpi">
-          {m.executions.success}
-          <span className="label">Success</span>
-        </div>
-        <div className="card kpi">
-          {m.executions.failed}
-          <span className="label">Failed</span>
-        </div>
-        <div className="card kpi">
-          {m.executions.success_rate === null ? "—" : `${Math.round(m.executions.success_rate * 100)}%`}
-          <span className="label">Success rate</span>
-        </div>
+function MetricCard({
+  value,
+  label,
+  tone,
+  href,
+}: {
+  value: string;
+  label: string;
+  tone: FixTone;
+  href?: string;
+}) {
+  const color = tone === "danger" ? "var(--danger)" : tone === "warn" ? "var(--warn)" : tone === "good" ? "var(--ok)" : "var(--text)";
+  const body = (
+    <div className="card kpi" style={{ borderColor: tone === "muted" ? "var(--border)" : color }}>
+      <span style={{ color }}>{value}</span>
+      <span className="label">{label}</span>
+    </div>
+  );
+  return href ? <Link href={href} style={{ color: "inherit", textDecoration: "none" }}>{body}</Link> : body;
+}
+
+function FixRow({ item }: { item: FixItem }) {
+  const color = item.tone === "danger" ? "var(--danger)" : item.tone === "warn" ? "var(--warn)" : item.tone === "good" ? "var(--ok)" : "var(--muted)";
+  return (
+    <Link
+      href={item.href}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "12px 1fr auto",
+        gap: 14,
+        alignItems: "center",
+        padding: "14px 16px",
+        borderBottom: "1px solid var(--border)",
+        color: "inherit",
+        textDecoration: "none",
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+      <span>
+        <strong>{item.title}</strong>
+        <span className="muted" style={{ display: "block", marginTop: 4 }}>{item.body}</span>
+        <span className="mono muted" style={{ display: "block", marginTop: 4, fontSize: 12 }}>{item.meta}</span>
+      </span>
+      <span className="badge approved">{item.cta}</span>
+    </Link>
+  );
+}
+
+function ChecklistRow({ done, label, href }: { done: boolean; label: string; href: string }) {
+  return (
+    <Link href={href} className="row" style={{ justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)", color: "inherit" }}>
+      <span>{label}</span>
+      <span className={`badge ${done ? "approved" : "pending"}`}>{done ? "done" : "next"}</span>
+    </Link>
+  );
+}
+
+function DecisionBar({ m }: { m: MetricsSummary }) {
+  const t = m.decisions.allow + m.decisions.deny + m.decisions.review;
+  if (t === 0) return <p className="muted">No decisions in this time window.</p>;
+  const allow = (m.decisions.allow / t) * 100;
+  const deny = (m.decisions.deny / t) * 100;
+  const review = (m.decisions.review / t) * 100;
+  return (
+    <div>
+      <div style={{ display: "flex", height: 24, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)" }}>
+        <div style={{ width: `${allow}%`, background: "var(--ok)" }} />
+        <div style={{ width: `${review}%`, background: "var(--warn)" }} />
+        <div style={{ width: `${deny}%`, background: "var(--danger)" }} />
       </div>
-
-      <h2>Volume by action_type</h2>
-      <div className="card" style={{ padding: 0 }}>
-        <table>
-          <thead><tr><th>action_type</th><th>Count</th><th>Active policy</th></tr></thead>
-          <tbody>
-            {Object.keys(m.volume_by_action_type).length === 0 ? (
-              <tr><td className="muted" colSpan={3} style={{ padding: 16 }}>No actions in this window.</td></tr>
-            ) : (
-              Object.entries(m.volume_by_action_type).map(([at, n]) => (
-                <tr key={at}>
-                  <td className="mono">{at}</td>
-                  <td>{n}</td>
-                  <td className="mono muted">
-                    {m.active_policies_by_type[at] ? `DB v${m.active_policies_by_type[at]}` : "YAML (disk)"}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <h2>System</h2>
-      <div className="grid cols-3">
-        <div className="card kpi">{m.active_integrations}<span className="label">Active integrations</span></div>
-        <div className="card kpi">{Object.keys(m.active_policies_by_type).length}<span className="label">DB policies active</span></div>
-        <div className="card">
-          <h3 style={{ margin: 0 }}>Next step</h3>
-          <p className="muted" style={{ marginTop: 8 }}>
-            {m.reviews.pending > 0 ? (
-              <>Open <Link href="/review">review queue</Link> to resolve {m.reviews.pending} pending.</>
-            ) : m.threats.critical > 0 ? (
-              <>See <Link href="/threats?level=critical">{m.threats.critical} critical threat(s)</Link>.</>
-            ) : (
-              <>System quiet. Inspect the <Link href="/threats">threat feed</Link> or <Link href="/policies">policies</Link>.</>
-            )}
-          </p>
-        </div>
+      <div className="row" style={{ gap: 16, marginTop: 8, fontSize: 13, flexWrap: "wrap" }}>
+        <span><span className="chain-ok">●</span> allowed: {m.decisions.allow} - {pct(m.decisions.allow, t)}</span>
+        <span style={{ color: "var(--warn)" }}>● review: {m.decisions.review} - {pct(m.decisions.review, t)}</span>
+        <span style={{ color: "var(--danger)" }}>● blocked: {m.decisions.deny} - {pct(m.decisions.deny, t)}</span>
       </div>
     </div>
   );
+}
+
+function TableTitle({ title }: { title: string }) {
+  return <h3 style={{ margin: 0, padding: "16px 18px 4px" }}>{title}</h3>;
 }

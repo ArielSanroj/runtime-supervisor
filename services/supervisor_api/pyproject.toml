@@ -9,7 +9,7 @@ dependencies = [
     "sqlalchemy>=2.0.35",
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
-    "pydantic>=2.9",
+    "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "asteval>=1.0",
@@ -21,7 +21,13 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
     "python-json-logger>=2.0",
+    "supervisor-discover",
+    "stripe>=8.0",
+    "resend>=2.0",
 ]
+
+[tool.uv.sources]
+supervisor-discover = { workspace = true }
 
 [project.optional-dependencies]
 dev = [

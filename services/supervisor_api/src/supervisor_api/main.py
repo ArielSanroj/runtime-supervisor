@@ -13,11 +13,14 @@ from .observability import configure_logging
 from .routes import (
     actions,
     admin,
+    auth_magic,
+    billing,
     catalog,
     integrations,
     metrics,
     policies,
     review,
+    scans,
     tenants,
     threats,
     users,
@@ -66,6 +69,9 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(tenants.router)
     app.include_router(users.router)
+    app.include_router(scans.router)
+    app.include_router(billing.router)
+    app.include_router(auth_magic.router)
 
     @app.middleware("http")
     async def max_payload_middleware(request, call_next):

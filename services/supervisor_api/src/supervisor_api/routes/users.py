@@ -31,13 +31,38 @@ def _hash_password(password: str, *, salt: str | None = None) -> str:
     return f"{salt}${h.hex()}"
 
 
-def _verify_password(password: str, stored: str) -> bool:
+def _verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
     try:
         salt, expected_hex = stored.split("$", 1)
     except ValueError:
         return False
     candidate = _hash_password(password, salt=salt).split("$", 1)[1]
     return hmac.compare_digest(candidate, expected_hex)
+
+
+def build_session_jwt(user: User) -> str:
+    """Produce the cookie-bearable session JWT for a User.
+
+    Reused by /v1/auth/login (password) and /v1/auth/magic-link/{token}
+    (passwordless). `tier` + `stripe_subscription_status` are surfaced in
+    the payload so the frontend middleware can gate routes without an
+    extra round-trip.
+    """
+    from ..config import get_settings
+
+    claims = {
+        "sub": user.id,
+        "email": user.email,
+        "role": user.role,
+        "kind": "session",
+        "tenant_id": user.tenant_id,
+        "tier": user.tier,
+        "stripe_subscription_status": user.stripe_subscription_status,
+        "exp": int((datetime.now(UTC) + timedelta(hours=8)).timestamp()),
+    }
+    return auth.sign_jwt(claims, get_settings().webhook_secret)
 
 
 _VALID_ROLES = {"admin", "compliance", "ops", "auditor"}
@@ -111,21 +136,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     if u is None or not u.active or not _verify_password(body.password, u.password_hash):
         raise HTTPException(status_code=401, detail="invalid email or password")
 
-    # Signed session JWT; the same HS256 signer used for integrations.
-    # `kind=session` distinguishes from integration tokens.
-    claims = {
-        "sub": u.id,
-        "email": u.email,
-        "role": u.role,
-        "kind": "session",
-        "tenant_id": u.tenant_id,
-        "exp": int((datetime.now(UTC) + timedelta(hours=8)).timestamp()),
-    }
-    # Sign with the app-wide webhook secret for simplicity; a dedicated session
-    # secret is recommended for prod.
-    from ..config import get_settings
-
-    token = auth.sign_jwt(claims, get_settings().webhook_secret)
+    token = build_session_jwt(u)
     return LoginResponse(
         token=token,
         user=UserOut(id=u.id, email=u.email, role=u.role, tenant_id=u.tenant_id,

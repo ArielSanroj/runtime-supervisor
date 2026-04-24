@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 
 const COOKIE_NAME = "aic_session";
 
+export type Tier = "free" | "builder";
+
 export type Session = {
   token: string;
   user: {
@@ -9,6 +11,8 @@ export type Session = {
     email: string;
     role: "admin" | "compliance" | "ops" | "auditor";
     tenant_id: string | null;
+    tier?: Tier;
+    stripe_subscription_status?: string | null;
   };
 };
 

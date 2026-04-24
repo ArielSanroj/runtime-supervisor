@@ -92,10 +92,35 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Nullable for users created via Stripe checkout (passwordless, magic-link only).
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)  # admin | compliance | ops | auditor
     tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Subscription tier — gates dashboard access. "free" can run public scans
+    # but cannot reach /(ops)/*. "builder" is the paid tier.
+    tier: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Mirror of Stripe sub status: active, trialing, past_due, canceled, etc.
+    stripe_subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class MagicLinkToken(Base):
+    """Single-use email-bound token for passwordless login.
+
+    Issued after Stripe checkout completes (Builder onboarding) and on demand
+    via /v1/auth/magic-link/send. Token is the primary key — the URL-safe value
+    sent in the email.
+    """
+
+    __tablename__ = "magic_link_tokens"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

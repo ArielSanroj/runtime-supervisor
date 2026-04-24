@@ -299,6 +299,51 @@ def test_agent_method_regex_ignores_word_in_comments(tmp_path):
     )
 
 
+def test_training_paths_get_downgraded(tmp_path: Path):
+    """Files under training/ should have their confidence downgraded one step.
+    A subprocess.run in training/run.py should land at `medium`, not `high`,
+    so the free-tier high-confidence gate hides it as research noise."""
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "run.py").write_text(
+        "import subprocess\n"
+        "subprocess.run(args)\n"  # variable args so snippet refinement keeps high
+    )
+    findings = scan_all(tmp_path)
+    sub = [f for f in findings if f.scanner == "fs-shell"]
+    assert sub, "expected at least one fs-shell finding from training/run.py"
+    assert all(f.confidence != "high" for f in sub), (
+        f"training/ paths must downgrade — got {[(f.file, f.confidence) for f in sub]}"
+    )
+    assert all(f.extra.get("downgraded_eval_path") for f in sub)
+
+
+def test_ts_construction_fires_without_method_call(tmp_path: Path):
+    """`new OpenAI()` alone is an LLM signal even if no .create method is
+    called in the same file. The wrapping module is the call-site to gate."""
+    (tmp_path / "client.ts").write_text(
+        'import OpenAI from "openai";\n'
+        "const c = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });\n"
+        "export default c;\n"
+    )
+    findings = scan_all(tmp_path)
+    llm = [f for f in findings if f.scanner == "llm-calls"]
+    assert llm, "expected llm-calls to fire on `new OpenAI()`"
+    assert any(f.extra.get("kind") == "construction" for f in llm)
+
+
+def test_ts_vercel_ai_sdk_generate_text_fires(tmp_path: Path):
+    """Vercel AI SDK uses `generateText` from `"ai"` — the original detector
+    didn't know about it, so voicebox/multica scored 0 LLM findings."""
+    (tmp_path / "page.ts").write_text(
+        'import { generateText } from "ai";\n'
+        'const r = await generateText({ model, prompt: input });\n'
+    )
+    findings = scan_all(tmp_path)
+    llm = [f for f in findings if f.scanner == "llm-calls"]
+    assert llm, "expected llm-calls to fire on Vercel AI SDK generateText()"
+    assert any("generateText" in f.snippet for f in llm)
+
+
 def test_orchestrator_excludes_webview_tests_and_build_paths():
     """Webview scripts, test trees, and build outputs may pattern-match the
     agent-orchestrator regex (Controller / Dispatcher / handle / dispatch),

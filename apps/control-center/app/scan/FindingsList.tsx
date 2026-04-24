@@ -36,6 +36,15 @@ const FAMILY_LABEL: Record<string, string> = {
   "framework-import": "Agent framework imports",
   "agent-class": "Agent orchestrator classes",
   "agent-method": "Agent orchestrator methods",
+  // Skill / plugin artifacts — content-review surfaces, not code wraps.
+  "skill": "Skill instructions",
+  "agent-md": "Agent personas",
+  "command-md": "Slash commands",
+  "plugin-manifest": "Plugin manifest",
+  "claude-md": "Repo-wide CLAUDE.md",
+  // LLM call construction (new TS regex)
+  "construction": "LLM client construction",
+  "method-call": "LLM method calls",
 };
 
 const FAMILY_TONE: Record<string, string> = {
@@ -46,6 +55,13 @@ const FAMILY_TONE: Record<string, string> = {
   "framework-import": "text-emerald-400",
   "agent-class": "text-emerald-400",
   "agent-method": "text-emerald-300",
+  "skill": "text-purple-400",
+  "agent-md": "text-purple-400",
+  "command-md": "text-purple-300",
+  "plugin-manifest": "text-purple-400",
+  "claude-md": "text-purple-300",
+  "construction": "text-cyan-400",
+  "method-call": "text-cyan-400",
 };
 
 function familyOf(f: ScanFinding): string {
@@ -115,6 +131,32 @@ class Orchestrator:
     def dispatch(self, ...):
         # your existing dispatch
         pass`,
+  // Skill artifacts: there's no Python/TS to wrap. The fix is content-review.
+  "skill": `# This is markdown, not code — no @supervised wrap.
+# Treat it like an untrusted dependency:
+#   1. Read SKILL.md before activating.
+#   2. Pin to a commit you trust (don't follow the branch).
+#   3. Re-audit on every update.`,
+  "agent-md": `# Same as skills — read the persona before adopting.
+# Pin the commit and re-audit on changes.`,
+  "command-md": `# Read the command body for shell-out steps and parameter handling
+# before installing into your Claude Code session.`,
+  "plugin-manifest": `# Inspect declared scopes (file reads, shell commands, network)
+# in the manifest before installing.`,
+  "claude-md": `# Repo-wide instructions Claude reads first. Treat edits like a
+# security review — anything here can grant tools or skip confirmations.`,
+  "construction": `// Wrap whatever module exposes this client to its callers:
+import { supervised } from "@runtime-supervisor/guards";
+
+export const callLLM = supervised("tool_use",
+  async (prompt: string) => client.responses.create({ model, prompt })
+);`,
+  "method-call": `// Wrap the call site (or the function that owns it):
+import { supervised } from "@runtime-supervisor/guards";
+
+const reply = await supervised("tool_use",
+  async () => generateText({ model, prompt: userInput })
+)();`,
 };
 
 export default function FindingsList({ scan }: { scan: ScanResponse }) {
@@ -576,6 +618,19 @@ function RepoTypeCallout({ summary }: { summary: NonNullable<ScanResponse["repo_
           <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">executor.invoke</code>{" "}
           with <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs">@supervised(&quot;tool_use&quot;)</code>{" "}
           — covers every tool the agent calls, present and future. See the framework-import finding for the snippet.
+        </p>
+      </div>
+    );
+  }
+  if (type === "claude-skill") {
+    return (
+      <div className="mt-4 rounded-lg border border-purple-900/40 bg-purple-500/5 p-4 text-sm leading-7 text-zinc-300">
+        <span className="font-mono text-xs uppercase tracking-widest text-purple-400">claude code skill / plugin detected</span>
+        <p className="mt-1">
+          This repo distributes prompts Claude Code reads at runtime — there&apos;s no wrappable
+          call-site here, the fix is <strong>content-review</strong>. Read every SKILL.md, agent persona,
+          and slash command before activating, and pin to a commit you trust (don&apos;t follow the branch).
+          Anyone with PR access to this repo can change Claude&apos;s behavior in your dev environment.
         </p>
       </div>
     );

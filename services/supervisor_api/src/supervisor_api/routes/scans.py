@@ -37,7 +37,7 @@ router = APIRouter(prefix="/v1", tags=["scans"])
 _GITHUB_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+(?:\.git)?/?$")
 _RATE_WINDOW_SECONDS = 60.0
 _RATE_MAX_PER_WINDOW = 3
-_CLONE_TIMEOUT_SECONDS = 30
+_CLONE_TIMEOUT_SECONDS = 90
 _MAX_CONCURRENT_SCANS = 3
 _MAX_FINDINGS_RETURNED = 500
 _MAX_REPO_BYTES = 500 * 1024 * 1024  # 500 MB

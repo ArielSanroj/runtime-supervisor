@@ -48,6 +48,9 @@ _SCANNER_TO_TIER: dict[str, Tier] = {
     "media-gen": "real_world_actions",
     "agent-orchestrators": "real_world_actions",
     "mcp-tools": "real_world_actions",
+    # skill / plugin artifacts — informational; the risk is content-review,
+    # not a wrappable runtime call-site. Goes in `general`.
+    "skills": "general",
     # http-routes, cron-schedules, anything else → general (fallback below)
 }
 

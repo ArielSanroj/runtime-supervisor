@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -9,17 +10,55 @@ from pathlib import Path
 def safe_read(path: Path) -> str | None:
     """Read text, returning None on any filesystem or decode error.
 
+    For .ipynb files, returns the concatenated Python source from code cells
+    so existing Python scanners (fs_shell, llm_calls, agent_orchestrators…)
+    can run against notebook code without changes. Line numbers in findings
+    will point into the synthetic flat source — the path identifies the
+    notebook, the snippet shows the actual code, and grep reaches the cell.
+
     macOS TCC blocks reads under ~/Downloads/Documents/Desktop unless the
     terminal has Full Disk Access, and raises PermissionError. Broken
     symlinks and unreadable special files raise OSError. The scanner must
     skip a single unreadable file, not crash the whole scan.
     """
     try:
+        if path.suffix == ".ipynb":
+            return _extract_notebook_python(path)
         return path.read_text(errors="ignore")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
-_PY_GLOB = "**/*.py"
+
+def _extract_notebook_python(path: Path) -> str:
+    """Parse a Jupyter notebook and return concatenated Python from code cells.
+
+    Magics (`%foo`, `!foo`, `?foo`) are commented out so AST parsing doesn't
+    fail on them. Cells are separated by `# === notebook cell N ===` so the
+    extracted source roughly maps back to cell boundaries when read alone.
+    """
+    raw = path.read_text(errors="ignore")
+    nb = json.loads(raw)
+    blocks: list[str] = []
+    for i, cell in enumerate(nb.get("cells") or []):
+        if cell.get("cell_type") != "code":
+            continue
+        source = cell.get("source") or ""
+        if isinstance(source, list):
+            source = "".join(source)
+        clean: list[str] = []
+        for ln in source.splitlines():
+            stripped = ln.lstrip()
+            # IPython magics + shell escapes aren't valid Python — comment them
+            # out so ast.parse() doesn't bail on the whole notebook.
+            if stripped.startswith(("%", "!", "?")):
+                clean.append("# " + ln)
+            else:
+                clean.append(ln)
+        blocks.append(f"# === notebook cell {i} ===\n" + "\n".join(clean))
+    return "\n\n".join(blocks) + "\n"
+
+
+_PY_GLOBS = ("**/*.py", "**/*.ipynb")
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
 
 _SKIP_DIRS = {
@@ -68,7 +107,13 @@ def _walk(root: Path, globs: tuple[str, ...]) -> Iterator[Path]:
 
 
 def python_files(root: Path) -> Iterator[Path]:
-    yield from _walk(root, (_PY_GLOB,))
+    """Yield Python source paths — `.py` plus `.ipynb` notebooks.
+
+    Notebook handling is transparent to scanners: `safe_read()` extracts the
+    code cells and returns a concatenated Python source, so the same AST /
+    regex detectors fire on notebook code without scanner-side changes.
+    """
+    yield from _walk(root, _PY_GLOBS)
 
 
 def ts_js_files(root: Path) -> Iterator[Path]:

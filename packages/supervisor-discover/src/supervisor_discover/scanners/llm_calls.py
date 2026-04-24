@@ -101,8 +101,56 @@ def _scan_python(root: Path) -> list[Finding]:
     return findings
 
 
-_TS_IMPORT_RE = re.compile(r"""from\s+['"](openai|@anthropic-ai/sdk|langchain|llamaindex|@langchain/[^'"]+)['"]""")
-_TS_CALL_RE = re.compile(r"""\b(?:chat\.completions\.create|messages\.(?:create|stream)|responses\.create)\s*\(""")
+# LLM SDK packages the scanner recognizes via TS/JS imports. Three groups:
+#   - first-party SDKs: openai, @anthropic-ai/sdk, @anthropic-ai/vertex-sdk
+#   - meta-SDKs: ai (Vercel), @ai-sdk/* (Vercel provider packages),
+#                langchain, llamaindex, @langchain/*
+#   - other vendors: Google GenAI / Vertex, Groq, Cohere, Bedrock, Mistral,
+#                    Together, Replicate
+#
+# Why these matter: voicebox / multica / many trending repos use Vercel AI
+# SDK or Google GenAI — neither was covered by the original regex, so they
+# scored 0 LLM findings even though they're agent apps.
+_TS_IMPORT_RE = re.compile(
+    r"""from\s+['"]("""
+    r"openai|@anthropic-ai/sdk|@anthropic-ai/vertex-sdk|"
+    r"ai|@ai-sdk/[^'\"]+|"
+    r"langchain|llamaindex|@langchain/[^'\"]+|@llamaindex/[^'\"]+|"
+    r"@google/generative-ai|@google-cloud/vertexai|"
+    r"groq-sdk|cohere-ai|@cohere/[^'\"]+|"
+    r"@aws-sdk/client-bedrock-runtime|"
+    r"mistralai|@mistralai/[^'\"]+|"
+    r"together-ai|replicate"
+    r""")['"]"""
+)
+
+# Method patterns that almost always mean "I'm calling the LLM right now".
+# Includes Vercel AI SDK functions (generateText / streamText / generateObject /
+# embed), Google GenAI (generateContent), Cohere/Mistral (complete), and
+# langchain TS (.invoke).
+_TS_CALL_RE = re.compile(
+    r"\b(?:"
+    r"chat\.completions\.create|"
+    r"messages\.(?:create|stream)|"
+    r"responses\.create|"
+    r"generateText|streamText|"
+    r"generateObject|streamObject|"
+    r"embed|embedMany|"
+    r"generateContent|generateContentStream|"
+    r"complete|"
+    r"invoke"
+    r")\s*\("
+)
+
+# `new OpenAI()` / `new Anthropic()` / `new ChatOpenAI()` and friends —
+# constructing an LLM client is itself a high-value signal even when no
+# `.create()` is called in the same file (the client is often passed to
+# another module). The wrapping module is the call-site to gate.
+_TS_CONSTRUCT_RE = re.compile(
+    r"\bnew\s+(OpenAI|Anthropic|ChatOpenAI|ChatAnthropic|AzureOpenAI|"
+    r"VertexAI|GoogleGenerativeAI|GroqClient|Groq|CohereClient|Cohere|"
+    r"Mistral|TogetherAI|Replicate|BedrockRuntime|BedrockRuntimeClient)\s*\("
+)
 
 
 def _scan_ts_js(root: Path) -> list[Finding]:
@@ -113,6 +161,7 @@ def _scan_ts_js(root: Path) -> list[Finding]:
             continue
         if not _TS_IMPORT_RE.search(text):
             continue
+        seen_lines: set[int] = set()
         for m in _TS_CALL_RE.finditer(text):
             line = text[: m.start()].count("\n") + 1
             findings.append(Finding(
@@ -122,8 +171,33 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                 snippet=m.group(0).rstrip("("),
                 suggested_action_type="tool_use",
                 confidence="high",
-                rationale="LLM SDK call — gate with supervised('tool_use').",
-                extra={},
+                rationale=(
+                    "LLM call — whatever user input flows into the prompt "
+                    "or args is reaching the model. Wrap with supervised("
+                    "'tool_use') so the supervisor catches prompt injection, "
+                    "PII leakage, and runaway loops before the call lands."
+                ),
+                extra={"kind": "method-call"},
+            ))
+            seen_lines.add(line)
+        for m in _TS_CONSTRUCT_RE.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            if line in seen_lines:
+                continue  # already reported via method-call regex
+            findings.append(Finding(
+                scanner="llm-calls",
+                file=str(path),
+                line=line,
+                snippet=m.group(0).rstrip("("),
+                suggested_action_type="tool_use",
+                confidence="high",
+                rationale=(
+                    "LLM client construction. Whatever module wraps this "
+                    "client exposes the LLM to its callers — gate the "
+                    "wrapping module with supervised('tool_use') so prompts "
+                    "and args get inspected before the call goes out."
+                ),
+                extra={"kind": "construction", "client": m.group(1)},
             ))
     return findings
 

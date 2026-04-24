@@ -16,8 +16,10 @@ from . import (
     media_gen,
     messaging,
     payment_calls,
+    skills,
     voice_actions,
 )
+from ._utils import _extract_notebook_python
 
 
 def scan_all(root: Path) -> list[Finding]:
@@ -39,6 +41,9 @@ def scan_all(root: Path) -> list[Finding]:
         # agent orchestration chokepoints — where ALL agent actions flow through
         agent_orchestrators,
         mcp_tools,
+        # skill / plugin / agent-md surface — repos that distribute prompts
+        # Claude Code ingests, not Python the runtime executes
+        skills,
     ):
         findings.extend(module.scan(root))
     findings = _downgrade_eval_paths(findings, root)
@@ -57,6 +62,10 @@ _EVAL_PATH_HINTS = (
     "/scripts/", "/script/",
     "/docs/", "/doc/",
     "/fixtures/", "/fixture/",
+    # Research / training / experimentation surfaces — bursts of subprocess
+    # and fs activity that aren't the agent's runtime path.
+    "/training/", "/datasets/", "/runs/", "/experiments/",
+    "/notebooks/", "/research/",
 )
 
 _EVAL_FILENAME_HINTS = (
@@ -153,14 +162,32 @@ def _self_check(findings: list[Finding]) -> list[Finding]:
     regex with an unintended permissive group can't leak into public output.
     The scanner would rather under-report than tell a visitor
     `plan_tool.py:8 is an AGENT CHOKEPOINT` when line 8 is a comment.
+
+    For .ipynb files we re-extract the synthetic Python that scanners saw,
+    not the raw JSON — otherwise every notebook finding would fail the
+    snippet check and get dropped.
+
+    The `skills` scanner emits whole-file markers (line=1, snippet=path.name);
+    those don't follow the usual "snippet appears on line" contract and we
+    pass them through unchanged.
     """
+    from .skills import SCANNER as _SKILLS_SCANNER
+
     clean: list[Finding] = []
     cache: dict[str, list[str] | None] = {}
     for f in findings:
+        if f.scanner == _SKILLS_SCANNER:
+            clean.append(f)
+            continue
         if f.file not in cache:
             try:
-                cache[f.file] = Path(f.file).read_text(errors="replace").splitlines()
-            except OSError:
+                path = Path(f.file)
+                if path.suffix == ".ipynb":
+                    text = _extract_notebook_python(path)
+                else:
+                    text = path.read_text(errors="replace")
+                cache[f.file] = text.splitlines()
+            except (OSError, json.JSONDecodeError):
                 cache[f.file] = None
         lines = cache[f.file]
         if lines is None or not (0 <= f.line - 1 < len(lines)):

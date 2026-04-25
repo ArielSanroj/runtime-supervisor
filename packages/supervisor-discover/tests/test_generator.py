@@ -17,7 +17,7 @@ def test_generator_writes_expected_tree(tmp_path):
     out = tmp_path / "runtime-supervisor"
     generate(findings, out)
 
-    assert (out / "report.md").exists()
+    assert (out / "FULL_REPORT.md").exists()
     assert (out / "findings.json").exists()
     assert (out / ".env.example").exists()
     assert (out / ".github/workflows/runtime-supervisor.yml").exists()
@@ -48,7 +48,7 @@ def test_report_is_tiered_with_rollout_guidance(tmp_path):
     findings = validate(scan_all(FLASK_FIXTURE))
     out = tmp_path / "rs"
     generate(findings, out)
-    report = (out / "report.md").read_text()
+    report = (out / "FULL_REPORT.md").read_text()
     # Tier-by-risk structure + deploy-without-breaking-prod messaging.
     assert "Money movement" in report
     assert "LLM tool-use" in report
@@ -182,7 +182,7 @@ def test_generated_output_has_no_rioplatense_voseo(tmp_path):
         # Expressions
         "por vos",
     ]
-    for doc in ("SUMMARY.md", "ROLLOUT.md", "report.md"):
+    for doc in ("START_HERE.md", "ROLLOUT.md", "FULL_REPORT.md"):
         content = (out / doc).read_text()
         for p in voseo_patterns:
             assert p not in content, (
@@ -313,7 +313,7 @@ def test_report_includes_applicable_guardrails_section(tmp_path):
     findings = validate(scan_all(FLASK_FIXTURE))
     out = tmp_path / "rs"
     generate(findings, out)
-    report = (out / "report.md").read_text()
+    report = (out / "FULL_REPORT.md").read_text()
     assert "## Guardrails que el supervisor aplicaría" in report
     # Refund is present in the flask fixture → should show its policy + OWASP refs.
     assert "refund.base.v1" in report

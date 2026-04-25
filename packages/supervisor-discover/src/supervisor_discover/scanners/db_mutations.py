@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterator
 
 from ..findings import Finding
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, ts_js_files
 
 _ACCOUNT_HINTS = re.compile(r"\b(users?|accounts?|customers?|profiles?|identities)\b", re.IGNORECASE)
 _PII_HINTS = re.compile(r"\b(emails?|phones?|ssn|addresses?|payments?|cards?)\b", re.IGNORECASE)
@@ -81,9 +81,8 @@ def _scan_python(root: Path) -> list[Finding]:
         text = safe_read(path)
         if text is None:
             continue
-        try:
-            tree = ast.parse(text)
-        except (SyntaxError, ValueError):
+        tree = parse_python(text)
+        if tree is None:
             continue
 
         # Raw SQL — look only inside Call arguments. Immune to comments,

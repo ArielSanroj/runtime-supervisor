@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ..findings import Finding
+from ..policy_loader import hidden_dirs_by_category
 from . import (
     agent_orchestrators,
     calendar_actions,
@@ -96,6 +98,68 @@ def _is_eval_path(file: str, root: Path | None = None) -> bool:
         return True
     name = target.rsplit("/", 1)[-1]
     return any(tok in name for tok in _EVAL_FILENAME_HINTS)
+
+
+# ─── default-hidden path filtering ────────────────────────────────────
+# Findings under tests/, legacy/, migrations/, generated/ are valid signal
+# but noise for the "what should I wrap first" view. We keep them inside the
+# raw findings list (so build_summary can still see frameworks/imports/etc.
+# from those files) but route them out of the visible set into a per-category
+# counter the UI surfaces as "+ N hidden — open Builder for full set".
+
+def _classify_hidden_category(file: str, root: Path | None,
+                              category_dirs: dict[str, set[str]]) -> str | None:
+    """Return the hidden-category name for `file` (under any tests/legacy/
+    migrations/generated dir), or None if visible. Match is on path segments
+    relative to root so legitimate repos that live inside e.g. ~/Library
+    don't false-match on absolute path components."""
+    if root is not None:
+        try:
+            rel_parts = Path(file).resolve().relative_to(Path(root).resolve()).parts
+        except ValueError:
+            rel_parts = Path(file).parts
+    else:
+        rel_parts = Path(file).parts
+    parts_lower = {p.lower() for p in rel_parts}
+    for category, dir_names in category_dirs.items():
+        if parts_lower & dir_names:
+            return category
+    return None
+
+
+def apply_default_hidden(
+    findings: list[Finding],
+    root: Path | None = None,
+    *,
+    include_tests: bool = False,
+    include_legacy: bool = False,
+    include_migrations: bool = False,
+    include_generated: bool = False,
+) -> tuple[list[Finding], dict[str, int]]:
+    """Split findings into (visible, hidden_counts).
+
+    Default-hidden categories (tests / legacy / migrations / generated) come
+    from packages/policies/scan_output.base.v1.yaml. Each include_<cat> flag
+    re-merges that category back into visible. Hidden findings are NOT dropped
+    — they're tallied in the counter so the UI can show "+ N hidden" and
+    Builder users can opt in via the CLI flags or unlock.
+    """
+    category_dirs = hidden_dirs_by_category()
+    enabled = {
+        "tests": include_tests,
+        "legacy": include_legacy,
+        "migrations": include_migrations,
+        "generated": include_generated,
+    }
+    visible: list[Finding] = []
+    counts: dict[str, int] = {}
+    for f in findings:
+        cat = _classify_hidden_category(f.file, root, category_dirs)
+        if cat is None or enabled.get(cat, False):
+            visible.append(f)
+            continue
+        counts[cat] = counts.get(cat, 0) + 1
+    return visible, counts
 
 
 def _downgrade_eval_paths(findings: list[Finding], root: Path | None = None) -> list[Finding]:

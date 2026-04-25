@@ -330,17 +330,24 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
             return
 
         try:
+            from dataclasses import replace as dc_replace
+
             from supervisor_discover.classifier import tier_of, validate
             from supervisor_discover.combos import detect_combos
-            from supervisor_discover.scanners import scan_all
+            from supervisor_discover.scanners import apply_default_hidden, scan_all
+            from supervisor_discover.start_here import build_start_here
             from supervisor_discover.summary import build_summary
         except ImportError as e:
             _finalize_error(scan_id, base, f"supervisor-discover not installed on server: {e}", started)
             return
 
         try:
-            findings = validate(scan_all(tmp_path))
-            repo_summary = build_summary(findings).to_dict()
+            all_findings = validate(scan_all(tmp_path))
+            findings, hidden_counts = apply_default_hidden(all_findings, tmp_path)
+            summary = build_summary(findings, hidden_counts=hidden_counts)
+            start_here = build_start_here(summary, findings)
+            summary = dc_replace(summary, start_here=start_here)
+            repo_summary = summary.to_dict()
             detected_combos = detect_combos(findings)
         except Exception as e:
             log.exception("scan.scanner_crash scan_id=%s", scan_id)
@@ -349,6 +356,33 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
 
     # File paths are absolute to the temp dir — strip so the UI shows relative paths.
     tmp_prefix = str(tmp_path) + "/"
+    # Python's start_here._short_path keeps the last 3 path segments — for a
+    # file under the tmp clone that emits `<tmp_basename>/<dir>/<file>`, e.g.
+    # `scan-XXX-rpfvqf3h/python/ts_executor.py`. The full prefix strip below
+    # misses this because `_short_path` already removed the `/tmp/` head, so
+    # we ALSO strip the tmp basename + slash to clean those embedded strings.
+    tmp_basename_prefix = tmp_path.name + "/"
+
+    def _clean(s: str) -> str:
+        return s.replace(tmp_prefix, "").replace(tmp_basename_prefix, "")
+
+    # Also strip from start_here.top_wrap_targets so the UI doesn't leak
+    # `/tmp/.../<repo>/...` into the "open this file" links.
+    sh_dict = repo_summary.get("start_here") or {}
+    for tgt in sh_dict.get("top_wrap_targets") or []:
+        if isinstance(tgt.get("file"), str):
+            tgt["file"] = _clean(tgt["file"])
+    # Also strip absolute tmp paths from the Risk cards' confirmed_in_code text.
+    for risk in sh_dict.get("top_risks") or []:
+        if isinstance(risk.get("confirmed_in_code"), str):
+            risk["confirmed_in_code"] = _clean(risk["confirmed_in_code"])
+    if isinstance(sh_dict.get("do_this_now"), str):
+        sh_dict["do_this_now"] = _clean(sh_dict["do_this_now"])
+    # And the agent_chokepoints we expose at summary level.
+    for cp in repo_summary.get("agent_chokepoints") or []:
+        if isinstance(cp.get("file"), str):
+            cp["file"] = _clean(cp["file"])
+
     ranked_findings = sorted(
         ((f, tier_of(f)) for f in findings),
         key=lambda item: _preview_rank(item[0], item[1]),

@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .narrator import render_summary as render_summary_email
 from .rollout import render_rollout_md
+from .start_here import build_start_here, render_start_here_md
 from .summary import build_summary, render_markdown as render_summary_md
 from .templates import (
     CI_WORKFLOW,
@@ -48,17 +50,23 @@ def generate(
     repo_root: Path | None = None,
     *,
     include_resolved: bool = False,
+    hidden_counts: dict[str, int] | None = None,
 ) -> None:
     """Emit the runtime-supervisor/ output directory.
 
-    `repo_root`, when provided, becomes the basename in SUMMARY.md's title.
+    `repo_root`, when provided, becomes the basename of the FULL_REPORT title.
     `include_resolved=True` bypasses the Nivel 3 state filter (so the scan
     shows combos even after they were marked `resolved`). Useful for audit
-    or when reviewing what was previously fixed.
+    or when reviewing what was previously fixed. `hidden_counts`, when
+    provided, is folded into RepoSummary.hidden_findings so the per-category
+    counter (tests/legacy/migrations/generated) reaches the artifacts.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    summary = build_summary(findings)
+    summary = build_summary(findings, hidden_counts=hidden_counts)
+    start_here = build_start_here(summary, findings)
+    # Stitch start_here back into the summary so the API + JSON dump carry it.
+    summary = replace(summary, start_here=start_here)
     repo_name = repo_root.name if repo_root else None
 
     # findings.json — wrapped now: top-level "findings" + "repo_summary".
@@ -74,7 +82,10 @@ def generate(
     }
     (out_dir / "findings.json").write_text(json.dumps(payload, indent=2) + "\n")
 
-    # report.md — summary first, then critical combos (if any), then guardrails, then tier-by-risk.
+    # FULL_REPORT.md (was report.md) — the deeper read. Mandable security
+    # review goes first (the curated wrap/prod/confirm/discard buckets that
+    # used to live in SUMMARY.md), then critical combos, then guardrails,
+    # then the tier-by-risk table.
     by_type = Counter(f.suggested_action_type for f in findings)
     tier_summary_table, headline_note = _tier_summary(findings)
     # Nivel 3: si hay state file con combos resueltos, se suprimen del output
@@ -84,28 +95,29 @@ def generate(
     combos = filter_resolved_combos(
         raw_combos, combo_states, include_resolved=include_resolved
     )
-    report = render_summary_md(summary)
+    full_report = render_summary_email(summary, findings, combos, repo_name=repo_name)
+    full_report += "\n---\n\n"
+    full_report += render_summary_md(summary)
     if combos:
-        report += "\n---\n\n"
-        report += render_combos_md(combos)
-    report += _render_applicable_guardrails(findings)
-    report += "\n---\n\n"
-    report += REPORT_HEADER.format(
+        full_report += "\n---\n\n"
+        full_report += render_combos_md(combos)
+    full_report += _render_applicable_guardrails(findings)
+    full_report += "\n---\n\n"
+    full_report += REPORT_HEADER.format(
         total=len(findings),
         tier_summary_table=tier_summary_table,
         headline_note=headline_note,
     )
-    report += _render_by_risk_tier(findings)
-    (out_dir / "report.md").write_text(report)
+    full_report += _render_by_risk_tier(findings)
+    (out_dir / "FULL_REPORT.md").write_text(full_report)
 
     # ROLLOUT.md — tailored to the repo's stack + surface + tier counts.
     (out_dir / "ROLLOUT.md").write_text(render_rollout_md(summary, findings))
 
-    # SUMMARY.md — the mandable "security review email". report.md is the
-    # technical doc; SUMMARY.md is the thing you paste in a PR or DM.
-    (out_dir / "SUMMARY.md").write_text(
-        render_summary_email(summary, findings, combos, repo_name=repo_name)
-    )
+    # START_HERE.md — vibe-coder entry point, replaces SUMMARY.md.
+    # Answers: where to wrap first / what this repo can do / top risks /
+    # what to ignore. The rich review lives in FULL_REPORT.md.
+    (out_dir / "START_HERE.md").write_text(render_start_here_md(start_here))
 
     # policies — copy from supervisor's source dir for live action types
     policies_dir = out_dir / "policies"

@@ -135,7 +135,9 @@ def test_malformed_yaml_load_returns_empty(tmp_path):
 
 def test_generator_respects_resolved_combos_end_to_end(tmp_path):
     """E2E: generar output, marcar un combo resolved, re-generar → ese
-    combo ya no aparece en SUMMARY.md ni en la sección de combos del report.
+    combo ya no aparece en FULL_REPORT.md (donde vive ahora la mandable
+    security review + la sección de combos). START_HERE.md no menciona combos
+    directamente — es un entry point cuyo "do this now" no depende de combos.
     """
     from supervisor_discover.classifier import validate
     from supervisor_discover.findings import Finding
@@ -162,7 +164,7 @@ def test_generator_respects_resolved_combos_end_to_end(tmp_path):
     generate(findings, out)
 
     # Primer scan: el combo aparece en la sección de combos del SUMMARY
-    summary_v1 = (out / "SUMMARY.md").read_text()
+    summary_v1 = (out / "FULL_REPORT.md").read_text()
     assert "## Critical combos" in summary_v1
     assert "voice-clone-plus-outbound-call" in summary_v1
 
@@ -172,7 +174,7 @@ def test_generator_respects_resolved_combos_end_to_end(tmp_path):
 
     # Re-scan (re-generate con los mismos findings)
     generate(findings, out)
-    summary_v2 = (out / "SUMMARY.md").read_text()
+    summary_v2 = (out / "FULL_REPORT.md").read_text()
 
     # La sección dedicada "## Critical combos" desaparece (ese era el único combo).
     # NOTE: el combo_id puede seguir apareciendo en los solution links de la
@@ -183,7 +185,7 @@ def test_generator_respects_resolved_combos_end_to_end(tmp_path):
 
     # Con include_resolved=True la sección vuelve a aparecer
     generate(findings, out, include_resolved=True)
-    summary_v3 = (out / "SUMMARY.md").read_text()
+    summary_v3 = (out / "FULL_REPORT.md").read_text()
     assert "## Critical combos" in summary_v3
     assert "voice-clone-plus-outbound-call" in summary_v3
 

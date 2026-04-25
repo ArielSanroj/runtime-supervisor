@@ -11,7 +11,8 @@ from pathlib import Path
 from . import __version__
 from .classifier import TIER_ORDER, group_by_risk_tier, validate
 from .generator import generate
-from .scanners import scan_all
+from .scanners import apply_default_hidden, scan_all
+from .start_here import build_start_here, render_cli_start_here
 from .summary import build_summary, render_cli_stdout
 from .templates import TIER_COPY
 
@@ -54,6 +55,32 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ignore combos.state.yaml — report all detected combos even if "
              "previously marked resolved. Useful for audit / regression check.",
+    )
+    scan_p.add_argument(
+        "--full",
+        action="store_true",
+        help="Print the legacy tier-by-tier breakdown (high/medium/low counts) "
+             "after the START HERE block. Default: only START HERE on stdout.",
+    )
+    scan_p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include findings under tests/ in the visible set (default: counted but hidden).",
+    )
+    scan_p.add_argument(
+        "--include-legacy",
+        action="store_true",
+        help="Include findings under legacy/ archive/ deprecated/ in visible set.",
+    )
+    scan_p.add_argument(
+        "--include-migrations",
+        action="store_true",
+        help="Include findings under migrations/ in visible set.",
+    )
+    scan_p.add_argument(
+        "--include-generated",
+        action="store_true",
+        help="Include findings under generated/ gen/ in visible set.",
     )
 
     sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
@@ -148,7 +175,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     t0 = time.perf_counter()
-    findings = validate(scan_all(root))
+    all_findings = validate(scan_all(root))
+    findings, hidden_counts = apply_default_hidden(
+        all_findings, root,
+        include_tests=bool(getattr(args, "include_tests", False)),
+        include_legacy=bool(getattr(args, "include_legacy", False)),
+        include_migrations=bool(getattr(args, "include_migrations", False)),
+        include_generated=bool(getattr(args, "include_generated", False)),
+    )
     elapsed = time.perf_counter() - t0
 
     # Optional --refine: per-finding narrative enrichment via Claude.
@@ -158,13 +192,17 @@ def main(argv: list[str] | None = None) -> int:
         from .combos import detect_combos
         from .refine import refine_findings
         print("  refining narratives via Claude…", file=sys.stderr)
-        findings = refine_findings(findings, build_summary(findings), detect_combos(findings))
+        findings = refine_findings(findings, build_summary(findings, hidden_counts=hidden_counts), detect_combos(findings))
 
     if dry_run:
         # Mirror the on-disk findings.json shape so CI diffs line up.
-        summary = build_summary(findings)
+        summary = build_summary(findings, hidden_counts=hidden_counts)
+        sh = build_start_here(summary, findings)
+        # asdict-style serialization to keep stdout tooling compatible.
+        summary_dict = summary.to_dict()
+        summary_dict["start_here"] = sh.to_dict()
         payload = {
-            "repo_summary": summary.to_dict(),
+            "repo_summary": summary_dict,
             "findings": sorted(
                 (f.to_dict() for f in findings),
                 key=lambda d: (d["file"], d["line"], d["scanner"]),
@@ -177,8 +215,11 @@ def main(argv: list[str] | None = None) -> int:
     generate(
         findings, out, repo_root=root,
         include_resolved=bool(getattr(args, "show_resolved", False)),
+        hidden_counts=hidden_counts,
     )
-    _print_tier_summary(root, findings, elapsed, out)
+    _print_start_here(root, findings, elapsed, out, hidden_counts)
+    if getattr(args, "full", False):
+        _print_tier_summary(root, findings, elapsed, out)
     _prompt_remediation_level(findings, out, args)
     return 0
 
@@ -349,15 +390,33 @@ def _tier_hint(tier: str, items: list, summary) -> str:
     return _TIER_FALLBACK.get(tier, "")
 
 
+def _print_start_here(root: Path, findings: list, elapsed: float, out: Path,
+                       hidden_counts: dict[str, int]) -> None:
+    """Stdout block following the START HERE communication rules.
+
+    Replaces the legacy tier-by-tier dump as the default. The legacy view is
+    still available behind --full for users who want the full breakdown."""
+    summary = build_summary(findings, hidden_counts=hidden_counts)
+    sh = build_start_here(summary, findings)
+
+    for line in render_cli_start_here(sh, elapsed_s=elapsed, root=str(root)):
+        print(line, file=sys.stderr)
+
+    print("", file=sys.stderr)
+    print(f"-> wrote {out}", file=sys.stderr)
+    print(f"-> open first: {out / 'START_HERE.md'}", file=sys.stderr)
+    print(f"   full report: {out / 'FULL_REPORT.md'}", file=sys.stderr)
+    print(f"   rollout:     {out / 'ROLLOUT.md'}", file=sys.stderr)
+
+
 def _print_tier_summary(root: Path, findings: list, elapsed: float, out: Path) -> None:
-    """Repo summary + tier-by-risk on stderr, with a repo-specific hint
-    column so a vibe coder reading this for the first time understands WHAT
-    each tier actually means in their codebase."""
+    """Legacy tier-by-risk breakdown printed when --full is set. Kept for
+    operators who want the full count grid alongside the START HERE summary."""
     buckets = group_by_risk_tier(findings)
     summary = build_summary(findings)
 
-    print(f"scanned {root} in {elapsed:.1f}s", file=sys.stderr)
     print("", file=sys.stderr)
+    print("--- full breakdown (--full) ---", file=sys.stderr)
     for line in render_cli_stdout(summary):
         print(line, file=sys.stderr)
     print("", file=sys.stderr)
@@ -377,11 +436,6 @@ def _print_tier_summary(root: Path, findings: list, elapsed: float, out: Path) -
             counts = f"{high} high / {med} medium / {low} low"
 
         print(f"  {title:<22s}  {counts:<24s}  {hint}", file=sys.stderr)
-
-    print("", file=sys.stderr)
-    print(f"-> wrote {out}", file=sys.stderr)
-    print(f"-> next: open {out / 'SUMMARY.md'} — security review priorizada (lo que harías hoy, mañana, día 4)", file=sys.stderr)
-    print(f"   or:   {out / 'ROLLOUT.md'} para el deploy playbook por fases", file=sys.stderr)
 
 
 def _handle_fix(args: argparse.Namespace) -> int:

@@ -29,7 +29,9 @@ def test_cli_scan_writes_tree(tmp_path):
     out = tmp_path / "rs"
     rc = main(["scan", "--path", str(FLASK_FIXTURE), "--out", str(out)])
     assert rc == 0
-    assert (out / "report.md").exists()
+    assert (out / "START_HERE.md").exists()
+    assert (out / "FULL_REPORT.md").exists()
+    assert (out / "ROLLOUT.md").exists()
     assert (out / "findings.json").exists()
 
 
@@ -43,7 +45,8 @@ def test_cli_init_alias(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path / "app")
     rc = main(["init"])
     assert rc == 0
-    assert (tmp_path / "app/runtime-supervisor/report.md").exists()
+    assert (tmp_path / "app/runtime-supervisor/START_HERE.md").exists()
+    assert (tmp_path / "app/runtime-supervisor/FULL_REPORT.md").exists()
 
 
 def test_cli_path_not_found_returns_2():

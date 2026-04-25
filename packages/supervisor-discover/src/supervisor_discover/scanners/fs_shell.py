@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, ts_js_files
 
 
 # Python call targets: dotted-name → (family, confidence).
@@ -163,9 +163,8 @@ def _refine_python_severity(node: ast.Call, family: str, default: str) -> tuple[
 
 
 def _scan_python(path: Path, text: str) -> list[Finding]:
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    tree = parse_python(text)
+    if tree is None:
         return []
     source_lines = text.splitlines()
     out: list[Finding] = []

@@ -3,8 +3,24 @@ from __future__ import annotations
 
 import ast
 import json
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
+
+
+def parse_python(text: str) -> ast.Module | None:
+    """Parse `text` as Python, returning None on syntax errors.
+
+    Suppresses `SyntaxWarning` (e.g. invalid escape sequences like `'\\%'`)
+    raised by the target source — those warnings come from the user's repo,
+    not from our own code, so leaking them to stderr just adds noise.
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
 
 
 def safe_read(path: Path) -> str | None:
@@ -142,9 +158,8 @@ def dotted_name(node: ast.AST) -> str | None:
 def iter_python_calls(text: str) -> Iterator[ast.Call]:
     """Yield every `ast.Call` node in `text`. Silently yields nothing for
     files with syntax errors — scanners skip those rather than crash."""
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    tree = parse_python(text)
+    if tree is None:
         return
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

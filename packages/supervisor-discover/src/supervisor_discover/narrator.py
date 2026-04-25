@@ -175,8 +175,8 @@ _PROBLEM_BY_SCANNER: dict[str, str] = {
     ),
     "db-mutations": (
         "your agent can modify tables directly. A malformed `DELETE FROM users` "
-        "without `WHERE` wipes the table; a multi-field `UPDATE` reads like "
-        "account takeover."
+        "without `WHERE` wipes the table; a multi-field `UPDATE` can rewrite "
+        "credentials in one shot."
     ),
     "cron-schedules": (
         "scheduled jobs can amplify a one-shot injection into a persistent "
@@ -206,12 +206,13 @@ _PROBLEM_BY_SCANNER: dict[str, str] = {
     ),
 }
 
-# Family-specific overrides for fs-shell (shell-exec is RCE-equivalent,
-# fs-delete is destructive, fs-write depends on path).
+# Family-specific overrides for fs-shell. Plain language only — no jargon
+# in user-facing copy (no "RCE", "exfil", "account takeover" headlines).
 _PROBLEM_FS_SHELL_BY_FAMILY: dict[str, str] = {
     "shell-exec": (
         "your agent can run host shell commands. If any arg flows from the "
-        "LLM or user input, that's RCE-equivalent."
+        "LLM or user input, the model can pick the command — and the host "
+        "runs it."
     ),
     "fs-delete": (
         "your agent can delete files on the host — logs, configs, user data, "
@@ -365,8 +366,8 @@ def _scanner_problem(f: Finding, count: int) -> str:
             )
         return (
             f"your agent can modify customer tables (`{table}`) directly — "
-            f"`DELETE FROM users` without `WHERE` wipes everything, a multi-"
-            f"field `UPDATE` looks like account takeover."
+            f"`DELETE FROM users` without `WHERE` wipes the whole table, and "
+            f"a multi-field `UPDATE` can quietly rewrite credentials."
         )
     return _PROBLEM_BY_SCANNER.get(
         scanner, f"{count} call-sites in {scanner}."

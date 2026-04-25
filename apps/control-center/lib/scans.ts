@@ -26,6 +26,29 @@ export type ScanFinding = {
   tier: string | null;
 };
 
+export type WrapTarget = {
+  label: string;
+  file: string;
+  line: number;
+  why: string;
+};
+
+export type Risk = {
+  title: string;
+  confirmed_in_code: string;
+  possible_chain: string;
+  do_this_now: string;
+  family: string;
+};
+
+export type StartHere = {
+  top_wrap_targets: WrapTarget[];
+  repo_capabilities: string[];
+  top_risks: Risk[];
+  do_this_now: string;
+  hidden_counter: Record<string, number>;
+};
+
 export type RepoSummary = {
   frameworks: string[];
   http_routes: number;
@@ -40,8 +63,12 @@ export type RepoSummary = {
   scheduled_jobs: number;
   total_findings: number;
   one_liner: string;
-  // "mcp-server" | "mcp-server+langchain" | "langchain-agent" | null
+  // "mcp-server" | "mcp-server+langchain" | "langchain-agent" | "claude-skill" | null
   repo_type?: string | null;
+  // New: per-category counts for the "+ N hidden" counter (tests / legacy / migrations / generated).
+  hidden_findings?: Record<string, number>;
+  // New: vibe-coder entry view derived from this summary + findings on the server.
+  start_here?: StartHere | null;
 };
 
 export type ScanCombo = {

@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, ts_js_files
 
 _PY_HTTP_DECORATORS = {"route", "get", "post", "put", "patch", "delete"}
 _TS_EXPRESS_PATTERN = re.compile(r"\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(", re.IGNORECASE)
@@ -26,9 +26,8 @@ def _scan_python(root: Path) -> list[Finding]:
         text = safe_read(path)
         if text is None:
             continue
-        try:
-            tree = ast.parse(text)
-        except (SyntaxError, ValueError):
+        tree = parse_python(text)
+        if tree is None:
             continue
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

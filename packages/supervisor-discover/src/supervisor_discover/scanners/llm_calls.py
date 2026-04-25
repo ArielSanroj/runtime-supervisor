@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..findings import Finding
 from ._imports import build_alias_map, resolve_call_name, root_module
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, ts_js_files
 
 # Canonical module names the scanner recognizes as LLM SDKs.
 _LLM_ROOTS = {"openai", "anthropic", "langchain", "langchain_core", "langchain_community",
@@ -57,9 +57,8 @@ def _scan_python(root: Path) -> list[Finding]:
         text = safe_read(path)
         if text is None:
             continue
-        try:
-            tree = ast.parse(text)
-        except (SyntaxError, ValueError):
+        tree = parse_python(text)
+        if tree is None:
             continue
         aliases = build_alias_map(tree)
         # Fast exit: if the file imports none of the LLM SDKs, skip it.

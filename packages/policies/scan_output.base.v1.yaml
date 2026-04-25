@@ -1,0 +1,111 @@
+name: scan_output.base
+version: 1
+description: >
+  Declarative policy for post-scan communication. Materializes the rules
+  in docs/SCAN_COMMUNICATION_RULES.md so tunable knobs (max wrap targets,
+  forbidden-words list, plain-English label map, default-hidden paths) live
+  in YAML rather than being scattered in code. Loaded by policy_loader.py.
+
+# How many top wrap targets to surface in START_HERE.md / CLI / UI.
+max_wrap_targets: 3
+
+# How many top risks to surface.
+max_top_risks: 3
+
+# Words that must NOT appear in any markdown headline (^#+ ) of START_HERE.md
+# or CLI output. Allowed inside body / footnotes / FULL_REPORT.md.
+forbidden_words:
+  - OWASP
+  - CVSS
+  - compliance
+  - RCE-equivalent
+  - exfiltration
+  - account takeover
+
+# Internal action_type / scanner family → human-friendly tier label.
+# Used everywhere user-facing copy is rendered (CLI, START_HERE.md, UI tier badges).
+label_map:
+  payment: money movement
+  refund: refunds
+  tool_use: tool or LLM execution
+  account_change: user/account state changes
+  data_access: customer/business data access
+  general: inventory
+
+# Scanner / family → plain-English capability phrase shown under
+# "What this repo can already do".
+capability_phrases:
+  payment-calls: move money
+  email-sends: send emails
+  messaging: call messaging tools
+  voice-actions: place phone or voice calls
+  calendar-actions: create calendar events
+  fs-shell-shell-exec: run shell commands
+  fs-shell-fs-delete: delete files
+  fs-shell-fs-write: write files
+  llm-calls: call LLMs
+  db-mutations-write: write to the database
+  db-mutations-delete: delete database rows
+  media-gen: generate images / audio / video
+  agent-orchestrators: run an agent loop
+
+# Dirs that are scanned but routed to a hidden_counter rather than
+# top findings. Re-enabled per scan via --include-tests / --include-legacy
+# / --include-generated CLI flags (or include_* params on scan_all).
+default_hidden_dirs:
+  tests:
+    - tests
+    - test
+    - __tests__
+    - spec
+    - specs
+  legacy:
+    - legacy
+    - archive
+    - deprecated
+    - old
+  migrations:
+    - migrations
+    - migrate
+  generated:
+    - generated
+    - gen
+
+# Confidence-gate behavior. The Python output applies this; UI consumes the
+# pre-gated payload + the hidden_counter for the upsell.
+public_output:
+  show_priority_confidence:
+    - high
+  hide_priority_confidence:
+    - medium
+    - low
+  general_tier_unfiltered: true
+
+# Severity heuristic for ordering top_risks (higher = shown first).
+risk_severity:
+  payment-calls: 100
+  fs-shell-shell-exec: 90
+  fs-shell-fs-delete: 80
+  email-sends: 70
+  messaging: 60
+  fs-shell-fs-write: 55
+  db-mutations-delete: 50
+  db-mutations-write: 40
+  llm-calls: 30
+  agent-orchestrators: 20
+
+# Wrap-target ranking — already implemented in summary.chokepoint_rank.
+# Mirrored here for transparency; code is authoritative.
+wrap_target_ranking:
+  prefer_methods:
+    - handle
+    - dispatch
+    - execute
+    - run
+  prefer_classes_named:
+    - orchestrator
+    - supervisor
+    - agent
+    - dispatcher
+    - controller
+    - router

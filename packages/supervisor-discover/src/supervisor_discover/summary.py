@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .findings import Finding
+
+if TYPE_CHECKING:
+    from .start_here import StartHere
 
 # Table names that usually mean PII or money — flagged so the summary can
 # tell the reader "your repo touches sensitive tables" even if policies
@@ -64,6 +67,27 @@ _REAL_WORLD_CAPABILITY: dict[str, str] = {
     "media-gen": "generative media",
 }
 
+# Plain-English capability phrases for the "What this repo can already do"
+# section. Keyed by `<scanner>` or `<scanner>-<family>` so fs-shell can split
+# into delete/write/exec. Loaded by start_here.py via policy_loader so users
+# tune in YAML; this dict is the deterministic fallback used by tests + when
+# a scanner reports a family the YAML doesn't cover.
+_PLAIN_ENGLISH_CAPABILITY: dict[str, str] = {
+    "payment-calls": "move money",
+    "email-sends": "send emails",
+    "messaging": "call messaging tools",
+    "voice-actions": "place phone or voice calls",
+    "calendar-actions": "create calendar events",
+    "fs-shell-shell-exec": "run shell commands",
+    "fs-shell-fs-delete": "delete files",
+    "fs-shell-fs-write": "write files",
+    "llm-calls": "call LLMs",
+    "db-mutations-write": "write to the database",
+    "db-mutations-delete": "delete database rows",
+    "media-gen": "generate images / audio / video",
+    "agent-orchestrators": "run an agent loop",
+}
+
 
 @dataclass(frozen=True)
 class AgentChokepoint:
@@ -105,6 +129,17 @@ class RepoSummary:
     #   "mcp-server+langchain" — both
     #   None                   — generic agent code
     repo_type: str | None = None
+    # Counts of findings hidden from START_HERE / public output, by category:
+    #   "tests"           — files in tests/, __tests__/, etc.
+    #   "legacy"          — files in legacy/, archive/, deprecated/
+    #   "migrations"      — files in migrations/
+    #   "generated"       — files in generated/, gen/
+    #   "medium_priority" — priority-tier findings with confidence != "high"
+    # Used by the UI to render "+ N hidden — open Builder for full set".
+    hidden_findings: dict[str, int] = field(default_factory=dict)
+    # Vibe-coder entry view derived from this summary + findings. Quoted forward-
+    # ref because StartHere lives in start_here.py which imports RepoSummary.
+    start_here: "StartHere | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,7 +164,7 @@ _FACTORY_FILE_HINTS = (
 )
 
 
-def _chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
+def chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
     """Lower rank = better wrap point.
 
     Ranking:
@@ -154,7 +189,12 @@ def _chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
     return (tier, cp.line, cp.file)
 
 
-def build_summary(findings: list[Finding]) -> RepoSummary:
+# Backward-compat alias — keep `_chokepoint_rank` for any internal caller that
+# imported the underscore name. Public `chokepoint_rank` is the canonical one.
+_chokepoint_rank = chokepoint_rank
+
+
+def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None = None) -> RepoSummary:
     frameworks_seen: Counter[str] = Counter()
     http_count = 0
     payments: dict[str, set[str]] = {}
@@ -346,6 +386,7 @@ def build_summary(findings: list[Finding]) -> RepoSummary:
             has_claude_md=has_claude_md,
         ),
         repo_type=repo_type,
+        hidden_findings=dict(hidden_counts or {}),
     )
 
 

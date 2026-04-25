@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 
 from ..findings import Finding
-from ._utils import python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, ts_js_files
 
 # Paths that strongly imply "this file is agent orchestration, not generic MVC".
 _AGENT_PATH_HINTS = (
@@ -234,9 +234,8 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
 def _py_method_defs(path: Path, text: str, existing: list[Finding]) -> list[Finding]:
     """AST-based Python method detection. Immune to word matches in comments,
     docstrings, f-strings, and call sites — the AST only parses real defs."""
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    tree = parse_python(text)
+    if tree is None:
         return []
     source_lines = text.splitlines()
     out: list[Finding] = []

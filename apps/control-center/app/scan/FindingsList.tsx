@@ -4,6 +4,7 @@ import { useState } from "react";
 import { buildEnglishBanner, type ScanFinding, type ScanResponse } from "@/lib/scans";
 import CombosList from "./CombosList";
 import NotWorriedAbout from "./NotWorriedAbout";
+import StartHere from "./StartHere";
 import ZeroConfigPanel from "./ZeroConfigPanel";
 
 const TIER_ORDER = ["money", "real_world_actions", "customer_data", "business_data", "llm", "general"] as const;
@@ -175,50 +176,85 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
   const generalCount = grouped.general?.length ?? 0;
 
   const combos = scan.combos ?? [];
+  // Critical-only combos surface above the fold; lower-severity combos roll
+  // into the full-breakdown disclosure below.
+  const criticalCombos = combos.filter((c) => c.severity === "critical");
+  const nonCriticalCombos = combos.filter((c) => c.severity !== "critical");
+  const startHere = summary?.start_here ?? null;
 
   return (
     <div className="mt-8 space-y-8">
-      {summary && <SummaryCard summary={summary} elapsedMs={scan.elapsed_ms ?? 0} />}
-      {combos.length > 0 && <CombosList combos={combos} />}
-      {summary && <NotWorriedAbout summary={summary} findings={rawFindings} />}
+      {/* 1 — Start here. Always-on entry view. Empty-state copy lives in Python. */}
+      {startHere && <StartHere data={startHere} />}
+
+      {/* 2 — Critical combos surface above the fold; one wrapper per combo. */}
+      {criticalCombos.length > 0 && <CombosList combos={criticalCombos} />}
+
+      {/* 3 — Anonymous-shadow CTA: drop the SDK, claim the dashboard. Stays
+              visible (not collapsed) — it's the primary post-scan action. */}
       <ZeroConfigPanel />
-      <BuilderUnlock
-        findingsCount={findings.length}
-        priorityCount={priorityCount}
-        generalCount={generalCount}
-        hiddenCount={hiddenCount}
-        truncated={scan.findings_truncated}
-      />
 
-      {findings.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-500">
-            <span>
-              <span className="font-mono text-emerald-400">{findings.length}</span> call-sites detected
-              {scan.findings_truncated && (
-                <span className="ml-2 text-xs text-amber-400">(truncated — run the CLI for the full set)</span>
-              )}
+      {/* 4 — Repo details, collapsed by default. Power users expand for the
+              technical banner + stats grid. */}
+      {summary && (
+        <details className="group rounded-xl border border-zinc-800 bg-zinc-900/30">
+          <summary className="cursor-pointer list-none px-6 py-4 text-sm text-zinc-300 marker:hidden">
+            <span className="font-mono text-xs uppercase tracking-widest text-zinc-500">
+              repo details
             </span>
-            <span className="font-mono text-xs">
-              {scan.elapsed_ms ? `${(scan.elapsed_ms / 1000).toFixed(1)}s` : ""}
-            </span>
+            <span className="ml-3 text-zinc-400 group-open:hidden">show ▾</span>
+            <span className="ml-3 text-zinc-400 hidden group-open:inline">hide ▴</span>
+          </summary>
+          <div className="border-t border-zinc-800 p-6">
+            <SummaryCard summary={summary} elapsedMs={scan.elapsed_ms ?? 0} />
           </div>
-
-          <PriorityBrief grouped={grouped} />
-
-          {TIER_ORDER.filter((t) => grouped[t]?.length).map((tier) => (
-            <TierSection
-              key={tier}
-              tier={tier}
-              findings={grouped[tier] ?? []}
-              collapsed={tier === "general"}
-              limit={tier === "general" ? 25 : 80}
-            />
-          ))}
-        </>
+        </details>
       )}
+
+      {/* 5 — Full breakdown, collapsed by default. Wraps NotWorriedAbout, the
+              builder upsell, lower-severity combos, and the per-tier finding
+              tables — everything the dev should not see first. */}
+      <details className="group rounded-xl border border-zinc-800 bg-zinc-900/30">
+        <summary className="cursor-pointer list-none px-6 py-4 marker:hidden">
+          <span className="font-mono text-xs uppercase tracking-widest text-zinc-500">
+            full breakdown
+          </span>
+          <span className="ml-3 text-sm text-zinc-300">
+            {findings.length} {findings.length === 1 ? "finding" : "findings"}
+            {hiddenCount > 0 ? ` + ${hiddenCount} hidden` : ""}
+            {scan.findings_truncated ? " (truncated)" : ""}
+          </span>
+          <span className="ml-3 text-zinc-400 group-open:hidden">show ▾</span>
+          <span className="ml-3 text-zinc-400 hidden group-open:inline">hide ▴</span>
+        </summary>
+        <div className="space-y-8 border-t border-zinc-800 p-6">
+          {nonCriticalCombos.length > 0 && <CombosList combos={nonCriticalCombos} />}
+          {summary && <NotWorriedAbout summary={summary} findings={rawFindings} />}
+          <BuilderUnlock
+            findingsCount={findings.length}
+            priorityCount={priorityCount}
+            generalCount={generalCount}
+            hiddenCount={hiddenCount}
+            truncated={scan.findings_truncated}
+          />
+          {findings.length === 0 ? (
+            <EmptyState />
+          ) : (
+            <>
+              <PriorityBrief grouped={grouped} />
+              {TIER_ORDER.filter((t) => grouped[t]?.length).map((tier) => (
+                <TierSection
+                  key={tier}
+                  tier={tier}
+                  findings={grouped[tier] ?? []}
+                  collapsed={tier === "general"}
+                  limit={tier === "general" ? 25 : 80}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      </details>
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
         <div className="grid gap-4 text-sm text-zinc-400 md:grid-cols-[1fr_auto] md:items-center">

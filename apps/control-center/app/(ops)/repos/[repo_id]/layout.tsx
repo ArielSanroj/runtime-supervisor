@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getRepo } from "@/lib/repos";
 import { buildEnglishBanner, type RepoSummary } from "@/lib/scans";
+import RescanButton from "./RescanButton";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export default async function RepoDetailLayout({
           {banner && <p className="muted" style={{ marginTop: 4 }}>Scanned <strong style={{ color: "#a7f3d0" }}>{banner}</strong>.</p>}
         </div>
         <div className="row" style={{ gap: 8 }}>
-          <Link href={`/scan?repo=${encodeURIComponent(overview.github_url)}`} className="button-secondary">rescan</Link>
+          <RescanButton githubUrl={overview.github_url} />
           <BuilderButton label="export bundle" />
           <BuilderButton label="create PR" />
         </div>

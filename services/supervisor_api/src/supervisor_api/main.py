@@ -17,6 +17,7 @@ from .routes import (
     billing,
     catalog,
     integrations,
+    github_app,
     metrics,
     policies,
     public_signup,
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(billing.router)
     app.include_router(auth_magic.router)
     app.include_router(public_signup.router)
+    app.include_router(github_app.router)
 
     @app.middleware("http")
     async def max_payload_middleware(request, call_next):

@@ -271,6 +271,30 @@ class ThreatAssessmentRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class GitHubInstallation(Base):
+    """One row per GitHub App install. Phase E scaffolding.
+
+    `repo_full_names` is the list of repos the user picked at install
+    time (or `["*"]` if they granted to all). The webhook handler maps
+    incoming `repository.full_name` → installation_id → integration_id
+    so events fire under the right tenant.
+    """
+
+    __tablename__ = "github_installations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    installation_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    github_account_login: Mapped[str] = mapped_column(String(128), nullable=False)
+    github_account_type: Mapped[str] = mapped_column(String(16), nullable=False)  # User | Organization
+    repo_full_names: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    integration_id: Mapped[str | None] = mapped_column(ForeignKey("integrations.id"), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    uninstalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class EvidenceEvent(Base):
     __tablename__ = "evidence_log"
     __table_args__ = (UniqueConstraint("action_id", "seq", name="uq_evidence_action_seq"),)

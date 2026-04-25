@@ -8,6 +8,8 @@ type Creds = {
   shared_secret: string;
   base_url: string;
   scopes: string[];
+  claimed_client_id?: string | null;
+  claimed_actions?: number;
 };
 
 type State =
@@ -96,6 +98,23 @@ function CredsPanel({ creds }: { creds: Creds }) {
         Use them with <code>@runtime-supervisor/guards</code> (Node) or{" "}
         <code>supervisor-guards</code> (Python).
       </p>
+
+      {creds.claimed_actions !== undefined && creds.claimed_actions > 0 && (
+        <div
+          style={{
+            background: "rgba(16, 185, 129, 0.08)",
+            border: "1px solid rgba(16, 185, 129, 0.3)",
+            borderRadius: 8,
+            padding: "12px 16px",
+            marginBottom: 24,
+            fontSize: 13,
+          }}
+        >
+          <strong style={{ color: "#34d399" }}>✓ {creds.claimed_actions} previous shadow event{creds.claimed_actions === 1 ? "" : "s"} migrated</strong>
+          {" — "}
+          your prior anonymous runs (client_id <code>{creds.claimed_client_id?.slice(0, 12)}…</code>) are now visible in this dashboard.
+        </div>
+      )}
 
       <CredRow label="SUPERVISOR_BASE_URL" value={creds.base_url} />
       <CredRow label="SUPERVISOR_APP_ID" value={creds.app_id} />

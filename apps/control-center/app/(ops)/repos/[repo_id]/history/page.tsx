@@ -8,8 +8,8 @@ export default async function RepoHistoryPage({
 }: {
   params: Promise<{ repo_id: string }>;
 }) {
-  const { repo_id } = await params;
-  const history = await getRepoHistory(repo_id);
+  const { repo_id: repoId } = await params;
+  const history = await getRepoHistory(repoId);
 
   if (history.length === 0) {
     return (
@@ -57,7 +57,7 @@ export default async function RepoHistoryPage({
                 <Delta value={row.fixed} sign="-" tone="good" />
               </Td>
               <Td align="right">
-                <Link href={`/findings/${row.scan_id}`}>open →</Link>
+                <Link href={`/repos/${repoId}/history/${row.scan_id}`}>open diff →</Link>
               </Td>
             </tr>
           ))}

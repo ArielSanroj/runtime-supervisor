@@ -44,6 +44,21 @@ class Settings(BaseSettings):
     # is exposed at.
     public_api_url: str = Field(default="http://localhost:8099", alias="PUBLIC_API_URL")
 
+    # GitHub App — Phase E scaffolding. None of these are required to boot.
+    # When all three are populated, the github_app router activates and starts
+    # accepting installs + webhooks. See docs/github-app-setup.md.
+    github_app_id: str = Field(default="", alias="GITHUB_APP_ID")
+    github_app_private_key: str = Field(default="", alias="GITHUB_APP_PRIVATE_KEY")
+    github_webhook_secret: str = Field(default="", alias="GITHUB_WEBHOOK_SECRET")
+
+    @property
+    def github_app_enabled(self) -> bool:
+        return bool(
+            self.github_app_id
+            and self.github_app_private_key
+            and self.github_webhook_secret
+        )
+
     @property
     def billing_enabled(self) -> bool:
         return bool(self.stripe_secret_key and self.stripe_price_id)

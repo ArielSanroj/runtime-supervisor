@@ -26,3 +26,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_supervisor"]
+
+# Local-only: lets uv sync resolve supervisor-client from the workspace.
+# Has no effect on wheels uploaded to PyPI.
+[tool.uv.sources]
+supervisor-client = { workspace = true }

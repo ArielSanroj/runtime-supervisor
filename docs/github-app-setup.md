@@ -90,24 +90,26 @@ Fixed since the last scan: 5
 
 ## Phase ordering — what's done vs what's pending
 
-Done in the current commit:
+Done:
 
 - [x] `github_installations` model + migration 0016
-- [x] `routes/github_app.py` with stub install callback + webhook handler
-- [x] HMAC signature verification helper (works once secret is set)
-- [x] Settings: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`
+- [x] `routes/github_app.py` real implementation:
+  - install/callback: fetches installation info from GitHub, persists row, redirects to dashboard
+  - webhook: HMAC-SHA256 signature verification + dispatcher for `installation`, `installation_repositories`, `pull_request`, `ping`
+- [x] `github_api.py`: app JWT (RS256) + installation token exchange + PR comment posting + PR head lookup
+- [x] `github_pr_comment.py`: markdown formatter (table of new findings, fixed count, dashboard link)
+- [x] Settings: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET` + `github_app_enabled` property
+- [x] 13 pytest cases — signature verification, install/uninstall events, repo add/remove, PR queueing, 501 when unconfigured
 - [x] Router registered in `main.py`
+- [x] `pyjwt[crypto]` added as dep
 
-Still pending (next sprint):
+Still pending (next iteration):
 
 - [ ] Decide where `GITHUB_APP_PRIVATE_KEY` lives (Vercel env vs 1Password vs k8s secret)
-- [ ] App registration on github.com
-- [ ] `install/callback` real handler (link installation_id → integration_id → tenant_id)
-- [ ] Webhook dispatcher: branch on `x_github_event`
-- [ ] Cloning + scanning a PR head — the scanner already supports public URL inputs; private-repo support needs a token from the installation
-- [ ] PR comment poster (use installation access token, see `Octokit` or the raw REST endpoint)
-- [ ] `apps/control-center` dashboard view: `/integrations/github` with install button + list of installed repos
-- [ ] Builder-only gate (Phase E is paid)
+- [ ] App registration on github.com (manual, see steps above)
+- [ ] **PR scan pipeline** (`_run_pr_scan` is a stub) — needs: shallow git clone with installation token, run `supervisor-discover scan`, diff against base ref's last scan, render markdown via `render_pr_comment`, post via `post_pr_comment`. Currently logs and returns; the Phase E loop is wired except for this last leg.
+- [ ] `apps/control-center/app/(ops)/integrations/github` dashboard view — pair `installation_id` with the user's email-issued integration. The install/callback already redirects there with the query param.
+- [ ] Builder-only gate — anonymous shadow stays free; PR comments + auto-rescan-on-push gated to $29/mo.
 
 ## Why this is gated to paid
 

@@ -48,12 +48,12 @@ export default async function Landing() {
             body="Paste a GitHub URL — we map money movement, DB writes, LLM calls, shell/filesystem access, and agent chokepoints."
           />
           <Outcome
-            title="2. Email yourself credentials"
-            body="One field, one click. We email you a one-shot link with your appId + sharedSecret. No password, no signup form."
+            title="2. Drop the SDK in"
+            body="npm i @runtime-supervisor/guards. 5 lines, no signup. Shadow mode by default — your wrapped calls start streaming would-have-blocks immediately."
           />
           <Outcome
-            title="3. Wrap & enforce"
-            body="npm i @runtime-supervisor/guards. 5 lines of config. Shadow mode by default — flip to enforce when you trust the policy."
+            title="3. Claim when you want the dashboard"
+            body="Drop your email in 30 seconds — your shadow events show up in a personal dashboard, and you unlock enforce mode + review queue."
           />
         </div>
       </section>

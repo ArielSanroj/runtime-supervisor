@@ -32,6 +32,10 @@ class Action(Base):
     shadow: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Phase 1 multi-tenant — nullable until Phase 2 backfills every writer.
     tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    # Anonymous shadow attribution. Set by the SDK on requests that have no
+    # Bearer token; lets us later `claim` the events for an email-bound
+    # tenant. Null on authenticated-integration requests.
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     decision: Mapped[Decision | None] = relationship(back_populates="action", uselist=False)
@@ -153,6 +157,9 @@ class MagicLinkToken(Base):
     email: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Free-form metadata attached at issue time. Used by claim flow to carry
+    # the client_id being linked. Null on plain login / signup tokens.
+    token_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

@@ -30,11 +30,22 @@ export class SupervisorError extends Error {
 
 export interface ClientOptions {
   baseUrl: string;
+  /**
+   * Required for enforce mode and authenticated reads. Empty string is
+   * accepted for the anonymous-shadow path: the SDK will skip the JWT
+   * header and tag requests with `client_id` instead.
+   */
   appId: string;
   sharedSecret: string;
   scopes?: string[];
   tokenTtlSeconds?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Anonymous shadow attribution. Sent on `evaluate` when no appId/secret
+   * are configured. Persists in the supervisor under the public-demo
+   * tenant until claimed by an email signup.
+   */
+  clientId?: string;
 }
 
 export class Client {
@@ -44,6 +55,7 @@ export class Client {
   private scopes: string[];
   private ttl: number;
   private fetchImpl: typeof fetch;
+  private clientId: string | undefined;
 
   constructor(opts: ClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
@@ -52,14 +64,31 @@ export class Client {
     this.scopes = opts.scopes ?? ["*"];
     this.ttl = opts.tokenTtlSeconds ?? 300;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.clientId = opts.clientId;
+  }
+
+  private get isAnonymous(): boolean {
+    return !this.appId || !this.secret;
   }
 
   private async headers(): Promise<Record<string, string>> {
+    if (this.isAnonymous) {
+      // Skip JWT — the supervisor accepts unauthenticated `shadow=true`
+      // calls when `client_id` is set. content-type still required for
+      // the JSON body.
+      return { "content-type": "application/json" };
+    }
     const token = await buildToken(this.appId, this.scopes, this.secret, this.ttl);
     return {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     };
+  }
+
+  /** Returns the configured client_id, if any. Used by guards layer to
+   * expose the anonymous attribution to the surrounding application. */
+  getClientId(): string | undefined {
+    return this.clientId;
   }
 
   private async req<T>(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
@@ -87,11 +116,18 @@ export class Client {
     opts: { dryRun?: boolean; shadow?: boolean } = {},
   ): Promise<Decision> {
     const path = "/v1/actions/evaluate" + (opts.dryRun ? "?dry_run=true" : "");
-    return this.req<Decision>("POST", path, {
+    // Anonymous shadow requires both shadow=true and client_id set; the
+    // server rejects shadow=false anonymous calls. Force shadow when
+    // running unauthenticated so a misconfigured caller fails closed
+    // (server-side 401) instead of silently bypassing enforcement.
+    const effectiveShadow = this.isAnonymous ? true : (opts.shadow ?? false);
+    const body: Record<string, unknown> = {
       action_type: actionType,
       payload,
-      shadow: opts.shadow ?? false,
-    });
+      shadow: effectiveShadow,
+    };
+    if (this.clientId) body.client_id = this.clientId;
+    return this.req<Decision>("POST", path, body);
   }
 
   async listActionTypes(): Promise<ActionTypeSpec[]> {

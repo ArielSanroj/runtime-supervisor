@@ -33,7 +33,7 @@ from .. import audit, auth
 from ..config import get_settings
 from ..db import get_db
 from ..email import send_signup_link
-from ..models import Integration, MagicLinkToken
+from ..models import Action, Integration, MagicLinkToken
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/integrations", tags=["public-signup"])
@@ -65,11 +65,22 @@ def _check_send_rate(email: str) -> None:
         bucket.append(now)
 
 
-def _issue_signup_token(db: Session, email: str) -> str:
-    """Insert a fresh single-use signup token, return the URL the user clicks."""
+def _issue_signup_token(db: Session, email: str, *, client_id: str | None = None) -> str:
+    """Insert a fresh single-use signup token, return the URL the user clicks.
+
+    When `client_id` is provided, it's stored in the token's metadata so the
+    onboard exchange can migrate prior anonymous shadow events to the new
+    integration's tenant.
+    """
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(UTC) + timedelta(minutes=_SIGNUP_TTL_MINUTES)
-    db.add(MagicLinkToken(token=token, email=email.lower(), expires_at=expires_at))
+    metadata = {"client_id": client_id} if client_id else None
+    db.add(MagicLinkToken(
+        token=token,
+        email=email.lower(),
+        expires_at=expires_at,
+        token_metadata=metadata,
+    ))
     db.commit()
     site = get_settings().site_url.rstrip("/")
     return f"{site}/onboard/{token}"
@@ -77,6 +88,10 @@ def _issue_signup_token(db: Session, email: str) -> str:
 
 class SignupRequest(BaseModel):
     email: EmailStr
+    # Optional: bind this signup to a previously-anonymous SDK install.
+    # When set, the issued integration claims all prior anonymous shadow
+    # events for that client_id so they show up in the new dashboard.
+    client_id: str | None = None
 
 
 class SignupResponse(BaseModel):
@@ -88,18 +103,30 @@ class OnboardResponse(BaseModel):
     shared_secret: str = Field(description="Use as SUPERVISOR_SECRET env var. Shown once — copy now.")
     base_url: str = Field(description="Use as SUPERVISOR_BASE_URL env var.")
     scopes: list[str]
+    claimed_client_id: str | None = Field(
+        default=None,
+        description="If a client_id was supplied at signup, this echoes back the value that was migrated to the new tenant.",
+    )
+    claimed_actions: int = Field(
+        default=0,
+        description="Number of prior anonymous shadow actions migrated to the new tenant.",
+    )
 
 
 @router.post("/public-signup", response_model=SignupResponse)
 def public_signup(body: SignupRequest, db: Session = Depends(get_db)) -> SignupResponse:
     """Issue a signup token and email it to the user.
 
+    When body.client_id is set, the eventual onboard exchange will also
+    migrate any anonymous shadow actions tagged with that client_id to
+    the new integration's tenant.
+
     Always returns 200 — we don't leak whether the email is rate-limited
     individually beyond the 429 block.
     """
     email = body.email.lower()
     _check_send_rate(email)
-    link_url = _issue_signup_token(db, email)
+    link_url = _issue_signup_token(db, email, client_id=body.client_id)
     try:
         send_signup_link(email, link_url)
     except Exception:
@@ -160,12 +187,42 @@ def onboard(token: str, db: Session = Depends(get_db)) -> OnboardResponse:
 
     db.refresh(integration)
 
+    # Migrate any anonymous shadow actions tagged with the claimed
+    # client_id to the new integration's tenant. This makes the user's
+    # prior shadow events visible in their dashboard without losing the
+    # historical correlation.
+    claimed_client_id: str | None = None
+    claimed_actions = 0
+    metadata = row.token_metadata or {}
+    raw_client_id = metadata.get("client_id") if isinstance(metadata, dict) else None
+    if raw_client_id:
+        claimed_client_id = raw_client_id
+        try:
+            claimed_actions = (
+                db.query(Action)
+                .filter(Action.client_id == raw_client_id)
+                .update({Action.tenant_id: tenant_id, Action.client_id: None}, synchronize_session=False)
+            )
+            db.commit()
+        except Exception:
+            log.exception("onboard: claim migration failed for client_id=%s", raw_client_id)
+            # Non-fatal: integration is created either way. Surface zero
+            # claimed_actions so the UI knows nothing moved.
+            db.rollback()
+            claimed_actions = 0
+
     audit.record(
         actor="public-signup",
         action="integration.create",
         target_type="integration",
         target_id=integration.id,
-        details={"name": integration.name, "email": row.email, "via": "public-signup"},
+        details={
+            "name": integration.name,
+            "email": row.email,
+            "via": "public-signup",
+            "claimed_client_id": claimed_client_id,
+            "claimed_actions": claimed_actions,
+        },
     )
 
     settings = get_settings()
@@ -174,4 +231,6 @@ def onboard(token: str, db: Session = Depends(get_db)) -> OnboardResponse:
         shared_secret=secret,
         base_url=settings.public_api_url,
         scopes=list(integration.scopes or []),
+        claimed_client_id=claimed_client_id,
+        claimed_actions=claimed_actions,
     )

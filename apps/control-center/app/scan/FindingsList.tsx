@@ -4,6 +4,7 @@ import { useState } from "react";
 import { buildEnglishBanner, type ScanFinding, type ScanResponse } from "@/lib/scans";
 import CombosList from "./CombosList";
 import NotWorriedAbout from "./NotWorriedAbout";
+import ZeroConfigPanel from "./ZeroConfigPanel";
 
 const TIER_ORDER = ["money", "real_world_actions", "customer_data", "business_data", "llm", "general"] as const;
 
@@ -180,6 +181,7 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
       {summary && <SummaryCard summary={summary} elapsedMs={scan.elapsed_ms ?? 0} />}
       {combos.length > 0 && <CombosList combos={combos} />}
       {summary && <NotWorriedAbout summary={summary} findings={rawFindings} />}
+      <ZeroConfigPanel />
       <BuilderUnlock
         findingsCount={findings.length}
         priorityCount={priorityCount}

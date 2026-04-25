@@ -1,6 +1,6 @@
 {
   "name": "@runtime-supervisor/guards",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Wrap unsafe agent actions with one decorator. Shadow-mode by default.",
   "license": "Apache-2.0",
   "author": "Ariel San Martín",

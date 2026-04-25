@@ -37,6 +37,11 @@ class EvaluateRequest(BaseModel):
     # keys: session_id, user_id, role, goal, available_tools, sources.
     # Persisted to the evidence log as an "agent.context" event.
     agent_context: dict[str, Any] | None = None
+    # Anonymous shadow attribution. Sent by the SDK when shadow=true and no
+    # Bearer token is present — groups events under a self-generated UUID
+    # so the user can later claim them with an email signup. Ignored when
+    # an authenticated integration is present.
+    client_id: str | None = None
 
 
 class ThreatSignalOut(BaseModel):

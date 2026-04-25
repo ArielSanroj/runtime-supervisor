@@ -10,14 +10,34 @@ Works with any Node 20+ app. For the Python equivalent, see [`supervisor-guards`
 npm i @runtime-supervisor/guards @runtime-supervisor/client
 ```
 
-## Configure once
+## Zero config — anonymous shadow mode
+
+Drop the SDK in. No signup, no credentials. Every wrapped call streams shadow events to the public supervisor, tagged with a self-generated `client_id`.
+
+```ts
+import { configure, guarded } from "@runtime-supervisor/guards";
+
+configure();   // anonymous shadow mode by default
+
+await guarded("payment", { amount: 4200 }, () =>
+  stripe.refunds.create({ payment_intent: "pi_abc" }),
+);
+// ↑ runs as normal AND posts a shadow event to the supervisor.
+//   "would-have-blocked" appears in the console; nothing is gated yet.
+```
+
+Save the `client_id` somewhere you can retrieve it later (env var, localStorage). At [vibefixing.me](https://vibefixing.me) you can paste your email + `client_id` to claim those events into a personal dashboard.
+
+## Authenticated mode (enforce + review queue)
+
+Once you want hard gates and the dashboard, register an integration via the email signup flow at [vibefixing.me/scan](https://vibefixing.me/scan), then:
 
 ```ts
 import { configure } from "@runtime-supervisor/guards";
 
 configure({
   baseUrl: process.env.SUPERVISOR_BASE_URL,   // e.g. https://vibefixing.ngrok.app
-  appId: process.env.SUPERVISOR_APP_ID,       // from POST /v1/integrations
+  appId: process.env.SUPERVISOR_APP_ID,       // from email onboard page
   sharedSecret: process.env.SUPERVISOR_SECRET,
   enforcementMode: "shadow",                   // "shadow" (default) | "sample" | "enforce"
 });

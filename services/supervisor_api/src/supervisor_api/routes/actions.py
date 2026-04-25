@@ -43,10 +43,20 @@ def evaluate_action(
     tenant_id: str = Depends(auth.require_tenant_id_or_public_demo),
 ) -> DecisionOut:
     is_public_demo = principal.integration_id == auth.PUBLIC_DEMO_INTEGRATION_ID
-    if is_public_demo and not dry_run:
+    # Anonymous shadow path: no Bearer + body.shadow=True + body.client_id set.
+    # Persists the action under PUBLIC_DEMO_TENANT_ID with the supplied
+    # client_id so it can later be claimed by an email signup. Refuses
+    # non-shadow anonymous calls to keep enforcement gated.
+    is_anonymous_shadow = is_public_demo and body.shadow and not dry_run
+    if is_anonymous_shadow and not body.client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="anonymous shadow requires client_id — generate one and reuse it across calls",
+        )
+    if is_public_demo and not dry_run and not is_anonymous_shadow:
         raise HTTPException(
             status_code=401,
-            detail="public demo is dry_run only — authenticate to persist actions",
+            detail="public demo is dry_run or shadow only — authenticate to persist enforced actions",
         )
     if not is_public_demo and not (set(principal.scopes) & {"*", body.action_type}):
         raise HTTPException(status_code=403, detail=f"scope '{body.action_type}' not granted")
@@ -102,6 +112,10 @@ def evaluate_action(
         payload=body.payload,
         shadow=body.shadow,
         tenant_id=tenant_id,
+        # Only stamp the client_id on truly anonymous shadow calls. For
+        # authenticated integrations, leaving this null keeps the column
+        # meaning unambiguous (it identifies pre-claim shadow rows only).
+        client_id=body.client_id if is_anonymous_shadow else None,
     )
     db.add(action)
     db.flush()

@@ -1,11 +1,19 @@
 [project]
 name = "supervisor-client"
-version = "0.1.0"
-description = "Python client for runtime-supervisor (Agentic Internal Controls)"
+version = "0.2.0"
+description = "Python client for runtime-supervisor — evaluate, review, and audit agent actions."
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Ariel San Martín" }]
 requires-python = ">=3.10"
+keywords = ["ai-agents", "llm", "guardrails", "policy-engine", "runtime-supervisor"]
 dependencies = [
     "httpx>=0.27",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ArielSanroj/runtime-supervisor"
+Repository = "https://github.com/ArielSanroj/runtime-supervisor"
 
 [project.optional-dependencies]
 dev = [

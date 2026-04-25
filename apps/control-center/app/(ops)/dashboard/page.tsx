@@ -189,11 +189,18 @@ export default async function Dashboard({
     const baseUrl = process.env.SUPERVISOR_API_URL ?? "http://localhost:8000";
     return (
       <div>
-        <h1>Fix Queue</h1>
+        <h1>Fix this first</h1>
+        <p className="muted" style={{ margin: "8px 0 16px" }}>
+          What your agent can do unchecked, where it is, and how to gate it.
+        </p>
         <div className="card" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
           Cannot connect to the supervisor at <code>{baseUrl}</code>.
           {err && <div className="muted mono" style={{ marginTop: 8, fontSize: 12 }}>{err}</div>}
+          <div className="muted" style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
+            If the supervisor is running locally, confirm <code>SUPERVISOR_APP_ID</code> and <code>SUPERVISOR_SECRET</code> in Vercel match an active integration on the backend. Re-register with <code>./quickstart.sh</code> if the DB was reset.
+          </div>
         </div>
+        <RepoKpis />
       </div>
     );
   }

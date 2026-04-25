@@ -1,7 +1,15 @@
 {
   "name": "@runtime-supervisor/client",
-  "version": "0.1.0",
-  "description": "TypeScript client for runtime-supervisor (Agentic Internal Controls)",
+  "version": "0.2.0",
+  "description": "TypeScript client for runtime-supervisor — evaluate, review, and audit agent actions.",
+  "license": "Apache-2.0",
+  "author": "Ariel San Martín",
+  "homepage": "https://github.com/ArielSanroj/runtime-supervisor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ArielSanroj/runtime-supervisor.git"
+  },
+  "keywords": ["ai-agents", "llm", "guardrails", "policy-engine", "runtime-supervisor"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,7 +19,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

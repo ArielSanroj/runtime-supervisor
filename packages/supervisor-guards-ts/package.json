@@ -1,14 +1,22 @@
 {
   "name": "@runtime-supervisor/guards",
-  "version": "0.1.0",
-  "description": "Runtime enforcement wrappers for runtime-supervisor",
+  "version": "0.2.0",
+  "description": "Wrap unsafe agent actions with one decorator. Shadow-mode by default.",
+  "license": "Apache-2.0",
+  "author": "Ariel San Martín",
+  "homepage": "https://github.com/ArielSanroj/runtime-supervisor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ArielSanroj/runtime-supervisor.git"
+  },
+  "keywords": ["ai-agents", "llm", "guardrails", "policy-engine", "shadow-mode", "runtime-supervisor"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -16,7 +24,7 @@
   },
   "engines": { "node": ">=20" },
   "dependencies": {
-    "@runtime-supervisor/client": "workspace:*"
+    "@runtime-supervisor/client": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

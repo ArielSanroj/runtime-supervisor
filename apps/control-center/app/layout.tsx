@@ -57,6 +57,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schemaOrg) }}
         />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: '{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"What is Vibefixing?","acceptedAnswer":{"@type":"Answer","text":"Vibefixing is a runtime supervisor and security scanner for AI agents. It finds unsafe tool calls before they reach production."}},{"@type":"Question","name":"How does Vibefixing prevent prompt injection?","acceptedAnswer":{"@type":"Answer","text":"By flagging every path where an LLM output can trigger an irreversible action without a confirmation step."}},{"@type":"Question","name":"Does Vibefixing work with any AI agent framework?","acceptedAnswer":{"@type":"Answer","text":"Yes: LangChain, LlamaIndex, CrewAI, OpenAI function-calling, Anthropic tool use, or plain Python scripts."}},{"@type":"Question","name":"What unsafe actions does Vibefixing detect?","acceptedAnswer":{"@type":"Answer","text":"Unguarded payment calls, raw SQL mutations, filesystem writes, subprocess execution, and HTTP calls that can exfiltrate data."}},{"@type":"Question","name":"How long does a scan take?","acceptedAnswer":{"@type":"Answer","text":"Under 60 seconds using static analysis, no code execution required."}}]}' }}
+        />
         {children}
       </body>
     </html>

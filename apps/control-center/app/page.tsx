@@ -30,10 +30,11 @@ export default async function Landing() {
             >
               scan your repo free
             </Link>
-            <Cmd cmd="pipx install supervisor-discover" />
+            <Cmd cmd="npm i @runtime-supervisor/guards" />
           </div>
           <p className="mt-4 text-sm text-zinc-500">
-            Free public repo scan. Upgrade when you need private repos, full exports, history, and CI.
+            Free scan + free SDK + free credentials by email. Builder ($29/mo) unlocks private repos,
+            history, and CI comments.
           </p>
         </div>
 
@@ -42,9 +43,18 @@ export default async function Landing() {
 
       <section className="border-y border-zinc-900 bg-zinc-950/70">
         <div className="mx-auto grid max-w-6xl gap-6 px-6 py-14 md:grid-cols-3">
-          <Outcome title="1. Scan" body="We map money movement, DB writes, LLM calls, HTTP routes, shell/filesystem access, and agent chokepoints." />
-          <Outcome title="2. Fix" body="You get copy-paste wrappers, YAML policies, and the highest-risk call-sites sorted first." />
-          <Outcome title="3. Enforce" body="Run in shadow mode, watch what would have been blocked, then flip the risky paths to enforce." />
+          <Outcome
+            title="1. Scan"
+            body="Paste a GitHub URL — we map money movement, DB writes, LLM calls, shell/filesystem access, and agent chokepoints."
+          />
+          <Outcome
+            title="2. Email yourself credentials"
+            body="One field, one click. We email you a one-shot link with your appId + sharedSecret. No password, no signup form."
+          />
+          <Outcome
+            title="3. Wrap & enforce"
+            body="npm i @runtime-supervisor/guards. 5 lines of config. Shadow mode by default — flip to enforce when you trust the policy."
+          />
         </div>
       </section>
 
@@ -248,10 +258,11 @@ function Header({ apiUp }: { apiUp: boolean }) {
 
 function ScanPreview() {
   // Real output of `supervisor-discover scan` against this repo
-  // (agentic-internal-controls itself), transcribed for the English landing.
-  // The CLI itself currently emits Spanish for some labels ("tablas:", "abre
-  // primero:") — those are translated here so the preview reads natively.
-  // When the CLI ships English i18n, snapshot verbatim instead.
+  // (agentic-internal-controls itself), in the new START HERE format. The CLI
+  // now leads with "Best place to wrap first / This repo can already / Top
+  // risks" — the per-tier breakdown is opt-in via --full or runtime-supervisor/
+  // FULL_REPORT.md. Numbers are derived from the latest scan; refresh when the
+  // repo changes shape.
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-emerald-950/20">
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900/80 px-4 py-2.5 font-mono text-xs text-zinc-500">
@@ -267,27 +278,35 @@ function ScanPreview() {
 {`$ supervisor-discover scan
 scanned /your-repo in 13.0s
 
-  stack: fastapi + next-app-router + flask  ·  HTTP routes: 74
-  payments: stripe (refunds)
-  LLM: Anthropic Claude, OpenAI  ·  crons: 2
-  actions: voice (elevenlabs, twilio) · email (smtplib) · filesystem (fs-write, shell-exec)
-  🎯 agent: framework: langchain python, langchain.js / custom agent · 1 tool (pay_order)
+Best place to wrap first:
+  1. SupervisorAgent.handle      services/api/agents/supervisor.py:42
+  2. tool: pay_order             services/api/agents/tools.py:18
+  3. AgentExecutor framework     services/api/agents/executor.py:7
 
-  Money movement           3 high / 0 medium / 0 low  stripe (refunds)
-  Real-world actions      20 high / 2 medium / 0 low  voice · email · filesystem
-  Customer data            0 high / 8 medium / 0 low  tables: users
-  Business data            0 high / 2 medium / 0 low  tables: tenants, trades
-  LLM tool-use             4 high / 3 medium / 0 low  Anthropic Claude, OpenAI
-  General / informational 76 informational            74 routes · 2 crons
+This repo can already:
+  - move money
+  - send emails
+  - call messaging tools
+  - run shell commands
+  - call LLMs (Anthropic Claude, OpenAI)
 
-→ wrote runtime-supervisor/
-→ next: open SUMMARY.md — prioritized security review
-→ 6 combos detected — open first: agent-orchestrator.md`}
+Top risks:
+  - money movement present
+  - shell execution present
+  - email sending present
+
+Next:
+  open runtime-supervisor/START_HERE.md      ← do this first
+  runtime-supervisor/FULL_REPORT.md          ← all findings
+  runtime-supervisor/ROLLOUT.md              ← phased deploy
+
+-> wrote runtime-supervisor/
+-> 6 combos detected — open first: agent-orchestrator.md`}
       </pre>
       <div className="grid border-t border-zinc-800 md:grid-cols-3">
-        <PreviewMetric label="high-risk call-sites" value="27" tone="danger" />
-        <PreviewMetric label="combos detected" value="6" tone="good" />
-        <PreviewMetric label="HTTP routes mapped" value="74" tone="muted" />
+        <PreviewMetric label="wrap targets surfaced" value="3" tone="good" />
+        <PreviewMetric label="capabilities found" value="5" tone="danger" />
+        <PreviewMetric label="combos detected" value="6" tone="muted" />
       </div>
     </div>
   );

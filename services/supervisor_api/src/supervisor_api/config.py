@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Public site URL — used to build magic-link callback URLs in emails.
     site_url: str = Field(default="http://localhost:3099", alias="SITE_URL")
 
+    # Public API URL — what we tell SDK users to put in `baseUrl=`. In dev this
+    # equals SITE_URL since the Next.js rewrites /v1/* to localhost:8099.
+    # In prod set to https://vibefixing.ngrok.app or whatever the supervisor
+    # is exposed at.
+    public_api_url: str = Field(default="http://localhost:8099", alias="PUBLIC_API_URL")
+
     @property
     def billing_enabled(self) -> bool:
         return bool(self.stripe_secret_key and self.stripe_price_id)

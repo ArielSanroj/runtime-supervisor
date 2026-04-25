@@ -69,10 +69,10 @@ export default function Post() {
 
       <article className="mx-auto max-w-3xl px-6 py-16">
         <Link
-          href="/"
+          href="/blog"
           className="font-mono text-xs text-zinc-500 hover:text-zinc-300"
         >
-          ← back to vibefixing
+          ← all field notes
         </Link>
 
         <p className="mt-8 font-mono text-xs uppercase tracking-widest text-zinc-500">

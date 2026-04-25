@@ -9,6 +9,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
+      url: 'https://www.vibefixing.me/blog',
+      lastModified: new Date('2026-04-25'),
+      changeFrequency: 'weekly',
+      priority: 0.8,
+    },
+    {
       url: 'https://www.vibefixing.me/blog/voice-phishing-langchain-agent',
       lastModified: new Date('2026-04-25'),
       changeFrequency: 'monthly',

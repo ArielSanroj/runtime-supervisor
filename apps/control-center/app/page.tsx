@@ -572,7 +572,7 @@ function Footer() {
           <Link href="/scan" className="hover:text-zinc-300">/scan</Link>
           <Link href="/dashboard" className="hover:text-zinc-300">/dashboard</Link>
           <Link href="/review?status=pending" className="hover:text-zinc-300">/review</Link>
-          <Link href="/blog/voice-phishing-langchain-agent" className="hover:text-zinc-300">/blog</Link>
+          <Link href="/blog" className="hover:text-zinc-300">/blog</Link>
           <Link href="https://github.com/ArielSanroj/runtime-supervisor" className="hover:text-zinc-300">/github</Link>
         </div>
       </div>

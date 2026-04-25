@@ -164,6 +164,38 @@ def handle_tool_call(tool, args):
         <DemoCarousel />
       </section>
 
+      <section className="mx-auto max-w-5xl px-6 py-16">
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold tracking-tight">Field notes</h2>
+          <p className="mt-3 max-w-2xl text-zinc-400">
+            Real combos we&apos;ve found in real agents. What the LLM can do, why it matters,
+            and the gate that stops it.
+          </p>
+        </div>
+        <Link
+          href="/blog/voice-phishing-langchain-agent"
+          className="group block overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 p-6 transition-colors hover:border-emerald-700/50 md:p-8"
+        >
+          <div className="flex items-center gap-3 font-mono text-xs">
+            <span className="rounded-full border border-rose-700/40 bg-rose-500/10 px-2.5 py-0.5 text-rose-300">
+              combo · voice-clone + outbound-call
+            </span>
+            <span className="text-zinc-500">april 25, 2026</span>
+          </div>
+          <h3 className="mt-4 text-xl font-bold leading-snug tracking-tight text-zinc-100 group-hover:text-emerald-300 sm:text-2xl">
+            The vishing recipe hiding in your LangChain agent: ElevenLabs + Twilio + one prompt injection
+          </h3>
+          <p className="mt-3 leading-7 text-zinc-400">
+            We scanned a real parenting assistant. Three innocent features &mdash; TTS, outbound calls,
+            an ungated LLM &mdash; compose into a working voice-phishing weapon under one calendar-event
+            injection. The exploit, the code, and the gate.
+          </p>
+          <span className="mt-5 inline-flex items-center gap-1 font-mono text-sm text-emerald-400 group-hover:text-emerald-300">
+            read field note &rarr;
+          </span>
+        </Link>
+      </section>
+
       <section className="border-y border-zinc-900 bg-zinc-950">
         <div className="mx-auto max-w-6xl px-6 py-16">
           <div className="mb-8">
@@ -540,6 +572,7 @@ function Footer() {
           <Link href="/scan" className="hover:text-zinc-300">/scan</Link>
           <Link href="/dashboard" className="hover:text-zinc-300">/dashboard</Link>
           <Link href="/review?status=pending" className="hover:text-zinc-300">/review</Link>
+          <Link href="/blog/voice-phishing-langchain-agent" className="hover:text-zinc-300">/blog</Link>
           <Link href="https://github.com/ArielSanroj/runtime-supervisor" className="hover:text-zinc-300">/github</Link>
         </div>
       </div>

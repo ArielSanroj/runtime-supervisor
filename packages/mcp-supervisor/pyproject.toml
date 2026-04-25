@@ -1,6 +1,6 @@
 [project]
 name = "mcp-supervisor"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server exposing runtime-supervisor tools to LLM agents (Claude Desktop, Cursor, etc.)"
 readme = "README.md"
 license = "Apache-2.0"
@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 keywords = ["mcp", "ai-agents", "claude", "guardrails", "runtime-supervisor"]
 dependencies = [
     "mcp>=1.2",
-    "supervisor-client>=0.3,<0.4",
+    "supervisor-client>=0.3.1,<0.4",
 ]
 
 [project.urls]

@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .config import configure, get_client
 from .context import observe, observing
 from .core import guarded, supervised, supervised_async
@@ -14,4 +16,8 @@ __all__ = [
     "SupervisorBlocked",
     "SupervisorReviewPending",
 ]
-__version__ = "0.1.0"
+
+try:
+    __version__ = _pkg_version("supervisor-guards")
+except PackageNotFoundError:
+    __version__ = "0.0.0+local"

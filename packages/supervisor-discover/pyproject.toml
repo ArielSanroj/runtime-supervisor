@@ -1,6 +1,6 @@
 [project]
 name = "supervisor-discover"
-version = "0.3.0"
+version = "0.3.1"
 description = "Scan an AI-agent repo and emit runtime-supervisor wrappers, policies, and combo playbooks."
 readme = "README.md"
 license = "Apache-2.0"

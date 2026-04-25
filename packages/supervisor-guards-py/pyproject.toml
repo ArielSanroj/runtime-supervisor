@@ -1,6 +1,6 @@
 [project]
 name = "supervisor-guards"
-version = "0.3.0"
+version = "0.3.1"
 description = "Wrap unsafe agent actions with one decorator. Shadow-mode by default."
 readme = "README.md"
 license = "Apache-2.0"
@@ -9,7 +9,7 @@ authors = [{ name = "Ariel San Martín" }]
 requires-python = ">=3.10"
 keywords = ["ai-agents", "llm", "guardrails", "policy-engine", "shadow-mode", "runtime-supervisor"]
 dependencies = [
-    "supervisor-client>=0.3,<0.4",
+    "supervisor-client>=0.3.1,<0.4",
     "httpx>=0.27",
 ]
 

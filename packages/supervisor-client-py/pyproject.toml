@@ -1,6 +1,6 @@
 [project]
 name = "supervisor-client"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python client for runtime-supervisor — evaluate, review, and audit agent actions."
 readme = "README.md"
 license = "Apache-2.0"

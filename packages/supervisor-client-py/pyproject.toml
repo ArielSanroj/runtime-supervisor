@@ -1,7 +1,8 @@
 [project]
 name = "supervisor-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python client for runtime-supervisor — evaluate, review, and audit agent actions."
+readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Ariel San Martín" }]
@@ -19,9 +20,6 @@ Repository = "https://github.com/ArielSanroj/runtime-supervisor"
 dev = [
     "pytest>=8.0",
 ]
-
-[tool.uv.sources]
-supervisor-api = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

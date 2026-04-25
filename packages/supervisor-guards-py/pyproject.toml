@@ -1,14 +1,15 @@
 [project]
 name = "supervisor-guards"
-version = "0.2.0"
+version = "0.3.0"
 description = "Wrap unsafe agent actions with one decorator. Shadow-mode by default."
+readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Ariel San Martín" }]
 requires-python = ">=3.10"
 keywords = ["ai-agents", "llm", "guardrails", "policy-engine", "shadow-mode", "runtime-supervisor"]
 dependencies = [
-    "supervisor-client>=0.2,<0.3",
+    "supervisor-client>=0.3,<0.4",
     "httpx>=0.27",
 ]
 
@@ -25,9 +26,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/supervisor_guards"]
-
-[tool.uv.sources]
-supervisor-client = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

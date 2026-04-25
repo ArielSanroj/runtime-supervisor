@@ -1,9 +1,19 @@
 [project]
 name = "supervisor-discover"
-version = "0.1.0"
-description = "Scan an agent repo and install runtime supervision guards"
+version = "0.3.0"
+description = "Scan an AI-agent repo and emit runtime-supervisor wrappers, policies, and combo playbooks."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Ariel San Martín" }]
 requires-python = ">=3.10"
+keywords = ["ai-agents", "llm", "static-analysis", "guardrails", "scanner", "runtime-supervisor"]
 dependencies = []
+
+[project.urls]
+Homepage = "https://vibefixing.me"
+Repository = "https://github.com/ArielSanroj/runtime-supervisor"
+Documentation = "https://github.com/ArielSanroj/runtime-supervisor/tree/main/packages/supervisor-discover"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

@@ -64,7 +64,7 @@ importers:
   packages/supervisor-guards-ts:
     dependencies:
       '@runtime-supervisor/client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../supervisor-client-ts
     devDependencies:
       '@types/node':

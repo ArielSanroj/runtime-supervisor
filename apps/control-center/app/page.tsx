@@ -219,6 +219,88 @@ def handle_tool_call(tool, args):
         </div>
       </section>
 
+      
+      {/* AEO: FAQ section for answer engine citations */}
+      <section className="mx-auto max-w-3xl px-6 py-24" aria-label="Frequently asked questions">
+        <h2 className="mb-12 text-center text-3xl font-bold text-zinc-100">
+          Frequently Asked Questions
+        </h2>
+        <div className="space-y-8">
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              What is Vibefixing and what does it scan?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Vibefixing is a runtime supervisor and security scanner for AI agents. It statically
+              analyzes your codebase to find unsafe tool calls your AI agent can execute before
+              they reach production: unguarded Stripe charges, raw database mutations,
+              filesystem writes, and shell commands.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              How does Vibefixing prevent prompt injection in AI agents?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Vibefixing identifies tool calls that lack input validation or guardrails, which are the
+              primary attack surface for prompt injection. By flagging every path where an LLM output
+              can trigger an irreversible action without a human confirmation step, it eliminates the
+              conditions that make injection exploits dangerous.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Is Vibefixing safe to use for vibe coders shipping with AI-generated code?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Yes. Vibefixing is designed for vibe coders: developers shipping fast with AI assistants
+              like Claude, Cursor, or Copilot. It catches risky patterns LLMs commonly generate:
+              unguarded API calls, database deletes without confirmation, and credential exposure
+              in tool call arguments.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Does Vibefixing work with any AI agent framework?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Vibefixing analyzes your repository at the code level, so it works with any agent
+              framework: LangChain, LlamaIndex, CrewAI, custom OpenAI function-calling, Anthropic
+              tool use, or plain Python scripts. No instrumentation or runtime hooks required.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              What unsafe actions does Vibefixing detect?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Vibefixing detects: unguarded payment calls (Stripe, PayPal), raw SQL mutations
+              (INSERT, UPDATE, DELETE without transactions), filesystem writes and deletes,
+              subprocess and shell execution, email sends without confirmation, and external HTTP
+              calls that can exfiltrate data. Each finding includes the file, line, and a fix.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              How long does a Vibefixing scan take?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              A public repository scan typically completes in under 60 seconds. Vibefixing uses
+              static analysis and does not run your code or require an API key for the scan.
+              Results include a risk score, a list of unsafe actions, and copy-paste guardrail
+              code for each finding.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
       <Footer />
     </div>
   );

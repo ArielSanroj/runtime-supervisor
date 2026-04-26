@@ -130,6 +130,165 @@ def _is_shim_class(name: str) -> bool:
     lower = name.lower()
     return any(tok in lower for tok in _CLASS_NAME_BLOCKLIST)
 
+
+# Modules whose import implies "this code makes decisions from LLM output".
+# An agent-shaped class in a file that imports any of these is a real agent;
+# one that doesn't is more likely a pipeline/worker that just inherited the
+# `…Agent` / `…Orchestrator` naming convention. Match by import prefix
+# (`import openai`, `from openai.chat`, etc.).
+_LLM_IMPORT_PREFIXES = (
+    "openai", "anthropic", "langchain", "langgraph", "langsmith",
+    "llama_index", "llamaindex", "llama_cpp",
+    "crewai", "autogen", "guidance",
+    "google.generativeai", "vertexai",
+    "cohere", "replicate", "mistralai",
+)
+
+# JS/TS — same idea, regex over import statements.
+_LLM_IMPORT_REGEX = re.compile(
+    r"""(?:from|import)\s*(?:[^"']*?)\s*['"](?:@?(?:openai|anthropic|langchain|"""
+    r"""langgraph|langsmith|llamaindex|llama-index|crewai|"""
+    r"""mistralai|cohere|replicate)[^'"]*)['"]"""
+)
+
+
+# Decision-by-string-key shapes — `if action == "X"`, `if intent ==`,
+# `match tool: case "X"`, `if msg.type ==`. The presence of one of these
+# indicates "this class branches on a model-supplied label", which is the
+# defining feature of an agent vs a worker pool.
+_DECISION_KEYS = frozenset({
+    "action", "intent", "tool", "kind", "type", "command",
+    "operation", "step", "task_type",
+})
+
+
+def _file_imports_llm_client(tree: ast.Module) -> bool:
+    """Walk module-level imports for any well-known LLM SDK prefix."""
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(alias.name == p or alias.name.startswith(p + ".") for p in _LLM_IMPORT_PREFIXES):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if any(mod == p or mod.startswith(p + ".") for p in _LLM_IMPORT_PREFIXES):
+                return True
+    return False
+
+
+def _has_decision_branching(tree: ast.Module) -> bool:
+    """True when any function/method in the module branches on a decision
+    key (`if action == ...` or `match action: case ...`).
+
+    The check is intentionally local to the module — we don't follow imports
+    or instance attribute flows. False positives are bounded because the
+    branch must be on one of the curated `_DECISION_KEYS`; false negatives
+    surface as "missed dispatch" which the renderer downgrades to
+    pipeline-orchestrator (still visible in FULL_REPORT, just not top of
+    'Best place to wrap first').
+    """
+    for node in ast.walk(tree):
+        # `if action == "X":` / `if intent in (...)` / chained comparisons.
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
+            if node.left.id in _DECISION_KEYS:
+                return True
+            if (
+                isinstance(node.left, ast.Attribute)
+                and isinstance(node.left.attr, str)
+                and node.left.attr in _DECISION_KEYS
+            ):
+                return True
+        # `match action: case "X":` (Python 3.10+).
+        if isinstance(node, ast.Match) and isinstance(node.subject, ast.Name):
+            if node.subject.id in _DECISION_KEYS:
+                return True
+        if isinstance(node, ast.Match) and isinstance(node.subject, ast.Attribute):
+            if isinstance(node.subject.attr, str) and node.subject.attr in _DECISION_KEYS:
+                return True
+    return False
+
+
+# Import prefixes that are positive evidence of pipeline-shaped work:
+# scrapers (httpx async pools, aiohttp), OCR pipelines (tesseract, pdf2image,
+# OpenCV, paddle/easy/python OCRs), media/audio batch processing (ffmpeg-python,
+# pillow), or queue workers. The presence of one of these AND the absence of
+# any LLM SDK reclassifies the class as pipeline-orchestrator. We don't
+# include `multiprocessing` / `concurrent.futures` — those are too generic
+# (agents also use threadpools).
+_PIPELINE_IMPORT_PREFIXES = (
+    "httpx", "aiohttp",                              # scrapers
+    "cv2", "PIL", "pillow",                          # image
+    "pytesseract", "easyocr", "paddleocr",           # OCR
+    "pdf2image", "pdfplumber", "fitz",               # PDF
+    "celery", "rq", "dramatiq",                      # queue workers
+    "scrapy",                                        # explicit scraping
+    "ffmpeg", "moviepy",                             # media
+)
+
+
+def _file_imports_pipeline_lib(tree: ast.Module) -> bool:
+    """Walk module-level imports for any well-known pipeline / scraper /
+    OCR / queue-worker library. Used as positive evidence that an
+    agent-shaped class is actually a pipeline stage."""
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(alias.name == p or alias.name.startswith(p + ".")
+                       for p in _PIPELINE_IMPORT_PREFIXES):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if any(mod == p or mod.startswith(p + ".")
+                   for p in _PIPELINE_IMPORT_PREFIXES):
+                return True
+    return False
+
+
+# JS/TS — same idea, regex over imports.
+_PIPELINE_IMPORT_REGEX = re.compile(
+    r"""(?:from|import)\s*(?:[^"']*?)\s*['"](?:@?(?:axios|"""
+    r"""puppeteer|playwright|cheerio|tesseract\.js|sharp|jimp|"""
+    r"""bullmq|kue|agenda)[^'"]*)['"]"""
+)
+
+
+def _is_pipeline_orchestrator(text: str, language: str) -> bool:
+    """True when a class with an agent-shaped name is almost certainly a
+    worker pool / pipeline stage instead of an LLM-driven agent.
+
+    The classifier requires **positive evidence** of a pipeline shape — not
+    just absence of LLM imports — to avoid downgrading agents like
+    `AlertDispatcher` whose work happens to live in a file with no direct
+    LLM SDK import. Reclassification fires only when the file:
+
+      1. imports a pipeline / scraper / OCR / queue-worker library
+         (httpx scraper, cv2, pytesseract, celery, scrapy, …), AND
+      2. does NOT import any known LLM SDK, AND
+      3. does NOT branch on a decision key (`if action == ...`).
+
+    Returns False on parse failure (be conservative — keep the wrap
+    recommendation rather than silently drop one).
+    """
+    if language == "python":
+        tree = parse_python(text)
+        if tree is None:
+            return False
+        if _file_imports_llm_client(tree):
+            return False
+        if _has_decision_branching(tree):
+            return False
+        return _file_imports_pipeline_lib(tree)
+    # JS/TS — same three-step gate.
+    if _LLM_IMPORT_REGEX.search(text):
+        return False
+    decision_re = re.compile(
+        r"\b(?:if|switch)\s*\(\s*(?:msg\.|message\.|input\.|payload\.|this\.)?"
+        r"(?:" + "|".join(_DECISION_KEYS) + r")\b"
+    )
+    if decision_re.search(text):
+        return False
+    return bool(_PIPELINE_IMPORT_REGEX.search(text))
+
 # LOW-confidence by itself, MEDIUM when in agent path — method defs.
 _AGENT_METHOD_NAMES = (
     "handle", "execute", "dispatch", "plan", "reason", "decide",
@@ -313,21 +472,39 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
         _multi_method_dispatchers(text) if path.suffix == ".py" else {}
     )
 
-    # 3. Agent-shaped class definitions — HIGH in agent paths, MEDIUM otherwise.
-    # Skip shims (Stub/Mock/Fake/Compat/…) — they match the name regex but are
-    # test doubles or abstract bases, never the real orchestrator in prod.
+    # Pipeline-vs-agent classification: a class with an agent-shaped name in
+    # a file with no LLM SDK import and no decision-key branching is almost
+    # always a worker pool / OCR stage / scraper, not an LLM-driven agent.
+    # The reviewer flagged BurstOrchestrator (httpx async pool) and the
+    # PartiesAgent / HeaderAgent / TotalsAgent OCR pipeline on castor-1 —
+    # they cluttered "Best place to wrap first" with non-LLM code paths.
+    file_lang = "python" if path.suffix == ".py" else "ts"
+    is_pipeline = _is_pipeline_orchestrator(text, file_lang)
+
+    # 3. Agent-shaped class definitions — HIGH in agent paths, MEDIUM otherwise,
+    # LOW when reclassified as a non-LLM pipeline. Skip shims (Stub/Mock/Fake/…).
     for pattern, label in _CLASS_DEF:
         for m in pattern.finditer(text):
             line = text[: m.start()].count("\n") + 1
             class_name = m.group(1) if m.groups() else "?"
             if _is_shim_class(class_name):
                 continue
-            confidence = "high" if in_agent_path else "medium"
+            if is_pipeline:
+                # Pipeline orchestrators stay in FULL_REPORT for completeness
+                # but never reach "Best place to wrap first" (low confidence
+                # is gated out of the top section).
+                confidence = "low"
+            elif in_agent_path:
+                confidence = "high"
+            else:
+                confidence = "medium"
             extra: dict[str, object] = {
                 "kind": "agent-class",
                 "class_name": class_name,
                 "pattern": label,
             }
+            if is_pipeline:
+                extra["pipeline_orchestrator"] = True
             parallel_methods = multi_method_classes.get(class_name) or []
             if parallel_methods:
                 extra["parallel_methods"] = parallel_methods

@@ -501,6 +501,47 @@ _PRIMARY_METHOD_PREFERENCE = (
     "process", "route", "invoke", "call", "step",
 )
 
+# Variable names that, when used as the LHS of a comparison or as the subject
+# of a `match` statement, indicate "this method routes by a label produced
+# upstream (likely by an LLM)". Used to identify the actual dispatcher method
+# inside an agent class — the reviewer flagged that the previous heuristic
+# picked methods named `handle` even when the real dispatcher was
+# `_execute_action(self, decision)` with `if action == AgentAction.X` inside.
+_DISPATCH_DECISION_KEYS = frozenset({
+    "action", "intent", "tool", "kind", "type", "command",
+    "operation", "step", "task_type", "verb",
+})
+
+
+def _decision_case_count(method: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """How many times the method's body branches on a decision key.
+
+    Examples that count:
+      - `if action == "create": …`            (Compare on a Name in keys)
+      - `if action in ("a", "b"): …`          (Compare on a Name in keys)
+      - `match decision.action: case …`       (Match on Attribute whose attr is in keys)
+      - `if self.intent == "x": …`            (Compare on Attribute whose attr is in keys)
+
+    Walked over the entire method body so nested if/elif chains all count.
+    Returns 0 for methods that never reference a decision key — those are
+    not dispatchers in the agent sense, regardless of name.
+    """
+    count = 0
+    for node in ast.walk(method):
+        if isinstance(node, ast.Compare):
+            left = node.left
+            if isinstance(left, ast.Name) and left.id in _DISPATCH_DECISION_KEYS:
+                count += 1
+            elif isinstance(left, ast.Attribute) and left.attr in _DISPATCH_DECISION_KEYS:
+                count += 1
+        elif isinstance(node, ast.Match):
+            subj = node.subject
+            if isinstance(subj, ast.Name) and subj.id in _DISPATCH_DECISION_KEYS:
+                count += len(node.cases)
+            elif isinstance(subj, ast.Attribute) and subj.attr in _DISPATCH_DECISION_KEYS:
+                count += len(node.cases)
+    return count
+
 
 def _format_python_args(args: ast.arguments) -> str:
     """Render an `ast.arguments` node back into a Python parameter list.
@@ -521,8 +562,14 @@ def _pick_method_for_wrap(
     Order:
       1. If parallel methods were detected, return the first one (renderer
          tells the user to repeat for the rest).
-      2. Otherwise, prefer well-known entry-point names (handle, execute, …).
-      3. Otherwise, the first public method that isn't `__init__`.
+      2. AST-based: pick the method whose body branches on a decision key
+         (`if action == X` / `match action: case ...`). Wins over name-based
+         heuristics because it identifies the *actual* dispatcher — the
+         reviewer's complaint on castor-1 was that the snippet pointed at
+         `handle()` (which doesn't exist) instead of the real
+         `_execute_action(self, decision)` with `if action == AgentAction.X`.
+      3. Name-based preference: handle / execute / dispatch / run / ….
+      4. First public method that isn't `__init__`.
     """
     methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for child in cls.body:
@@ -534,6 +581,18 @@ def _pick_method_for_wrap(
             node = methods.get(name)
             if node is not None:
                 return node
+
+    # Decision-branching: look for the method that routes by an LLM-supplied
+    # label. Highest case count wins; tie-break by line so the earlier method
+    # in source order wins (typically the public entrypoint).
+    branching = [
+        (name, node, _decision_case_count(node))
+        for name, node in methods.items()
+    ]
+    branching = [(n, m, c) for n, m, c in branching if c > 0]
+    if branching:
+        branching.sort(key=lambda item: (-item[2], item[1].lineno))
+        return branching[0][1]
 
     for name in _PRIMARY_METHOD_PREFERENCE:
         node = methods.get(name)

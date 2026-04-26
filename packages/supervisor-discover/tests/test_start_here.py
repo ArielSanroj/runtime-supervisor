@@ -524,3 +524,97 @@ def test_cli_render_includes_step_0_line(tmp_path: Path):
     assert "Step 0:" in joined
     # Must still fit inside the documented 5-20 line budget.
     assert 5 <= len(lines) <= 20
+
+
+# 7. Decision-branching dispatcher picker
+#
+# When a class has methods named `handle()` / `execute()` (the names we'd
+# preferred before) AND another method whose body actually branches on
+# `if action == X` / `match action: case ...`, the AST-based picker should
+# choose the branching method — that's the real dispatcher. The reviewer
+# flagged on castor-1 that the snippet was pointing at a fictional `handle()`
+# instead of the real `_execute_action(self, decision)`.
+
+def test_dispatcher_method_with_decision_branching_beats_handle(tmp_path: Path):
+    """Class has both `handle()` (no dispatch) and `_execute_action()` (real
+    dispatch with `if action == ...`). Picker must prefer the branching one.
+    Verified end-to-end via the rendered Python snippet."""
+    _write(tmp_path, "src/agents/electoral.py", '''
+from enum import Enum
+
+class AgentAction(Enum):
+    CREATE_INCIDENT = "create_incident"
+    ESCALATE = "escalate"
+
+class Decision:
+    pass
+
+class ElectoralIntelligenceAgent:
+    def handle(self, payload):
+        """Public entrypoint that just delegates."""
+        return self._execute_action(payload)
+
+    def _execute_action(self, decision: Decision):
+        action = decision.action
+        if action == AgentAction.CREATE_INCIDENT:
+            return self._create()
+        elif action == AgentAction.ESCALATE:
+            return self._escalate()
+        return None
+
+    def _create(self): return 1
+    def _escalate(self): return 2
+''')
+    cp = AgentChokepoint(
+        file=str(tmp_path / "src/agents/electoral.py"),
+        line=10, kind="agent-class", label="ElectoralIntelligenceAgent",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [])
+    # The "Do this now" snippet must point at the dispatcher method, not handle.
+    assert "_execute_action" in sh.do_this_now
+    assert "decision: Decision" in sh.do_this_now or "decision:" in sh.do_this_now
+    # And it must NOT recommend the dummy handle() that just delegates.
+    assert "def handle" not in sh.do_this_now
+
+
+def test_match_statement_dispatcher_picked(tmp_path: Path):
+    """Python 3.10+ structural match on a decision key — same signal as
+    `if action == X` chains."""
+    _write(tmp_path, "src/agents/router.py", '''
+class RoutingAgent:
+    def handle(self, payload):
+        return None
+
+    def route(self, intent):
+        match intent:
+            case "create": return 1
+            case "delete": return 2
+            case _: return None
+''')
+    cp = AgentChokepoint(
+        file=str(tmp_path / "src/agents/router.py"),
+        line=2, kind="agent-class", label="RoutingAgent",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [])
+    assert "def route" in sh.do_this_now
+    assert "intent" in sh.do_this_now
+
+
+def test_no_decision_branching_falls_back_to_name_preference(tmp_path: Path):
+    """When no method has decision branching, the picker falls back to the
+    existing name-based preference (handle wins over arbitrary names)."""
+    _write(tmp_path, "src/agents/plain.py", '''
+class PlainAgent:
+    def utility(self): return 1
+    def handle(self, payload): return self.utility()
+    def helper(self): return 2
+''')
+    cp = AgentChokepoint(
+        file=str(tmp_path / "src/agents/plain.py"),
+        line=2, kind="agent-class", label="PlainAgent",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [])
+    assert "def handle" in sh.do_this_now

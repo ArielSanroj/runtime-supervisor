@@ -196,6 +196,57 @@ def handle_tool_call(tool, args):
         </Link>
       </section>
 
+      <section className="border-y border-zinc-900 bg-gradient-to-br from-zinc-950 via-emerald-950/10 to-zinc-950">
+        <div className="mx-auto max-w-6xl px-6 py-16 lg:py-20">
+          <div className="grid gap-12 lg:grid-cols-[1fr_1.2fr] lg:items-center">
+            <div>
+              <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+                continuous protection
+              </div>
+              <h2 className="mt-3 text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+                Every PR, auto-scanned.
+                <br />
+                <span className="text-zinc-400">New unsafe code can&apos;t slip in.</span>
+              </h2>
+              <p className="mt-5 leading-7 text-zinc-400">
+                The first scan tells you what&apos;s unsafe today. The GitHub App keeps it that way.
+                When you (or a teammate) open a PR that adds a new ungated <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-sm">stripe.refunds.create</code> or
+                <code className="ml-1 rounded bg-zinc-900 px-1.5 py-0.5 text-sm">fs.unlink</code>, vibefixing comments before review.
+              </p>
+              <ul className="mt-6 space-y-3 text-sm leading-7 text-zinc-300">
+                <li className="flex gap-3">
+                  <span className="font-mono text-emerald-400">→</span>
+                  <span><strong className="text-zinc-100">5 seconds</strong> from PR open to comment posted.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="font-mono text-emerald-400">→</span>
+                  <span>Diffs against your previous scans — only <strong className="text-zinc-100">new</strong> findings flagged. Zero PR-comment spam.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="font-mono text-emerald-400">→</span>
+                  <span>Catches what tests can&apos;t — code your LLM can fire, not what your tests cover.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="font-mono text-emerald-400">→</span>
+                  <span>Same UX whether you ship 1 PR/week or 100.</span>
+                </li>
+              </ul>
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                <a
+                  href="https://github.com/apps/vibefixing/installations/new"
+                  className="rounded-lg bg-emerald-500 px-6 py-3 text-sm font-semibold text-black transition-colors hover:bg-emerald-400"
+                >
+                  install on a repo →
+                </a>
+                <span className="font-mono text-xs text-zinc-500">free for public repos · $29/mo for private</span>
+              </div>
+            </div>
+
+            <PrCommentMockup />
+          </div>
+        </div>
+      </section>
+
       <section className="border-y border-zinc-900 bg-zinc-950">
         <div className="mx-auto max-w-6xl px-6 py-16">
           <div className="mb-8">
@@ -327,6 +378,32 @@ def handle_tool_call(tool, args):
               static analysis and does not run your code or require an API key for the scan.
               Results include a risk score, a list of unsafe actions, and copy-paste guardrail
               code for each finding.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Does Vibefixing scan every pull request automatically?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Yes. Install the Vibefixing GitHub App on your repo and every pull request gets
+              scanned automatically. Within 5 seconds of opening a PR, vibefixing diffs the head
+              ref against your previous scan and posts a comment listing only the <em>new</em>
+              unsafe call-sites. Clean PRs get nothing — no spam. Free for public repos; private
+              repos and CI integration are part of Builder ($29/mo).
+            </p>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">
+              How is Vibefixing different from regular code review or static analysis?
+            </h3>
+            <p className="mt-2 text-zinc-400">
+              Code review and SAST tools catch bugs in code your tests already cover. Vibefixing
+              catches what your tests <em>can&apos;t</em>: actions an LLM can fire at runtime in
+              ways no test case anticipated. Refunds the model decides to issue, files it decides
+              to delete, emails it decides to send. Each detector maps to a runtime guard you can
+              drop in with one line.
             </p>
           </div>
 
@@ -543,6 +620,58 @@ function Plan({
       >
         {cta}
       </Link>
+    </div>
+  );
+}
+
+function PrCommentMockup() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-emerald-950/20">
+      <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900/80 px-4 py-3">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 font-mono text-[11px] font-bold text-black">
+          V
+        </div>
+        <span className="text-sm font-semibold text-zinc-200">vibefixing</span>
+        <span className="text-xs text-zinc-500">commented on PR #142</span>
+        <span className="ml-auto font-mono text-[10px] text-zinc-600">5 seconds ago</span>
+      </div>
+      <div className="px-5 py-4">
+        <p className="text-sm text-zinc-200">
+          🔒 <strong>vibefixing detected 2 new unsafe call-sites</strong> in this PR
+        </p>
+        <div className="mt-4 overflow-hidden rounded-md border border-zinc-800">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-zinc-900/60 text-left text-zinc-400">
+                <th className="px-3 py-2 font-normal">File</th>
+                <th className="px-3 py-2 font-normal">Type</th>
+                <th className="px-3 py-2 font-normal">Conf</th>
+                <th className="px-3 py-2 font-normal">Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-zinc-800">
+                <td className="px-3 py-2 font-mono text-zinc-200">src/api/refund.ts:42</td>
+                <td className="px-3 py-2"><span className="rounded bg-rose-500/10 px-1.5 py-0.5 font-mono text-rose-300">payment</span></td>
+                <td className="px-3 py-2">🔴 high</td>
+                <td className="px-3 py-2 text-zinc-400">stripe.refunds.create without @supervised</td>
+              </tr>
+              <tr className="border-t border-zinc-800">
+                <td className="px-3 py-2 font-mono text-zinc-200">src/workers/cleanup.ts:8</td>
+                <td className="px-3 py-2"><span className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-300">tool_use</span></td>
+                <td className="px-3 py-2">🔴 high</td>
+                <td className="px-3 py-2 text-zinc-400">fs.unlink in user-input path</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-4 text-sm text-zinc-300">
+          Wrap them with <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs">@supervised(...)</code> before merging — or this lands in production ungated.
+        </p>
+        <p className="mt-4 border-t border-zinc-800 pt-3 text-xs text-zinc-500">
+          Plus 1 previously-flagged finding fixed — nice. <span className="text-emerald-400 underline">Full diff →</span>
+        </p>
+      </div>
     </div>
   );
 }

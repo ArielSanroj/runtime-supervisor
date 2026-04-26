@@ -415,3 +415,112 @@ def test_multi_method_dispatcher_changes_wrap_target_why():
     assert "3 peer dispatch methods" in why
     assert "wrap each" in why
     assert "one wrapper" not in why  # the false claim must be gone
+
+
+# 6. Step 0 — Bootstrap section
+#
+# Without this block, the very first paste of a wrap snippet fails with
+# `ModuleNotFoundError: supervisor_guards`. Every test here guards against
+# regressing to that state for at least one realistic repo shape.
+
+def _write(tmp: Path, name: str, body: str) -> Path:
+    p = tmp / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body)
+    return p
+
+
+def test_step_0_section_rendered_when_bootstrap_detected(tmp_path: Path):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "src/api/app.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    assert "## Step 0 — install the SDK" in md
+    assert "pip install" in md
+    assert "supervisor-guards" in md
+
+
+def test_step_0_section_omitted_when_repo_root_not_passed():
+    """Backwards compatibility: callers that don't provide `repo_root` get
+    the previous output exactly — no Step 0 section."""
+    sh = build_start_here(RepoSummary(), [])
+    md = render_start_here_md(sh)
+    assert "## Step 0" not in md
+    assert sh.bootstrap is None
+
+
+def test_step_0_section_omitted_when_no_manifest(tmp_path: Path):
+    """Empty repo → BootstrapInfo with manager=None → renderer emits a
+    softer block. Specifically must not crash and must mention how to
+    proceed."""
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    assert "## Step 0 — install the SDK" in md
+    # Generic copy when no manager is detected.
+    assert "couldn't classify" in md.lower() or "your usual package manager" in md.lower()
+
+
+def test_step_0_skips_configure_block_when_already_called(tmp_path: Path):
+    """Mirrors supervincent — the entry point already calls
+    `configure_supervisor()`. The Step 0 block must NOT show the wiring
+    paste; instead it acknowledges the existing call."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "src/api/app.py", """
+from fastapi import FastAPI
+from supervisor_guards import configure_supervisor
+
+configure_supervisor()
+app = FastAPI()
+""")
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    assert "already called near the FastAPI" in md
+    # Must NOT emit the configure_supervisor() paste (with the import line).
+    assert "from supervisor_guards import configure_supervisor" not in md
+
+
+def test_step_0_picks_ts_when_top_wrap_target_is_typescript(tmp_path: Path):
+    """Top wrap target is a `.ts` file → Step 0 block targets the JS manager,
+    not Python, even when both are present in the repo."""
+    _write(tmp_path, "backend/requirements.txt", "fastapi\n")
+    _write(tmp_path, "frontend/package.json", '{"name":"web"}')
+    _write(tmp_path, "frontend/pnpm-lock.yaml", "")
+    cp = AgentChokepoint(
+        file=str(tmp_path / "frontend/orchestrator.ts"),
+        line=10, kind="agent-class", label="OrchestratorTS",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    assert "pnpm add @runtime-supervisor/guards" in md
+    assert "pip install" not in md
+
+
+def test_render_md_section_order_with_bootstrap(tmp_path: Path):
+    """Step 0 must come BEFORE 'Best place to wrap first'."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    expected_order = [
+        "## Step 0 — install the SDK",
+        "## Best place to wrap first",
+        "## What this repo can already do",
+        "## Highest-risk things to care about now",
+        "## Do this now",
+        "## Ignore this for now",
+    ]
+    last = -1
+    for header in expected_order:
+        idx = md.find(header)
+        assert idx > last, f"section {header!r} missing or out of order"
+        last = idx
+
+
+def test_cli_render_includes_step_0_line(tmp_path: Path):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    lines = render_cli_start_here(sh, elapsed_s=1.0, root="x")
+    joined = "\n".join(lines)
+    assert "Step 0:" in joined
+    # Must still fit inside the documented 5-20 line budget.
+    assert 5 <= len(lines) <= 20

@@ -66,7 +66,7 @@ def generate(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     summary = build_summary(findings, hidden_counts=hidden_counts)
-    start_here = build_start_here(summary, findings)
+    start_here = build_start_here(summary, findings, repo_root=repo_root)
     # Stitch start_here back into the summary so the API + JSON dump carry it.
     summary = replace(summary, start_here=start_here)
     repo_name = repo_root.name if repo_root else None

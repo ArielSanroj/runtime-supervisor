@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     if dry_run:
         # Mirror the on-disk findings.json shape so CI diffs line up.
         summary = build_summary(findings, hidden_counts=hidden_counts)
-        sh = build_start_here(summary, findings)
+        sh = build_start_here(summary, findings, repo_root=root)
         # asdict-style serialization to keep stdout tooling compatible.
         summary_dict = summary.to_dict()
         summary_dict["start_here"] = sh.to_dict()
@@ -397,7 +397,7 @@ def _print_start_here(root: Path, findings: list, elapsed: float, out: Path,
     Replaces the legacy tier-by-tier dump as the default. The legacy view is
     still available behind --full for users who want the full breakdown."""
     summary = build_summary(findings, hidden_counts=hidden_counts)
-    sh = build_start_here(summary, findings)
+    sh = build_start_here(summary, findings, repo_root=root)
 
     for line in render_cli_start_here(sh, elapsed_s=elapsed, root=str(root)):
         print(line, file=sys.stderr)

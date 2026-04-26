@@ -23,6 +23,7 @@ from typing import Any
 
 import ast
 
+from .bootstrap import BootstrapInfo, build_bootstrap_info
 from .findings import Finding
 from .policy_loader import load_scan_output_policy
 from .scanners._utils import parse_python, safe_read
@@ -82,6 +83,10 @@ class StartHere:
     # Agent frameworks detected via import patterns (langchain, langgraph, …).
     # Informational — these are loop signals, not wrap points.
     framework_signals: list[FrameworkSignal] = field(default_factory=list)
+    # Step 0 metadata — how to install the SDK and where to drop
+    # `configure_supervisor()`. None when no manifest was detected; the
+    # renderer falls back to a generic block in that case.
+    bootstrap: BootstrapInfo | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -629,8 +634,14 @@ def _short_path(path: str) -> str:
 
 
 def build_start_here(summary: RepoSummary, findings: list[Finding],
-                     policy: dict[str, Any] | None = None) -> StartHere:
-    """Construct the StartHere data structure from a built summary + findings."""
+                     policy: dict[str, Any] | None = None,
+                     *, repo_root: Path | None = None) -> StartHere:
+    """Construct the StartHere data structure from a built summary + findings.
+
+    `repo_root`, when provided, enables Step 0 detection (install command +
+    `configure_supervisor()` location). Calls don't need to pass it — older
+    callers keep working with `bootstrap=None`.
+    """
     p = policy or load_scan_output_policy()
     max_wrap = p.get("max_wrap_targets") or 3
     capability_phrases = p.get("capability_phrases") or {}
@@ -640,6 +651,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(findings, p)
     do_now = _build_do_this_now(targets, framework_signals)
+    bootstrap = _build_bootstrap(repo_root, targets) if repo_root is not None else None
     return StartHere(
         top_wrap_targets=targets,
         repo_capabilities=capabilities,
@@ -647,23 +659,156 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         do_this_now=do_now,
         hidden_counter=dict(summary.hidden_findings),
         framework_signals=framework_signals,
+        bootstrap=bootstrap,
+    )
+
+
+def _build_bootstrap(repo_root: Path, targets: list[WrapTarget]) -> BootstrapInfo:
+    """Pick a language hint from the top wrap target's file extension and ask
+    `bootstrap.build_bootstrap_info` to assemble the Step 0 data. The
+    language hint matters in monorepos where both Python and JS manifests
+    are present — the Step 0 block should match the language of the first
+    wrap recommendation."""
+    near_files = [t.file for t in targets[:3] if t.file]
+    prefer_language: str | None = None
+    if targets:
+        suffix = Path(targets[0].file).suffix.lower()
+        if suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs"):
+            prefer_language = "ts"
+        elif suffix in (".py", ".ipynb"):
+            prefer_language = "python"
+    return build_bootstrap_info(
+        repo_root,
+        prefer_language=prefer_language,
+        near_files=near_files,
     )
 
 
 # ─── renderers ────────────────────────────────────────────────────────
 
 
+_LANGUAGE_LABEL = {
+    "python": "Python",
+    "ts": "TypeScript / JavaScript",
+}
+
+_FRAMEWORK_LABEL = {
+    "fastapi": "FastAPI",
+    "flask": "Flask",
+    "django": "Django",
+    "starlette": "Starlette",
+    "hono": "Hono",
+    "express": "Express",
+    "deno-serve": "Deno.serve",
+    "nestjs": "NestJS",
+    "nextjs-handler": "Next.js handler",
+    "generic": "your app",
+}
+
+
+def _render_step0(sh: StartHere) -> list[str]:
+    """Markdown lines for the Step 0 section. Returns [] when bootstrap is
+    `None` (preserves the previous output exactly when the caller doesn't
+    pass `repo_root`)."""
+    if sh.bootstrap is None:
+        return []
+    bs = sh.bootstrap
+    out: list[str] = ["## Step 0 — install the SDK", ""]
+
+    if bs.manager is None:
+        # No manifest detected — generic block, never crashes.
+        out.append(
+            "We couldn't classify the dep manager from the repo root. Add "
+            "`supervisor-guards` (Python) or `@runtime-supervisor/guards` "
+            "(TS/JS) using your usual package manager."
+        )
+    else:
+        lang_label = _LANGUAGE_LABEL.get(bs.manager.language, bs.manager.language)
+        rel = _short_path(bs.manager.manifest_path)
+        out.append(f"Detected: {lang_label} project (`{rel}`).")
+        out.append("")
+        fence = "bash"
+        out.append(f"```{fence}")
+        out.append(bs.manager.install_cmd)
+        out.append("```")
+
+    if bs.entrypoint is None:
+        out.append("")
+        out.append(
+            "Then call `configure_supervisor()` once at startup, where you "
+            "instantiate your app (e.g. next to `FastAPI(...)` / `new Hono()`)."
+        )
+    elif bs.configure_already_called:
+        out.append("")
+        ep_rel = _short_path(bs.entrypoint.file)
+        framework = _FRAMEWORK_LABEL.get(bs.entrypoint.framework, bs.entrypoint.framework)
+        call_name = (
+            "configureSupervisor()"
+            if bs.entrypoint.language == "ts"
+            else "configure_supervisor()"
+        )
+        # Generic framework label = "your app" — read more naturally without
+        # the leading definite article.
+        if bs.entrypoint.framework == "generic":
+            anchor = f"near your app's entry point at `{ep_rel}:{bs.entrypoint.line}`"
+        else:
+            anchor = f"near the {framework} entry point at `{ep_rel}:{bs.entrypoint.line}`"
+        out.append(f"`{call_name}` is already called {anchor} — no extra wiring needed.")
+    else:
+        out.append("")
+        ep_rel = _short_path(bs.entrypoint.file)
+        framework = _FRAMEWORK_LABEL.get(bs.entrypoint.framework, bs.entrypoint.framework)
+        if bs.entrypoint.framework == "generic":
+            anchor = f"near your app's entry point at `{ep_rel}:{bs.entrypoint.line}`"
+        else:
+            anchor = f"near the {framework} entry point at `{ep_rel}:{bs.entrypoint.line}`"
+        out.append(f"Then call `configure_supervisor()` once at startup, {anchor}:")
+        out.append("")
+        if bs.entrypoint.language == "ts":
+            out.append("```ts")
+            out.append('import { configureSupervisor } from "@runtime-supervisor/guards";')
+            out.append("")
+            out.append("configureSupervisor();  // reads SUPERVISOR_* env vars")
+            out.append("```")
+        else:
+            out.append("```python")
+            out.append("from supervisor_guards import configure_supervisor")
+            out.append("")
+            out.append("configure_supervisor()  # reads SUPERVISOR_* env vars")
+            out.append("```")
+
+    out.append("")
+    out.append(
+        "Env vars to set (template in `runtime-supervisor/.env.example`):"
+    )
+    out.append("")
+    out.append("- `SUPERVISOR_BASE_URL`")
+    out.append("- `SUPERVISOR_APP_ID`")
+    out.append("- `SUPERVISOR_SECRET`")
+    out.append("")
+    out.append(
+        "_Without these, every guard runs inert — calls pass through._"
+    )
+    out.append("")
+    return out
+
+
 def render_start_here_md(sh: StartHere) -> str:
     """Markdown for runtime-supervisor/START_HERE.md.
 
     Section order is mandatory (see docs/SCAN_COMMUNICATION_RULES.md):
+      0. Step 0 — install the SDK (only when `bootstrap` is set)
       1. Best place to wrap first
       2. What this repo can already do
-      3. Highest-risk things to care about now
-      4. Do this now
-      5. Ignore this for now
+      3. Agent frameworks detected (only when `framework_signals` is set)
+      4. Highest-risk things to care about now
+      5. Do this now
+      6. Ignore this for now
     """
     parts: list[str] = ["# Start here", ""]
+
+    # 0. Step 0 — install the SDK (only when bootstrap was detected)
+    parts.extend(_render_step0(sh))
 
     # 1. wrap targets
     parts.append("## Best place to wrap first")
@@ -805,6 +950,16 @@ def render_cli_start_here(sh: StartHere, *, elapsed_s: float | None = None,
     if elapsed_s is not None:
         target = root or "."
         out.append(f"scanned {target} in {elapsed_s:.1f}s")
+        out.append("")
+
+    # Step 0 — surface the install command in one line so the CLI reader
+    # knows the wrap snippet won't ImportError on first paste.
+    if sh.bootstrap is not None and sh.bootstrap.manager is not None:
+        bs = sh.bootstrap
+        if bs.configure_already_called:
+            out.append(f"Step 0: {bs.manager.install_cmd}  (configure_supervisor() already wired)")
+        else:
+            out.append(f"Step 0: {bs.manager.install_cmd}")
         out.append("")
 
     out.append("Best place to wrap first:")

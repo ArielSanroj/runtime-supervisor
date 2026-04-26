@@ -71,7 +71,7 @@ export default async function FindingsPage() {
           <p className="muted" style={{ maxWidth: 520, margin: "0 auto 18px", lineHeight: 1.6 }}>
             Paste a public GitHub URL. The scanner finds the unwrapped call-sites
             your agent can execute (payments, DB mutations, LLM calls, shell, tools).
-            Builder unlocks private repos and scan history.
+            Builder unlocks private repos and scan history; Pro adds team workflows and org controls.
           </p>
           <Link href="/scan" className="badge approved">open /scan →</Link>
         </div>

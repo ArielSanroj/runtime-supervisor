@@ -141,7 +141,7 @@ function buildFixQueue(
       id: "scan-static-surface",
       title: "Scan static call-sites",
       body: "Run the scanner to find unwrapped payment, DB, LLM, filesystem, and agent chokepoints before they execute.",
-      meta: "free public scan - Builder unlocks private repos",
+      meta: "free public scan - Builder unlocks private repos; Pro adds org controls",
       href: "/scan",
       cta: "scan",
       tone: "muted",
@@ -303,7 +303,7 @@ export default async function Dashboard({
             <h3 style={{ marginTop: 0 }}>Builder unlock</h3>
             <p className="muted" style={{ lineHeight: 1.7 }}>
               Upgrade when you need private repo scans, full <code>runtime-supervisor/</code> export,
-              scan history, and CI comments.
+              scan history, and CI comments. Pro adds team workflows and org controls.
             </p>
             <div className="row" style={{ justifyContent: "space-between", marginTop: 18 }}>
               <div>

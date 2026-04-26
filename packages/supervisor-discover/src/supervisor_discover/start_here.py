@@ -178,21 +178,68 @@ _RISK_CARDS: dict[str, dict[str, str]] = {
         "do":    "Wrap the dispatch / handle / execute method with "
                  "`@supervised(\"tool_use\")`.",
     },
+    "fs-shell-code-eval": {
+        "title": "Code execution via `eval` / `exec` present",
+        "chain": "If the string passed to `eval` / `exec` flows from an LLM "
+                 "or user input, the agent runs arbitrary code in this "
+                 "process — same blast radius as a shell.",
+        "do":    "Wrap with `@supervised(\"tool_use\")` and validate the "
+                 "source first; better, replace with `ast.literal_eval` or "
+                 "a parsed expression evaluator for the trusted-input case.",
+    },
+    "fs-shell-unsafe-deserialize": {
+        "title": "Pickle / dill deserialization present",
+        "chain": "`pickle.loads` rebuilds objects via `__reduce__` gadgets — "
+                 "untrusted bytes here become a code-execution primitive.",
+        "do":    "Wrap with `@supervised(\"tool_use\")`; for untrusted "
+                 "input switch to JSON or msgpack with an explicit schema.",
+    },
+    "auth-bypass-tls-bypass": {
+        "title": "TLS verification disabled present",
+        "chain": "An attacker on the network path (rogue Wi-Fi, intercepted "
+                 "CI runner, mistakenly imported dev cert) becomes a silent "
+                 "man-in-the-middle on every request from this site.",
+        "do":    "Remove `verify=False` and pin a CA bundle; if you need a "
+                 "self-signed dev cert, gate it behind an env-only branch.",
+    },
+    "auth-bypass-jwt-bypass": {
+        "title": "JWT signature check disabled present",
+        "chain": "The decoder accepts any token, so every `if user_role == "
+                 "'admin'` downstream becomes a free-for-all — the attacker "
+                 "writes the claims they want.",
+        "do":    "Stop bypassing the signature. If the token is genuinely "
+                 "untrusted, reject it instead of decoding it without "
+                 "verification.",
+    },
+    "db-mutations-redis-flush": {
+        "title": "Redis keyspace wipe present",
+        "chain": "`flushall` / `flushdb` clears every key with no rollback. "
+                 "Inside an agent loop this is data loss on a prompt twist.",
+        "do":    "Wrap with `@supervised(\"data_access\")` and require an "
+                 "explicit operator confirmation before flushing.",
+    },
 }
 
 
 def _capability_key(f: Finding) -> str:
     """Map a finding to the capability_phrases / risk_severity / _RISK_CARDS key.
 
-    For fs-shell and db-mutations the family/verb in `extra` matters (delete
-    vs write vs shell-exec); for everything else the scanner name is enough.
+    For fs-shell, auth-bypass, and db-mutations the family/verb in `extra`
+    matters (delete vs write vs shell-exec, tls-bypass vs jwt-bypass, etc.);
+    for everything else the scanner name is enough.
     """
     extra = f.extra or {}
     if f.scanner == "fs-shell":
         family = extra.get("family") or "shell-exec"
         return f"fs-shell-{family}"
+    if f.scanner == "auth-bypass":
+        family = extra.get("family") or "tls-bypass"
+        return f"auth-bypass-{family}"
     if f.scanner == "db-mutations":
         verb = (extra.get("verb") or "").lower()
+        family = (extra.get("family") or "").lower()
+        if family == "redis-flush":
+            return "db-mutations-redis-flush"
         if verb in ("delete", "drop", "truncate"):
             return "db-mutations-delete"
         return "db-mutations-write"
@@ -369,10 +416,15 @@ def _build_capabilities(summary: RepoSummary, findings: list[Finding],
         provider_list = ", ".join(summary.llm_providers[:3])
         _add(f"call LLMs ({provider_list})")
 
-    # DB writes / deletes — split per verb
+    # DB writes / deletes — split per verb (also surfaces redis-flush)
     db_keys = {_capability_key(f) for f in findings if f.scanner == "db-mutations"}
     for db_key in sorted(db_keys):
         _add(capability_phrases.get(db_key))
+
+    # Auth / TLS bypass — split per family
+    auth_keys = {_capability_key(f) for f in findings if f.scanner == "auth-bypass"}
+    for auth_key in sorted(auth_keys):
+        _add(capability_phrases.get(auth_key))
 
     return seen_phrases
 

@@ -41,6 +41,15 @@ _TS_SQL_UPDATE = re.compile(r"\bUPDATE\s+(\w+)\s+SET\b", re.IGNORECASE)
 _TS_SQL_DELETE = re.compile(r"\bDELETE\s+FROM\s+(\w+)", re.IGNORECASE)
 _TS_SQL_INSERT = re.compile(r"\bINSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
+# Redis cache wipes — `flushall` clears every database, `flushdb` clears the
+# current one. Both are nearly always operational scripts in production code
+# and almost never used inside an LLM-driven path; surfacing them at high
+# confidence would produce noise. Medium is the right tier — a flag, not a
+# fire alarm. Match by method-name suffix so we cover redis-py (`r.flushall()`),
+# aioredis (`await client.flushall()`), and ioredis on TS (`await redis.flushdb()`).
+_REDIS_FLUSH_METHODS = frozenset({"flushall", "flushdb"})
+_TS_REDIS_FLUSH = re.compile(r"\.(flushall|flushdb)\s*\(", re.IGNORECASE)
+
 
 def _suggest(table_or_path: str) -> str:
     if _ACCOUNT_HINTS.search(table_or_path):
@@ -112,6 +121,34 @@ def _scan_python(root: Path) -> list[Finding]:
                     ))
                     break  # one verb per arg
 
+        # Redis cache wipes — `client.flushall()` / `client.flushdb()`.
+        # AST-only so we can't trip on the strings "flushall" inside docs.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _REDIS_FLUSH_METHODS
+            ):
+                continue
+            line = node.lineno
+            method = node.func.attr
+            findings.append(Finding(
+                scanner="db-mutations",
+                file=str(path),
+                line=line,
+                snippet=f"{method}(",
+                suggested_action_type="data_access",
+                confidence="medium",
+                rationale=(
+                    f"Redis `{method}()` wipes a whole keyspace. Inside an "
+                    "agent loop this is data loss with no rollback — wrap "
+                    "with @supervised('data_access') and require an explicit "
+                    "operator confirmation."
+                ),
+                extra={"verb": "FLUSH", "family": "redis-flush", "method": method},
+            ))
+
         # ORM mutations: flag only when the file both mutates and commits.
         # Still regex — it's a file-level heuristic, not a line-level claim,
         # and the same text-search property is fine (commits/mutates are
@@ -172,6 +209,24 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                     rationale=f"Raw SQL {verb} on `{table}`.",
                     extra={"verb": verb, "table": table},
                 ))
+        # Redis cache wipes — same method name across redis-py and ioredis.
+        for m in _TS_REDIS_FLUSH.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            method = m.group(1).lower()
+            findings.append(Finding(
+                scanner="db-mutations",
+                file=str(path),
+                line=line,
+                snippet=m.group(0).rstrip("("),
+                suggested_action_type="data_access",
+                confidence="medium",
+                rationale=(
+                    f"Redis `{method}()` wipes a whole keyspace. Inside an "
+                    "agent loop this is data loss with no rollback — wrap and "
+                    "require an explicit operator confirmation."
+                ),
+                extra={"verb": "FLUSH", "family": "redis-flush", "method": method},
+            ))
     return findings
 
 

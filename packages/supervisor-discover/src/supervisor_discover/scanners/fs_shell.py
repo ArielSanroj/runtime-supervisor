@@ -3,14 +3,21 @@
 Attack shapes covered:
 - Agent deletes files / directories on the host (logs, user data, source code).
 - Agent writes arbitrary files (overwrite configs, plant malware, exfil data).
-- Agent executes shell commands (RCE-equivalent if the agent's context is attacker-controlled).
+- Agent executes shell commands (host-process control if the agent's input is
+  attacker-controlled).
+- Agent runs arbitrary code via `eval()` / `exec()` on a string built from
+  LLM output or user input — same blast radius as a shell.
+- Agent deserializes untrusted bytes via `pickle.loads(...)` / `dill.loads(...)`
+  — Python's classic deserialization-to-code-execution shape.
 
 Python patterns (AST — immune to matches in comments/strings/docstrings):
   os.remove, os.unlink, shutil.rmtree, subprocess.run/Popen/call/check_call/check_output,
-  os.system, os.popen, pathlib.Path(...).unlink(), open(path, 'w').
+  os.system, os.popen, pathlib.Path(...).unlink(), open(path, 'w'),
+  eval, exec, pickle.loads, pickle.load, cPickle.loads/load, dill.loads/load,
+  marshal.loads.
 
 TS/JS patterns (regex): fs.unlinkSync, fs.rmSync, fs.writeFileSync,
-  child_process.exec/spawn, execa.
+  child_process.exec/spawn, execa, eval(...), new Function(...).
 """
 from __future__ import annotations
 
@@ -36,6 +43,21 @@ _PY_CALL_TARGETS: dict[str, tuple[str, str]] = {
     "subprocess.call":         ("shell-exec", "high"),
     "subprocess.check_call":   ("shell-exec", "high"),
     "subprocess.check_output": ("shell-exec", "high"),
+    # Code execution from a string — same blast radius as shell-exec when
+    # the string flows from the LLM. `_refine_python_severity` downgrades
+    # constant-string args to low (e.g. `eval("2 + 2")` in tests).
+    "eval":                    ("code-eval", "high"),
+    "exec":                    ("code-eval", "high"),
+    # Deserialization-to-code: pickle / cPickle / dill / marshal all expose
+    # gadget chains. `pickle.loads(req.body)` is the textbook RCE shape.
+    "pickle.loads":            ("unsafe-deserialize", "high"),
+    "pickle.load":             ("unsafe-deserialize", "high"),
+    "cPickle.loads":           ("unsafe-deserialize", "high"),
+    "cPickle.load":            ("unsafe-deserialize", "high"),
+    "dill.loads":              ("unsafe-deserialize", "high"),
+    "dill.load":               ("unsafe-deserialize", "high"),
+    "marshal.loads":           ("unsafe-deserialize", "high"),
+    "marshal.load":            ("unsafe-deserialize", "high"),
 }
 
 # JS/TS patterns — no cheap AST, stick with regex. The patterns are anchored
@@ -55,6 +77,13 @@ _JS_SHELL_EXEC = [
     re.compile(r"\bchild_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\("),
     re.compile(r"\bexeca\s*\(|\bexeca\.command\s*\("),
 ]
+# `eval(x)` and `new Function(x)` execute a string as JavaScript — same shape
+# as Python's `eval`. We require word boundaries to avoid matching `eval` as
+# part of identifiers like `evaluation` or `eval_metric`.
+_JS_CODE_EVAL = [
+    re.compile(r"(?<![\w.])eval\s*\("),
+    re.compile(r"\bnew\s+Function\s*\("),
+]
 
 
 _RATIONALES = {
@@ -72,6 +101,20 @@ _RATIONALES = {
         "Shell / subprocess execution — agent can run arbitrary host commands. If the "
         "command or its args flow from an LLM or from user input, this is RCE-equivalent. "
         "Gate with @supervised('tool_use') at minimum; prefer explicit tool allowlist."
+    ),
+    "code-eval": (
+        "`eval()` / `exec()` runs a string as Python. If the string is built from LLM "
+        "output, request body, or any user input, the agent can run arbitrary code in "
+        "this process — same blast radius as shell exec. Gate with @supervised('tool_use') "
+        "and validate the source before execution; better, replace with a parsed expression "
+        "evaluator (e.g. ast.literal_eval, safer-eval)."
+    ),
+    "unsafe-deserialize": (
+        "`pickle.loads()` / `dill.loads()` / `marshal.loads()` reconstructs Python objects "
+        "from bytes — including __reduce__ gadget chains. If the bytes come from a request, "
+        "queue, or any external source, this is a deserialization-to-RCE primitive. Gate "
+        "with @supervised('tool_use'); prefer JSON or msgpack with an explicit schema for "
+        "untrusted input."
     ),
 }
 
@@ -158,6 +201,22 @@ def _refine_python_severity(node: ast.Call, family: str, default: str) -> tuple[
             return ("low", True)
         return (default, False)
 
+    if family == "code-eval":
+        # `eval("2+2")` in tests / config-parsing → constant string is harmless.
+        # `eval(user_input)` is the dangerous shape we want to surface.
+        first_arg = node.args[0] if node.args else None
+        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+            return ("low", True)
+        return (default, False)
+
+    if family == "unsafe-deserialize":
+        # `pickle.loads(b'\\x80\\x04...')` with a bytes literal is rare — when
+        # it shows up it's typically a hardcoded fixture in a test. Keep these
+        # as high anyway because the *function* is the risk, not the input —
+        # any future change to that line that swaps the literal for a variable
+        # silently becomes RCE-shaped.
+        return (default, False)
+
     # fs-delete: even a hardcoded path is risky if it's your source tree.
     return (default, False)
 
@@ -218,6 +277,7 @@ def _scan_js(path: Path, text: str) -> list[Finding]:
         ("fs-delete", _JS_DESTRUCTIVE_FS),
         ("fs-write", _JS_FS_WRITES),
         ("shell-exec", _JS_SHELL_EXEC),
+        ("code-eval", _JS_CODE_EVAL),
     ):
         severity = "medium" if family == "fs-write" else "high"
         for pattern in patterns:

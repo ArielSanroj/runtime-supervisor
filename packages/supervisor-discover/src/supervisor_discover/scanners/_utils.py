@@ -126,6 +126,20 @@ _SKIP_DIRS = {
 }
 
 
+def _is_venv_variant(name: str) -> bool:
+    """True for `.venv`, `venv`, `.venv.py39.bak`, `venv-3.11`, `env`, etc.
+
+    Real-world repos accumulate these — the literal `.venv` is in `_SKIP_DIRS`
+    already, but variants like `.venv.py39.bak` (a hand-renamed backup) slip
+    through and the walker reads bundled JS/CSS inside `site-packages` as if
+    it were source code.
+    """
+    lower = name.lower()
+    if lower in {"venv", ".venv", "env", ".env-venv"}:
+        return True
+    return lower.startswith(".venv") or lower.startswith("venv-") or lower.startswith(".venv-")
+
+
 def _walk(root: Path, globs: tuple[str, ...]) -> Iterator[Path]:
     """Iterate matching files under `root`, skipping build/cache dirs.
 
@@ -144,6 +158,8 @@ def _walk(root: Path, globs: tuple[str, ...]) -> Iterator[Path]:
                 # glob, but be defensive). Treat as skip.
                 continue
             if any(part in _SKIP_DIRS for part in rel_parts):
+                continue
+            if any(_is_venv_variant(part) for part in rel_parts):
                 continue
             if not path.is_file():
                 continue

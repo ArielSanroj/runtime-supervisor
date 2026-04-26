@@ -7,6 +7,7 @@ from ..findings import Finding
 from ..policy_loader import hidden_dirs_by_category
 from . import (
     agent_orchestrators,
+    auth_bypass,
     calendar_actions,
     cron_schedules,
     db_mutations,
@@ -40,6 +41,8 @@ def scan_all(root: Path) -> list[Finding]:
         calendar_actions,
         fs_shell,
         media_gen,
+        # security-control bypass — calls that turn OFF a check (TLS, JWT)
+        auth_bypass,
         # agent orchestration chokepoints — where ALL agent actions flow through
         agent_orchestrators,
         mcp_tools,

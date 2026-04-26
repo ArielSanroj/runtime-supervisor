@@ -43,9 +43,14 @@ capability_phrases:
   fs-shell-shell-exec: run shell commands
   fs-shell-fs-delete: delete files
   fs-shell-fs-write: write files
+  fs-shell-code-eval: run arbitrary code via eval / exec
+  fs-shell-unsafe-deserialize: deserialize untrusted bytes (pickle / dill)
   llm-calls: call LLMs
   db-mutations-write: write to the database
   db-mutations-delete: delete database rows
+  db-mutations-redis-flush: wipe redis keyspaces
+  auth-bypass-tls-bypass: skip TLS certificate checks
+  auth-bypass-jwt-bypass: accept unsigned JWTs
   media-gen: generate images / audio / video
   agent-orchestrators: run an agent loop
 
@@ -84,12 +89,17 @@ public_output:
 # Severity heuristic for ordering top_risks (higher = shown first).
 risk_severity:
   payment-calls: 100
+  fs-shell-code-eval: 95          # eval/exec on untrusted = same blast radius as shell
+  fs-shell-unsafe-deserialize: 92 # pickle.loads / dill.loads = RCE-shaped
   fs-shell-shell-exec: 90
+  auth-bypass-jwt-bypass: 85      # auth bypass — every "if user.is_admin" turns free
   fs-shell-fs-delete: 80
   email-sends: 70
   messaging: 60
+  auth-bypass-tls-bypass: 58      # MITM exposure — high impact but conditional
   fs-shell-fs-write: 55
   db-mutations-delete: 50
+  db-mutations-redis-flush: 45    # data loss, no rollback
   db-mutations-write: 40
   llm-calls: 30
   agent-orchestrators: 20

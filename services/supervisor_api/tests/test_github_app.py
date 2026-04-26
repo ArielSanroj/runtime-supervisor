@@ -349,6 +349,77 @@ def test_webhook_pull_request_closed_skipped(client: TestClient):
     assert "skipped" in r.json()["result"]
 
 
+# ----- pairing flow (link installation to tenant) ------------------------
+
+
+def test_link_installation_sets_tenant(client: TestClient):
+    """POST /installations/{id}/link writes tenant_id + audit entry."""
+    from datetime import UTC, datetime
+
+    from supervisor_api.models import Tenant
+
+    # Seed an install + a non-default tenant.
+    with SessionLocal() as s:
+        s.add(GitHubInstallation(
+            id="link-test-1",
+            installation_id=44444,
+            github_account_login="linkuser",
+            github_account_type="User",
+            repo_full_names=["*"],
+            active=True,
+            installed_at=datetime.now(UTC),
+        ))
+        s.add(Tenant(id="tenant-acme", name="acme", active=True))
+        s.commit()
+
+    r = client.post(
+        "/v1/integrations/github/installations/44444/link",
+        json={"tenant_id": "tenant-acme", "linked_by_email": "owner@acme.com"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["installation_id"] == 44444
+    assert body["tenant_id"] == "tenant-acme"
+    assert body["linked_to_tenant"] is True
+
+    with SessionLocal() as s:
+        row = s.query(GitHubInstallation).filter(
+            GitHubInstallation.installation_id == 44444
+        ).one()
+        assert row.tenant_id == "tenant-acme"
+
+
+def test_link_installation_rejects_unknown_tenant(client: TestClient):
+    from datetime import UTC, datetime
+
+    with SessionLocal() as s:
+        s.add(GitHubInstallation(
+            id="link-test-2",
+            installation_id=44445,
+            github_account_login="x",
+            github_account_type="User",
+            repo_full_names=["*"],
+            active=True,
+            installed_at=datetime.now(UTC),
+        ))
+        s.commit()
+
+    r = client.post(
+        "/v1/integrations/github/installations/44445/link",
+        json={"tenant_id": "tenant-does-not-exist"},
+    )
+    assert r.status_code == 400
+    assert "unknown tenant_id" in r.json()["detail"]
+
+
+def test_link_installation_404_unknown_install(client: TestClient):
+    r = client.post(
+        "/v1/integrations/github/installations/99999/link",
+        json={"tenant_id": "any"},
+    )
+    assert r.status_code == 404
+
+
 # ----- 501 when not configured -------------------------------------------
 
 

@@ -27,10 +27,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit, github_api
+from .. import audit, auth, github_api
 from ..config import get_settings
 from ..db import SessionLocal, get_db
 from ..github_pr_comment import PrCommentInputs, render_pr_comment
@@ -454,6 +455,73 @@ def _run_pr_scan(
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+# ----- link an installation to a tenant (Builder paired flow) ---------------
+
+
+class LinkInstallationRequest(BaseModel):
+    tenant_id: str
+    linked_by_email: str | None = None
+
+
+@router.post("/installations/{installation_id}/link")
+def link_installation(
+    installation_id: int,
+    body: LinkInstallationRequest,
+    db: Session = Depends(get_db),
+    principal: auth.Principal = Depends(auth.require_any_scope),
+) -> dict[str, Any]:
+    """Pair a GitHubInstallation with a tenant.
+
+    The frontend gates this on a Builder session and forwards the
+    user's tenant_id in the body. Backend trusts the frontend's
+    admin-token-signed call (same trust model as other admin reads
+    in the dashboard) and writes the link + an audit entry.
+
+    Idempotent: re-linking to the same tenant is a no-op; re-linking
+    to a different tenant overwrites + audits the change so we can
+    trace ownership changes if a user transfers an install.
+    """
+    _require_app_configured()
+
+    row = db.execute(
+        select(GitHubInstallation).where(GitHubInstallation.installation_id == installation_id)
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="installation not found")
+
+    # Validate the tenant exists — protects against typos / stale
+    # session IDs creating dangling links.
+    from ..models import Tenant
+
+    if db.get(Tenant, body.tenant_id) is None:
+        raise HTTPException(status_code=400, detail=f"unknown tenant_id: {body.tenant_id}")
+
+    previous_tenant_id = row.tenant_id
+    row.tenant_id = body.tenant_id
+    db.commit()
+    db.refresh(row)
+
+    audit.record(
+        actor=body.linked_by_email or principal.name or "frontend",
+        action="github_installation.link",
+        target_type="github_installation",
+        target_id=row.id,
+        details={
+            "installation_id": installation_id,
+            "previous_tenant_id": previous_tenant_id,
+            "new_tenant_id": body.tenant_id,
+            "linked_by_email": body.linked_by_email,
+        },
+    )
+
+    return {
+        "installation_id": row.installation_id,
+        "tenant_id": row.tenant_id,
+        "linked_to_tenant": row.tenant_id is not None,
+        "linked_at": datetime.now(UTC).isoformat(),
+    }
+
+
 # ----- public read of an installation (used by the post-install page) -------
 
 
@@ -479,7 +547,11 @@ def get_installation_public(installation_id: int, db: Session = Depends(get_db))
         "account_type": row.github_account_type,
         "repos": list(row.repo_full_names or []),
         "active": row.active,
-        "linked_to_integration": row.integration_id is not None,
+        # Linked = associated with a tenant (set by the pairing flow at
+        # POST /installations/{id}/link). Implies the install belongs to
+        # a known Vibefixing account; PR scan results route to that
+        # tenant's dashboard.
+        "linked_to_tenant": row.tenant_id is not None,
         "installed_at": row.installed_at.isoformat() if row.installed_at else None,
     }
 

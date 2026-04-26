@@ -215,10 +215,28 @@ def test_render_summary_includes_combos_section_when_passed():
     assert "runtime-supervisor/combos/" in md
 
 
-def test_bucket_agent_method_in_orchestrator_path_goes_to_wrap():
-    """A medium-confidence `execute()` in an orchestrator path is still a
-    chokepoint — the scanner can't upgrade confidence without more context,
-    but the narrator should still treat it as wrap-level."""
+def test_bucket_high_confidence_agent_method_goes_to_wrap():
+    """A high-confidence `execute()` in an orchestrator path is a chokepoint
+    and lands in the wrap bucket."""
+    findings = [_f(
+        "/repo/supabase/functions/orchestrator/registry.ts",
+        scanner="agent-orchestrators",
+        confidence="high",
+        kind="agent-method",
+        method_name="execute",
+    )]
+    buckets = _bucket_findings(findings)
+    assert len(buckets["wrap"]) == 1
+    assert buckets["confirm"] == []
+
+
+def test_bucket_medium_confidence_agent_method_skipped():
+    """Medium-confidence agent-method findings are filtered out so
+    FULL_REPORT.md doesn't list a wrap target that START_HERE.md correctly
+    hides — they share the same `confidence == "high"` gate as
+    `summary.build_summary`. In real scans the scanner already emits
+    `agent-method` at high confidence (it only fires inside `in_agent_path`),
+    so this case mostly guards against synthetic / regression inputs."""
     findings = [_f(
         "/repo/supabase/functions/orchestrator/registry.ts",
         scanner="agent-orchestrators",
@@ -227,8 +245,7 @@ def test_bucket_agent_method_in_orchestrator_path_goes_to_wrap():
         method_name="execute",
     )]
     buckets = _bucket_findings(findings)
-    assert len(buckets["wrap"]) == 1
-    assert buckets["confirm"] == []
+    assert all(len(v) == 0 for v in buckets.values())
 
 
 def test_bucket_skips_http_routes_entirely():

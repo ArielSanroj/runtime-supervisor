@@ -75,6 +75,8 @@ class PriorityItem:
 
 def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
     """Group findings into the 4 priority buckets based on confidence + path."""
+    from .summary import is_low_reachability_path
+
     buckets: dict[Priority, list[Finding]] = {
         "wrap": [], "prod": [], "confirm": [], "discard": [],
     }
@@ -83,7 +85,14 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
         # tool registrations are wrap points (what the user should decorate);
         # framework imports are signal only; method defs in orchestrator paths
         # are ALSO wrap points (often `async execute()` / `handle()` — the
-        # chokepoint itself, even when the scanner only gives medium confidence).
+        # chokepoint itself).
+        #
+        # The filters here mirror `summary.build_summary`'s gate
+        # (`confidence == "high"` for chokepoints) plus the same low-reach
+        # and already-gated guards that `start_here._build_wrap_targets`
+        # applies. Without this match, FULL_REPORT.md surfaces medium-
+        # confidence wrap targets that START_HERE.md correctly hides — and
+        # the two docs disagree on which class to wrap first.
         if f.scanner == "agent-orchestrators":
             kind = f.extra.get("kind", "")
             path_kind = _classify_path(f.file)
@@ -95,6 +104,13 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
                 # not as a priority item. Skip here.
                 continue
             if kind in ("agent-class", "tool-registration", "agent-method"):
+                # Same gate as start_here / summary so the top-3 stays in sync.
+                if f.confidence != "high":
+                    continue
+                if is_low_reachability_path(f.file):
+                    continue
+                if (f.extra or {}).get("already_gated"):
+                    continue
                 buckets["wrap"].append(f)
                 continue
 

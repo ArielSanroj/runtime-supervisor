@@ -11,6 +11,7 @@ const NAV = [
   { href: "/threats", label: "Threats" },
   { href: "/policies", label: "Rules" },
   { href: "/integrations", label: "Integrations" },
+  { href: "/team", label: "Team" },
 ] as const;
 
 async function currentTenantLabel(): Promise<string | null> {

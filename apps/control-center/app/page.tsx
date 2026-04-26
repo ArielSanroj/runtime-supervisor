@@ -282,7 +282,7 @@ def handle_tool_call(tool, args):
                 "Unlimited repos in this workspace",
                 "Shared fix queue + team review",
                 "Audit retention + webhooks",
-                "SSO when needed",
+                "SSO (rolling out — email us)",
               ]}
             />
             <Plan

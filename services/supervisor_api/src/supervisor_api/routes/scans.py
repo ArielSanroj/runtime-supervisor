@@ -261,6 +261,83 @@ def list_scans(
     ]
 
 
+@router.get("/scans/{scan_id}/bundle.zip")
+def download_scan_bundle(scan_id: str, db: Session = Depends(get_db)):
+    """Download the full `runtime-supervisor/` bundle as a ZIP.
+
+    The Builder export: SUMMARY.md + report.md + ROLLOUT.md + combos/ +
+    policies/ + stubs/ + findings.json. Same shape the CLI emits.
+
+    Reuses `supervisor_discover.generator.generate()` so the bundle stays
+    in lockstep with what `pipx install supervisor-discover` produces —
+    no drift between web export and local CLI.
+    """
+    import io
+    import tempfile
+    import zipfile
+    from pathlib import Path as _Path
+
+    from fastapi.responses import StreamingResponse
+
+    from supervisor_discover.findings import Finding
+    from supervisor_discover.generator import generate
+
+    row = db.get(Scan, scan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="scan not found")
+    if row.status != "done":
+        raise HTTPException(
+            status_code=409,
+            detail=f"scan is {row.status}, bundle only available for status=done",
+        )
+
+    # Rehydrate Finding dataclasses from the persisted JSON list. Use the
+    # canonical fields the dataclass takes; ignore extras the storage may
+    # have folded in.
+    findings_objs: list[Finding] = []
+    for f in row.findings or []:
+        try:
+            findings_objs.append(
+                Finding(
+                    scanner=f.get("scanner", "unknown"),
+                    file=f.get("file", ""),
+                    line=int(f.get("line", 0)),
+                    snippet=f.get("snippet", ""),
+                    suggested_action_type=f.get("suggested_action_type", "general"),
+                    confidence=f.get("confidence", "low"),
+                    rationale=f.get("rationale", ""),
+                    extra=f.get("extra") or {},
+                )
+            )
+        except Exception:
+            log.exception("scan.bundle: skipping malformed finding")
+
+    # Use a tempdir as working surface; generate writes the canonical
+    # tree, we zip the result in-memory and stream back.
+    with tempfile.TemporaryDirectory(prefix=f"bundle-{scan_id}-") as tmp:
+        out = _Path(tmp) / "runtime-supervisor"
+        try:
+            generate(findings_objs, out, repo_root=None)
+        except Exception as e:
+            log.exception("scan.bundle: generate() failed for %s", scan_id)
+            raise HTTPException(status_code=500, detail=f"bundle generation failed: {e}") from e
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in out.rglob("*"):
+                if path.is_file():
+                    zf.write(path, arcname=path.relative_to(_Path(tmp)))
+        buf.seek(0)
+
+    repo_slug = (row.repo_url or "").rstrip("/").split("/")[-1] or "repo"
+    filename = f"runtime-supervisor-{repo_slug}-{scan_id[:8]}.zip"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/zip",
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ---- worker ------------------------------------------------------------------
 
 
@@ -282,6 +359,55 @@ async def _run_scan(scan_id: str, url: str, ref: str | None) -> None:
         })
 
 
+def _resolve_clone_url(public_url: str) -> str:
+    """If the repo lives under a Vibefixing GitHub App install, swap in
+    an installation token so private repos clone successfully. Falls
+    back to the original public URL otherwise (anonymous git clone).
+
+    URL pattern: https://github.com/{owner}/{repo}{.git?}
+    Match logic: any active GitHubInstallation whose repo_full_names
+    contains "{owner}/{repo}" or "*" (= "All repositories").
+    """
+    import re
+
+    from .. import github_api
+    from ..db import SessionLocal
+    from ..models import GitHubInstallation
+
+    m = re.match(r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", public_url)
+    if not m:
+        return public_url
+
+    full_name = f"{m.group(1)}/{m.group(2)}"
+
+    try:
+        with SessionLocal() as db:
+            row = (
+                db.query(GitHubInstallation)
+                .filter(GitHubInstallation.active.is_(True))
+                .all()
+            )
+            installation_id: int | None = None
+            for r in row:
+                names = r.repo_full_names or []
+                if full_name in names or "*" in names:
+                    installation_id = r.installation_id
+                    break
+
+        if installation_id is None:
+            return public_url
+
+        # Mint installation-scoped token (1h lifetime, fresh per scan).
+        token = github_api.get_installation_token(installation_id)
+        return f"https://x-access-token:{token.token}@github.com/{full_name}.git"
+    except Exception:
+        # If anything fails (App not configured, GitHub API hiccup),
+        # fall back to public URL — better to fail at clone with a
+        # honest error than to fail here silently.
+        log.exception("could not resolve install token for %s; falling back to public URL", full_name)
+        return public_url
+
+
 def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
     started = time.perf_counter()
     base = _load(scan_id) or {}
@@ -291,6 +417,8 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
     with tempfile.TemporaryDirectory(prefix=f"scan-{scan_id}-") as tmp:
         tmp_path = Path(tmp)
 
+        clone_url = _resolve_clone_url(url)
+
         clone_cmd = [
             "git", "clone",
             "--depth", "1",
@@ -299,7 +427,7 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         ]
         if ref:
             clone_cmd += ["-b", ref]
-        clone_cmd += [url, str(tmp_path)]
+        clone_cmd += [clone_url, str(tmp_path)]
 
         try:
             subprocess.run(

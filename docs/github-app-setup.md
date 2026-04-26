@@ -1,5 +1,11 @@
 # GitHub App — setup notes (Phase E)
 
+> **Status (2026-04-25)**: end-to-end install + webhook flow verified live.
+> App registered on github.com, secret rotated through "Recent Deliveries
+> redeliver", `installation.created` event accepted with HTTP 200, row
+> persisted in `github_installations`. Next milestone: end-to-end PR scan
+> against a real PR (this commit ships that test).
+
 The skeleton is in `services/supervisor_api/src/supervisor_api/routes/github_app.py`
 and `services/supervisor_api/alembic/versions/0016_github_installations.py`.
 Both are committed but the handlers raise 501 until the App is registered

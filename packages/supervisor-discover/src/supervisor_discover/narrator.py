@@ -105,6 +105,21 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
         if f.scanner == "http-routes":
             continue
 
+        # Skill artifacts (SKILL.md, CLAUDE.md, agent personas, plugin manifests)
+        # are markdown the LLM consumes — they cannot be wrapped with @supervised.
+        # The skills scanner exists to inventory them, not to recommend wraps.
+        # Rendering "Gate 23 skills call-site(s)" pointing at .md files is
+        # nonsense; route them out of the priority list entirely.
+        if f.scanner == "skills":
+            continue
+
+        # Already-wrapped call-sites (annotated by gate_coverage) are not
+        # "do this now" candidates — the user already has @supervised /
+        # guarded(...) covering them. Surface as info-only via FULL_REPORT;
+        # don't repeat the wrap recommendation on every re-scan.
+        if (f.extra or {}).get("already_gated"):
+            continue
+
         path_kind = _classify_path(f.file)
         if path_kind == "test":
             buckets["discard"].append(f)
@@ -503,8 +518,19 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
     # 🎯 Wrap — one item per chokepoint. Order: classes first (strongest
     # signal), then methods (same file often — collapse to 1 item per file),
     # then tool registrations.
+    #
+    # Sort `class_wraps` with the same ranking as START_HERE's chokepoint list
+    # (`finding_wrap_rank`) so SUMMARY / FULL_REPORT and START_HERE never
+    # disagree about which class to wrap first. Without this they pick from
+    # different orderings — START_HERE uses summary chokepoints (factory hint
+    # priority), narrator used input order.
+    from .summary import finding_wrap_rank
+
     wraps = buckets["wrap"]
-    class_wraps = [f for f in wraps if f.extra.get("kind") == "agent-class"]
+    class_wraps = sorted(
+        [f for f in wraps if f.extra.get("kind") == "agent-class"],
+        key=finding_wrap_rank,
+    )
     method_wraps = [f for f in wraps if f.extra.get("kind") == "agent-method"]
     reg_wraps = [f for f in wraps if f.extra.get("kind") == "tool-registration"]
 

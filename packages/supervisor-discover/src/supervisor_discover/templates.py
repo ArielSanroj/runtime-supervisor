@@ -255,12 +255,7 @@ from supervisor_guards import SupervisorBlocked, supervised
     "{action_type}",
     on_review="shadow",
     payload=lambda *args, **kwargs: {{
-        # TODO: build the payload the supervisor should see. At minimum
-        # include the fields your policy's `when` expressions reference —
-        # for refund: amount, currency, customer_id, customer_age_days,
-        # refund_velocity_24h, reason.
-        "raw_args": [str(a) for a in args],
-        "raw_kwargs": {{k: str(v) for k, v in kwargs.items()}},
+{payload_body}
     }},
 )
 def guarded_call(*args, **kwargs):
@@ -268,6 +263,111 @@ def guarded_call(*args, **kwargs):
     # e.g. return stripe.Refund.create(**kwargs)
     raise NotImplementedError
 '''
+
+# Per-scanner Python payload bodies. Each one lists the fields the matching
+# policy's `when:` expressions actually reference, plus copy-paste-ready
+# extractors for the most common SDK call shape. The generic `raw_args` /
+# `raw_kwargs` placeholder is kept as a fallback only — without these
+# scanner-specific bodies, every stub returned `{"raw_args": [...], "raw_kwargs": {...}}`,
+# which never satisfies `when: amount > 1000` and similar.
+_PY_PAYLOAD_FALLBACK = (
+    "        # TODO: build the payload the supervisor should see. At minimum\n"
+    "        # include the fields your policy's `when` expressions reference.\n"
+    "        \"raw_args\": [str(a) for a in args],\n"
+    "        \"raw_kwargs\": {k: str(v) for k, v in kwargs.items()},"
+)
+
+PY_PAYLOAD_BODIES: dict[str, str] = {
+    "payment-calls": (
+        "        # Policy `when:` for action_type=\"payment\" references these fields:\n"
+        "        #   amount, currency, customer_id, customer_age_days,\n"
+        "        #   refund_velocity_24h, reason.\n"
+        "        # Stripe call shapes the scanner saw:\n"
+        "        #   stripe.Charge.create(amount=..., currency=..., customer=...)\n"
+        "        #   stripe.PaymentIntent.create(amount=..., currency=..., customer=...)\n"
+        "        #   stripe.Refund.create(charge=..., reason=...)\n"
+        "        \"amount\": kwargs.get(\"amount\"),\n"
+        "        \"currency\": kwargs.get(\"currency\"),\n"
+        "        \"customer_id\": kwargs.get(\"customer\") or kwargs.get(\"customer_id\"),\n"
+        "        \"reason\": kwargs.get(\"reason\"),"
+    ),
+    "fs-shell": (
+        "        # Policy `when:` for action_type=\"tool_use\" on shell ops references:\n"
+        "        #   command, args, cwd, shell.\n"
+        "        # Common call shapes:\n"
+        "        #   subprocess.run([cmd, *args], shell=False, cwd=...)\n"
+        "        #   subprocess.check_call([cmd, *args])\n"
+        "        #   os.unlink(path) / shutil.rmtree(path)\n"
+        "        \"command\": (args[0][0] if args and isinstance(args[0], (list, tuple)) and args[0] else args[0] if args else None),\n"
+        "        \"args\": (args[0][1:] if args and isinstance(args[0], (list, tuple)) else list(args[1:])),\n"
+        "        \"cwd\": kwargs.get(\"cwd\"),\n"
+        "        \"shell\": kwargs.get(\"shell\", False),\n"
+        "        \"path\": (args[0] if args else kwargs.get(\"path\")),  # for unlink/rmtree"
+    ),
+    "email-sends": (
+        "        # Policy `when:` for action_type=\"tool_use\" on email references:\n"
+        "        #   to (recipient list), from, subject, body_size, recipient_count.\n"
+        "        # Common call shapes:\n"
+        "        #   sg.send(Mail(to_emails=[...], subject=..., html_content=...))\n"
+        "        #   smtplib.SMTP.sendmail(from_addr, to_addrs, msg)\n"
+        "        #   ses.send_email(Source=..., Destination={\"ToAddresses\": [...]}, ...)\n"
+        "        \"to\": kwargs.get(\"to\") or kwargs.get(\"to_emails\") or kwargs.get(\"to_addrs\"),\n"
+        "        \"from\": kwargs.get(\"from_email\") or kwargs.get(\"from_addr\"),\n"
+        "        \"subject\": kwargs.get(\"subject\"),\n"
+        "        \"recipient_count\": len(kwargs.get(\"to\") or kwargs.get(\"to_emails\") or []),"
+    ),
+    "messaging": (
+        "        # Policy `when:` references: channel, recipient, body_size.\n"
+        "        # Slack/Discord/SMS providers carry destination differently —\n"
+        "        # adapt to the SDK at the call-site.\n"
+        "        \"channel\": kwargs.get(\"channel\") or kwargs.get(\"to\"),\n"
+        "        \"recipient\": kwargs.get(\"to\") or kwargs.get(\"recipient\"),\n"
+        "        \"body\": kwargs.get(\"text\") or kwargs.get(\"message\") or kwargs.get(\"body\"),"
+    ),
+    "voice-actions": (
+        "        # Policy `when:` references: to_number, from_number, voice_id.\n"
+        "        # Twilio call shape:\n"
+        "        #   client.calls.create(to=..., from_=..., url=...)\n"
+        "        # ElevenLabs TTS:\n"
+        "        #   client.text_to_speech.convert(voice_id=..., text=..., ...)\n"
+        "        \"to_number\": kwargs.get(\"to\"),\n"
+        "        \"from_number\": kwargs.get(\"from_\") or kwargs.get(\"from\"),\n"
+        "        \"voice_id\": kwargs.get(\"voice_id\"),\n"
+        "        \"text\": kwargs.get(\"text\"),"
+    ),
+    "calendar-actions": (
+        "        # Policy `when:` references: calendar_id, attendee_count, summary.\n"
+        "        \"calendar_id\": kwargs.get(\"calendarId\") or kwargs.get(\"calendar_id\"),\n"
+        "        \"summary\": (kwargs.get(\"body\") or {}).get(\"summary\") if kwargs.get(\"body\") else kwargs.get(\"summary\"),\n"
+        "        \"attendees\": (kwargs.get(\"body\") or {}).get(\"attendees\") if kwargs.get(\"body\") else kwargs.get(\"attendees\"),"
+    ),
+    "llm-calls": (
+        "        # Policy `when:` for action_type=\"tool_use\" on LLM references:\n"
+        "        #   model, prompt_length, system_prompt, tool_name.\n"
+        "        # Common call shapes:\n"
+        "        #   client.chat.completions.create(model=..., messages=[...], tools=[...])\n"
+        "        #   anthropic.messages.create(model=..., system=..., messages=[...])\n"
+        "        \"model\": kwargs.get(\"model\"),\n"
+        "        \"messages\": kwargs.get(\"messages\"),\n"
+        "        \"tools\": kwargs.get(\"tools\"),\n"
+        "        \"system\": kwargs.get(\"system\") or kwargs.get(\"system_prompt\"),\n"
+        "        \"prompt_length\": sum(len(str(m.get(\"content\", \"\"))) for m in (kwargs.get(\"messages\") or [])),"
+    ),
+    "db-mutations": (
+        "        # Policy `when:` references: table, verb, row_count, where_clause.\n"
+        "        # SQL execution shapes:\n"
+        "        #   cursor.execute(\"INSERT INTO users ...\", params)\n"
+        "        #   db.execute(text(\"UPDATE ...\"), values)\n"
+        "        \"sql\": (args[0] if args else kwargs.get(\"sql\") or kwargs.get(\"query\")),\n"
+        "        \"params\": (args[1] if len(args) > 1 else kwargs.get(\"params\") or kwargs.get(\"values\")),"
+    ),
+}
+
+
+def py_payload_body_for(scanner: str) -> str:
+    """Return the scanner-specific Python payload body, or the generic
+    fallback when the scanner has no curated extractor yet."""
+    return PY_PAYLOAD_BODIES.get(scanner, _PY_PAYLOAD_FALLBACK)
 
 TS_STUB = """/**
  * Generated by supervisor-discover. Copy the `supervised()` wrapper into
@@ -287,14 +387,76 @@ import {{ SupervisorBlocked, supervised }} from "@runtime-supervisor/guards";
 export const guardedCall = supervised("{action_type}", {{
   onReview: "shadow",
   payloadFrom: (...args: unknown[]) => ({{
-    // TODO: build the payload the supervisor should see.
-    raw_args: args.map((a) => String(a)),
+{ts_payload_body}
   }}),
 }})(async (...args: unknown[]) => {{
   // TODO: call the original function found at {original_file}:{line}
   throw new Error("wire me into the real call-site");
 }});
 """
+
+_TS_PAYLOAD_FALLBACK = (
+    "    // TODO: build the payload the supervisor should see.\n"
+    "    raw_args: args.map((a) => String(a)),"
+)
+
+TS_PAYLOAD_BODIES: dict[str, str] = {
+    "payment-calls": (
+        "    // Policy `when:` for action_type=\"payment\" references:\n"
+        "    //   amount, currency, customer_id, reason.\n"
+        "    // Stripe SDK call shape (first arg is the params object):\n"
+        "    //   stripe.charges.create({ amount, currency, customer })\n"
+        "    amount: (args[0] as any)?.amount,\n"
+        "    currency: (args[0] as any)?.currency,\n"
+        "    customer_id: (args[0] as any)?.customer ?? (args[0] as any)?.customer_id,\n"
+        "    reason: (args[0] as any)?.reason,"
+    ),
+    "calendar-actions": (
+        "    // Policy `when:` references: calendar_id, attendee_count, summary.\n"
+        "    // Google Calendar fetch shape: fetch(`…/calendars/${id}/events`, { method, body }).\n"
+        "    calendar_id: (args[0] as any)?.calendarId ?? (args[0] as any)?.calendar_id,\n"
+        "    summary: (args[0] as any)?.body?.summary,\n"
+        "    attendees: (args[0] as any)?.body?.attendees,"
+    ),
+    "voice-actions": (
+        "    // Policy `when:` references: to_number, from_number, voice_id.\n"
+        "    // Twilio: client.calls.create({ to, from, url }).\n"
+        "    to_number: (args[0] as any)?.to,\n"
+        "    from_number: (args[0] as any)?.from,\n"
+        "    voice_id: (args[0] as any)?.voice_id,"
+    ),
+    "email-sends": (
+        "    // Policy `when:` references: to, from, subject, recipient_count.\n"
+        "    to: (args[0] as any)?.to ?? (args[0] as any)?.toEmails,\n"
+        "    from: (args[0] as any)?.from ?? (args[0] as any)?.fromEmail,\n"
+        "    subject: (args[0] as any)?.subject,"
+    ),
+    "messaging": (
+        "    // Policy `when:` references: channel, recipient, body.\n"
+        "    channel: (args[0] as any)?.channel ?? (args[0] as any)?.to,\n"
+        "    body: (args[0] as any)?.text ?? (args[0] as any)?.message,"
+    ),
+    "llm-calls": (
+        "    // Policy `when:` references: model, messages, tools, prompt_length.\n"
+        "    model: (args[0] as any)?.model,\n"
+        "    messages: (args[0] as any)?.messages,\n"
+        "    tools: (args[0] as any)?.tools,\n"
+        "    prompt_length: ((args[0] as any)?.messages ?? []).reduce(\n"
+        "      (acc: number, m: any) => acc + String(m?.content ?? \"\").length, 0,\n"
+        "    ),"
+    ),
+    "fs-shell": (
+        "    // Policy `when:` references: command, args, cwd.\n"
+        "    // child_process.exec(cmd) / spawn(cmd, args, opts):\n"
+        "    command: typeof args[0] === \"string\" ? args[0] : (args[0] as any)?.[0],\n"
+        "    args: typeof args[0] === \"string\" ? args[1] : (args[0] as any)?.slice(1),\n"
+        "    cwd: (args[2] as any)?.cwd ?? (args[1] as any)?.cwd,"
+    ),
+}
+
+
+def ts_payload_body_for(scanner: str) -> str:
+    return TS_PAYLOAD_BODIES.get(scanner, _TS_PAYLOAD_FALLBACK)
 
 ENV_EXAMPLE = """# runtime-supervisor client env
 SUPERVISOR_BASE_URL=http://localhost:8000

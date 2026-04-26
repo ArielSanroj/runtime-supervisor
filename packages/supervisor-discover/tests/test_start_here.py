@@ -121,9 +121,15 @@ def test_do_this_now_includes_supervised_snippet():
 
 def test_do_this_now_uses_typescript_snippet_for_ts_file():
     """When the wrap target lives in a .ts file, the snippet must use the TS
-    SDK (`@runtime-supervisor/guards`) and arrow-function syntax — not Python."""
+    SDK (`@runtime-supervisor/guards`) and arrow-function syntax — not Python.
+
+    Uses an `agent-class` chokepoint (in an orchestrator file so it's tier 0 and
+    survives the wrap-target filter) — `framework-import` chokepoints no longer
+    reach `do_this_now` because they're treated as loop signals, not wrap points.
+    """
     summary = RepoSummary(agent_chokepoints=[
-        AgentChokepoint(file="packages/mcp/src/index.ts", line=230, kind="framework-import", label="mcp-dispatcher"),
+        AgentChokepoint(file="packages/mcp/src/orchestrator.ts", line=230,
+                        kind="agent-class", label="McpDispatcher"),
     ])
     sh = build_start_here(summary, [])
     assert "```ts" in sh.do_this_now
@@ -178,3 +184,234 @@ def test_render_md_includes_hidden_counter_when_present():
     md = render_start_here_md(sh)
     assert "10 findings hidden" in md
     assert "7 tests" in md and "3 legacy" in md
+
+
+# 3. Framework-import handling — must NOT pollute "Best place to wrap first".
+#
+# A framework import (e.g. `from langchain.agents import initialize_agent`) is
+# a loop *signal*, not a wrappable call-site. Including it under "Best place
+# to wrap first" produced a self-contradicting bullet ("framework entrypoint —
+# signals the loop, not the wrap point itself") — the section now lives in its
+# own block ("Agent frameworks detected"), and `top_wrap_targets` only carries
+# actually-wrappable chokepoints.
+
+def test_framework_imports_excluded_from_wrap_targets():
+    """Solo framework-import → wrap targets vacío, framework signals presentes."""
+    cps = [AgentChokepoint(file="src/agents.py", line=5,
+                           kind="framework-import", label="langchain")]
+    summary = RepoSummary(agent_chokepoints=cps)
+    sh = build_start_here(summary, [Finding(
+        scanner="agent-orchestrators", file="src/agents.py", line=5,
+        snippet="from langchain.agents import initialize_agent",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )])
+    assert sh.top_wrap_targets == []
+    assert len(sh.framework_signals) == 1
+    assert sh.framework_signals[0].framework == "langchain"
+    assert sh.framework_signals[0].file == "src/agents.py"
+    assert sh.framework_signals[0].line == 5
+
+
+def test_mixed_chokepoints_split_correctly():
+    """agent-class + framework-import → wrap targets has only the class,
+    framework signals has only the import."""
+    cps = [
+        AgentChokepoint(file="src/orchestrator.py", line=42,
+                        kind="agent-class", label="Orch"),
+        AgentChokepoint(file="src/imports.py", line=3,
+                        kind="framework-import", label="langchain"),
+    ]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [Finding(
+        scanner="agent-orchestrators", file="src/imports.py", line=3,
+        snippet="from langchain.agents import AgentExecutor",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )]
+    sh = build_start_here(summary, findings)
+    assert len(sh.top_wrap_targets) == 1
+    assert sh.top_wrap_targets[0].label == "Orch"
+    assert len(sh.framework_signals) == 1
+    assert sh.framework_signals[0].framework == "langchain"
+
+
+def test_framework_signals_section_rendered_in_md():
+    """Markdown contains '## Agent frameworks detected' iff framework_signals
+    is non-empty."""
+    cps = [AgentChokepoint(file="src/x.py", line=1,
+                           kind="framework-import", label="langchain")]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [Finding(
+        scanner="agent-orchestrators", file="src/x.py", line=1,
+        snippet="from langchain import …",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )]
+    md_with = render_start_here_md(build_start_here(summary, findings))
+    assert "## Agent frameworks detected" in md_with
+    assert "**langchain**" in md_with
+
+    md_without = render_start_here_md(build_start_here(RepoSummary(), []))
+    assert "## Agent frameworks detected" not in md_without
+
+
+def test_wrap_first_falls_back_with_framework_signals_no_contradiction():
+    """When only framework imports exist, the 'Best place to wrap first' section
+    must NOT carry the contradictory copy and must NAME the framework so the
+    dev knows where the loop lives."""
+    cps = [AgentChokepoint(file="repo/setup.py", line=11,
+                           kind="framework-import", label="langchain")]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [Finding(
+        scanner="agent-orchestrators", file="repo/setup.py", line=11,
+        snippet="initialize_agent(tools, llm)",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )]
+    md = render_start_here_md(build_start_here(summary, findings))
+
+    # Slice the "Best place to wrap first" section out so we only assert on it.
+    start = md.find("## Best place to wrap first")
+    end = md.find("\n## ", start + 1)
+    section = md[start:end]
+
+    assert "signals the loop, not the wrap point itself" not in section, (
+        "Regression: contradictory copy leaked back into 'Best place to wrap first'."
+    )
+    assert "langchain" in section
+    assert "agent.run" in section or "AgentExecutor.invoke" in section
+
+
+def test_no_wrap_no_signals_keeps_existing_empty_copy():
+    """Empty summary keeps the original empty-state copy verbatim."""
+    md = render_start_here_md(build_start_here(RepoSummary(), []))
+    assert "No obvious wrap target" in md
+    assert "## Agent frameworks detected" not in md
+
+
+def test_render_md_section_order_with_frameworks():
+    """When framework signals are present, the new section sits between
+    'What this repo can already do' and 'Highest-risk things to care about now'."""
+    cps = [AgentChokepoint(file="src/a.py", line=1,
+                           kind="framework-import", label="langchain")]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [Finding(
+        scanner="agent-orchestrators", file="src/a.py", line=1,
+        snippet="from langchain import …",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )]
+    md = render_start_here_md(build_start_here(summary, findings))
+    expected_order = [
+        "## Best place to wrap first",
+        "## What this repo can already do",
+        "## Agent frameworks detected",
+        "## Highest-risk things to care about now",
+        "## Do this now",
+        "## Ignore this for now",
+    ]
+    last = -1
+    for header in expected_order:
+        idx = md.find(header)
+        assert idx > last, f"section {header!r} missing or out of order"
+        last = idx
+
+
+def test_do_this_now_points_at_framework_when_no_wrap_targets():
+    """When the only chokepoint is a framework-import, `do_this_now` must point
+    at that framework + file:line and explicitly say 'not the import line'.
+
+    Note the file is `repo/setup.py` — `setup.py` is a low-reachability path,
+    but framework signals fall back to "show whatever we have" so the loop
+    can still be communicated to the dev.
+    """
+    cps = [AgentChokepoint(file="repo/setup.py", line=11,
+                           kind="framework-import", label="langchain")]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [Finding(
+        scanner="agent-orchestrators", file="repo/setup.py", line=11,
+        snippet="initialize_agent(tools, llm)",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"kind": "framework-import", "framework": "langchain"},
+    )]
+    sh = build_start_here(summary, findings)
+    assert "langchain" in sh.do_this_now
+    assert "setup.py:11" in sh.do_this_now
+    assert "Tool(func" in sh.do_this_now or "agent.run" in sh.do_this_now
+
+
+# 4. Reachability filter — low-reachability paths must not occupy the top
+# of "Best place to wrap first" or "Highest-risk" sections.
+
+def test_low_reachability_chokepoint_excluded_from_wrap_targets():
+    """A chokepoint under `tests/`, `setup.py`, `scripts/`, `legacy/`, or
+    `test-setup-*` must not be the FIRST place we point the dev at — the
+    GiftedAgentV2 scenario where `langchain_NR_setup.py` headlined the wrap
+    targets is the bug we're guarding against."""
+    cps = [
+        AgentChokepoint(file="src/agents/orchestrator.py", line=42,
+                        kind="agent-class", label="ProdOrch"),
+        AgentChokepoint(file="test-setup-newrelic/langchain_NR_setup.py",
+                        line=11, kind="agent-class", label="TestOrch"),
+    ]
+    summary = RepoSummary(agent_chokepoints=cps)
+    sh = build_start_here(summary, [])
+    labels = [t.label for t in sh.top_wrap_targets]
+    assert "ProdOrch" in labels
+    assert "TestOrch" not in labels, (
+        "test-setup-* path leaked into wrap targets — reachability filter broke."
+    )
+
+
+def test_low_reachability_finding_excluded_from_top_risks():
+    """A `subprocess.run` in `setup.py` is real code but not the agent's
+    runtime path. The supervincent scenario (build script flagged as
+    'Shell execution present') is the regression to prevent."""
+    findings = [Finding(
+        scanner="fs-shell", file="setup.py", line=58,
+        snippet="subprocess.check_call([sys.executable, '-m', 'pip', 'install'])",
+        suggested_action_type="tool_use", confidence="high", rationale="...",
+        extra={"family": "shell-exec"},
+    )]
+    sh = build_start_here(RepoSummary(), findings)
+    families = [r.family for r in sh.top_risks]
+    assert "fs-shell-shell-exec" not in families
+
+
+def test_already_gated_finding_excluded_from_top_risks():
+    """When gate_coverage marked a finding as `already_gated`, the START_HERE
+    risks section must not tell the dev to 'do this now: wrap it'. Mirrors
+    the supervincent post-onboarding scenario where the wrap was already
+    applied but the report kept asking for it."""
+    findings = [Finding(
+        scanner="payment-calls", file="src/api/routes/payments.py", line=155,
+        snippet="stripe.checkout.Session.create(",
+        suggested_action_type="payment", confidence="high", rationale="...",
+        extra={"already_gated": True, "gated_by": "guarded(...)"},
+    )]
+    sh = build_start_here(RepoSummary(), findings)
+    assert sh.top_risks == []
+
+
+# 5. Multi-method dispatcher — wrap copy must reflect that one decorator
+# does NOT cover every public entry point.
+
+def test_multi_method_dispatcher_changes_wrap_target_why():
+    """When the chokepoint's class has ≥2 peer dispatch methods, the 'why'
+    string explicitly says 'wrap each one' — the AlertDispatcher scenario
+    where 5 dispatch_*_alert methods were collapsed into 'one wrapper covers
+    all' (false claim)."""
+    cp = AgentChokepoint(
+        file="src/orchestrator.py", line=42,
+        kind="agent-class", label="AlertDispatcher",
+        parallel_methods=("dispatch_anomaly_alert", "dispatch_deadline_alert",
+                          "dispatch_sla_alert"),
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [])
+    assert len(sh.top_wrap_targets) == 1
+    why = sh.top_wrap_targets[0].why
+    assert "3 peer dispatch methods" in why
+    assert "wrap each" in why
+    assert "one wrapper" not in why  # the false claim must be gone

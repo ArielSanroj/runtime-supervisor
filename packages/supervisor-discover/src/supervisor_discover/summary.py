@@ -98,6 +98,11 @@ class AgentChokepoint:
     line: int
     kind: str           # "agent-class" | "tool-registration" | "framework-import"
     label: str          # class/tool/framework name
+    # When the class has ≥2 peer dispatch methods (`dispatch_sla_alert`,
+    # `dispatch_deadline_alert`, …), wrapping the class is NOT enough — each
+    # method is a separate public entry point. We surface the names so the
+    # renderer can warn the user. Empty tuple = single chokepoint, normal case.
+    parallel_methods: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,45 @@ _FACTORY_FILE_HINTS = (
     "main.py", "app.py", "graph.py", "workflow.py",
 )
 
+# Path fragments that mean "this code is not on the agent's runtime path":
+# benchmarks, build/dev scripts, legacy directories, test setup/instrumentation,
+# evaluation harnesses. Findings here are real but recommending them as the
+# FIRST thing to wrap mis-prioritizes the dev's effort — they go fix dead code
+# while the live orchestrator stays unguarded. Lowercased, matched as substring
+# on the relative path.
+_LOW_REACHABILITY_HINTS = (
+    "/legacy/", "/deprecated/", "/archive/", "/archived/", "/old/",
+    "/scripts/", "/script/", "/tools/", "/devtools/",
+    "/benchmarks/", "/benchmark/", "/bench/",
+    "/examples/", "/example/", "/demo/", "/demos/", "/samples/", "/sample/",
+    "/research/", "/experiments/", "/notebooks/",
+    "/tests/", "/__tests__/", "/test/", "/spec/", "/specs/",
+    "/fixtures/", "/fixture/", "/mocks/", "/__mocks__/",
+    "/test-setup-", "/test_setup_",
+)
+
+_LOW_REACHABILITY_FILENAME_HINTS = (
+    "setup.py", "setup_", "_setup.py", "install.py", "_install.py",
+    "_test.py", "_test.ts", "_tests.py", "_spec.py",
+    ".test.", ".spec.", ".stories.",
+    "conftest.py",
+)
+
+
+def is_low_reachability_path(file: str) -> bool:
+    """True when `file` lives on a path that doesn't run in production.
+
+    Used to demote chokepoints, framework signals, and risks from the START_HERE
+    "do this now" sections — without dropping the underlying findings, which
+    remain available in FULL_REPORT.md for completeness. The classifier is
+    conservative: ambiguous paths default to reachable.
+    """
+    path = "/" + file.lower().replace("\\", "/").lstrip("/")
+    if any(hint in path for hint in _LOW_REACHABILITY_HINTS):
+        return True
+    name = path.rsplit("/", 1)[-1]
+    return any(tok in name for tok in _LOW_REACHABILITY_FILENAME_HINTS)
+
 
 def chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
     """Lower rank = better wrap point.
@@ -174,6 +218,12 @@ def chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
       2. Agent-class definitions elsewhere.
       3. Framework imports — signal that a framework is in use, but the
          import line itself is not wrappable. Informational, not actionable.
+
+    Chokepoints on low-reachability paths (test/setup/scripts/legacy) get +10
+    on their tier so they sort below every reachable chokepoint without being
+    dropped — they still appear in FULL_REPORT, just never as the FIRST place
+    the dev should look.
+
     Tie-break by line then file so output is deterministic.
     """
     file_lower = cp.file.lower()
@@ -186,12 +236,48 @@ def chokepoint_rank(cp: "AgentChokepoint") -> tuple[int, int, str]:
         tier = 2
     else:  # framework-import — signal, not a wrap point
         tier = 3
+    if is_low_reachability_path(cp.file):
+        tier += 10
     return (tier, cp.line, cp.file)
 
 
 # Backward-compat alias — keep `_chokepoint_rank` for any internal caller that
 # imported the underscore name. Public `chokepoint_rank` is the canonical one.
 _chokepoint_rank = chokepoint_rank
+
+
+def finding_wrap_rank(f: Finding) -> tuple[int, int, str]:
+    """Wrap-priority ordering applied to a raw `Finding` (not a chokepoint
+    derived in `build_summary`). Lets renderers that operate directly on
+    findings (narrator's priority list) use the SAME ordering as the START_HERE
+    chokepoint list — without that, START_HERE could recommend class A first
+    while SUMMARY/FULL_REPORT recommend class B for the same repo.
+
+    Mirrors `chokepoint_rank`'s tier system: factory-file agent-classes win,
+    tool-registrations next, plain agent-classes after, framework-imports last.
+    Adds +10 for low-reachability paths so test/setup/script chokepoints sort
+    below every reachable one.
+    """
+    extra = f.extra or {}
+    kind = str(extra.get("kind") or "")
+    file_lower = f.file.lower()
+    is_factory = any(hint in file_lower for hint in _FACTORY_FILE_HINTS)
+    if kind == "agent-class" and is_factory:
+        tier = 0
+    elif kind == "tool-registration":
+        tier = 1
+    elif kind == "agent-class":
+        tier = 2
+    elif kind == "framework-import":
+        tier = 3
+    else:
+        # `agent-method` and other kinds bucket between agent-class (2) and
+        # framework-import (3) so methods-without-an-anchored-class don't
+        # outrank class definitions.
+        tier = 2
+    if is_low_reachability_path(f.file):
+        tier += 10
+    return (tier, f.line, f.file)
 
 
 def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None = None) -> RepoSummary:
@@ -267,8 +353,11 @@ def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None 
                     or extra.get("tool_name")
                     or "agent"
                 )
+                pmethods_raw = extra.get("parallel_methods") or ()
+                pmethods = tuple(str(m) for m in pmethods_raw) if pmethods_raw else ()
                 chokepoints.append(AgentChokepoint(
                     file=f.file, line=f.line, kind=kind, label=str(label),
+                    parallel_methods=pmethods,
                 ))
             if kind == "framework-import":
                 fw_name = str(extra.get("framework", "")).lower()

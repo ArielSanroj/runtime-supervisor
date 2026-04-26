@@ -49,7 +49,13 @@ def scan_all(root: Path) -> list[Finding]:
     ):
         findings.extend(module.scan(root))
     findings = _downgrade_eval_paths(findings, root)
-    return _self_check(findings)
+    findings = _self_check(findings)
+    # Mark findings that already live inside a @supervised-decorated function
+    # or a guarded(...) call — without this, re-scans tell the user to "wrap"
+    # things they wrapped on a previous PR. Runs after _self_check so we only
+    # pay AST cost on findings we'll actually keep.
+    from ..gate_coverage import annotate_findings
+    return annotate_findings(findings)
 
 
 # Paths that imply "this is research / benchmark / test code, not the agent's

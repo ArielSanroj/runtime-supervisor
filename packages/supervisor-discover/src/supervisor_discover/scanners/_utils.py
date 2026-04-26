@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -77,6 +78,32 @@ def _extract_notebook_python(path: Path) -> str:
 _PY_GLOBS = ("**/*.py", "**/*.ipynb")
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
 
+# Filename patterns that mean "compiled / bundled output, not source". Real
+# call-sites never live in these — they're webpack chunks, minified bundles,
+# or source maps. Reporting them as findings produces "wrap a hashed bundle
+# file" recommendations which are nonsense.
+_BUNDLE_SUFFIXES = (
+    ".bundle.js", ".bundle.mjs", ".bundle.cjs",
+    ".min.js", ".min.mjs", ".min.cjs",
+    ".chunk.js", ".chunk.mjs",
+    ".map",
+)
+
+# Webpack/Rollup hashed chunks: `5566.c76ea61eb723ee84e2cf.js`,
+# `main.a1b2c3d4.js`, etc. Matched on the BASENAME — never on directories,
+# because some apps ship `<hash>` directory names that aren't bundles.
+_BUNDLE_HASHED_NAME = re.compile(r"^[\w.-]+\.[a-f0-9]{8,}\.(?:js|mjs|cjs|css)$", re.IGNORECASE)
+
+
+def _is_bundle_artifact(path: Path) -> bool:
+    """True for compiled bundles, minified output, source maps, hashed chunks."""
+    name = path.name.lower()
+    if any(name.endswith(suffix) for suffix in _BUNDLE_SUFFIXES):
+        return True
+    if _BUNDLE_HASHED_NAME.match(path.name):
+        return True
+    return False
+
 _SKIP_DIRS = {
     # build + package dirs (safe: never project source)
     "node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build",
@@ -118,8 +145,11 @@ def _walk(root: Path, globs: tuple[str, ...]) -> Iterator[Path]:
                 continue
             if any(part in _SKIP_DIRS for part in rel_parts):
                 continue
-            if path.is_file():
-                yield path
+            if not path.is_file():
+                continue
+            if _is_bundle_artifact(path):
+                continue
+            yield path
 
 
 def python_files(root: Path) -> Iterator[Path]:
@@ -182,6 +212,75 @@ def match_dotted_call(call: ast.Call, targets: dict[str, object]) -> tuple[str, 
     for target in targets:
         if "." in target and name.endswith("." + target):
             return target, targets[target]
+    return None
+
+
+# ─── HTTP verb detection (URL → mutation vs read) ────────────────────
+#
+# URL-pattern scanners (calendar, certain payment endpoints) match the URL
+# regardless of the HTTP verb. A `fetch(url)` against `…/calendar/v3/.../events`
+# is a list/read; a `fetch(url, { method: "POST" })` is a mutation. Reporting
+# the read as a "calendar mutation" misleads the dev — they wrap a GET endpoint
+# they didn't need to.
+#
+# This helper looks at a small window around the URL match and decides whether
+# the verb is GET (read) or a write verb. If it can't tell, returns None and
+# the caller keeps the original behavior.
+
+_HTTP_VERB_WRITE = ("POST", "PUT", "PATCH", "DELETE")
+_HTTP_VERB_READ = ("GET", "HEAD")
+
+_RE_METHOD_KEY = re.compile(
+    r"""(?:method|verb)\s*[:=]\s*['"]([A-Z]+)['"]""",
+    re.IGNORECASE,
+)
+_RE_REQUESTS_VERB = re.compile(
+    r"\b(?:requests|httpx|axios|fetch)\.(get|post|put|patch|delete|head)\s*\(",
+    re.IGNORECASE,
+)
+# Plain `fetch(` / `await fetch(` — JavaScript / Deno / Edge runtime API.
+# Default verb is GET unless an options object explicitly sets `method:`.
+_RE_PLAIN_FETCH = re.compile(r"\bawait\s+fetch\s*\(|\bfetch\s*\(", re.IGNORECASE)
+
+
+def detect_http_verb_near(text: str, match_start: int, *, window: int = 240) -> str | None:
+    """Inspect a window around `match_start` and return "READ", "WRITE", or None.
+
+    Searches a slice of `text` from `match_start - window` to `match_start +
+    window` for explicit method markers (`method: "POST"`) or HTTP-client verb
+    calls (`requests.post(`, plain `fetch(...)`). The window is small on
+    purpose — we want the verb that goes WITH this URL, not one elsewhere in
+    the file.
+
+    Returns None when ambiguous so callers can keep the existing finding.
+    """
+    lo = max(0, match_start - window)
+    hi = min(len(text), match_start + window)
+    snippet = text[lo:hi]
+
+    m = _RE_METHOD_KEY.search(snippet)
+    if m:
+        verb = m.group(1).upper()
+        if verb in _HTTP_VERB_WRITE:
+            return "WRITE"
+        if verb in _HTTP_VERB_READ:
+            return "READ"
+
+    m = _RE_REQUESTS_VERB.search(snippet)
+    if m:
+        verb = m.group(1).upper()
+        if verb in _HTTP_VERB_WRITE:
+            return "WRITE"
+        if verb in _HTTP_VERB_READ:
+            return "READ"
+
+    # Plain `fetch(url, …)` with NO `method:` anywhere in the window → defaults
+    # to GET (a calendar list query, not a mutation). The `method:` check
+    # above already short-circuits the WRITE case, so reaching here means we
+    # saw `fetch(` and no method key — safe to classify READ.
+    if _RE_PLAIN_FETCH.search(snippet):
+        return "READ"
+
     return None
 
 

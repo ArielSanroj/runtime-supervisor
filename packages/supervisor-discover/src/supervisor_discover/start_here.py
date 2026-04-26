@@ -21,9 +21,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import ast
+
 from .findings import Finding
 from .policy_loader import load_scan_output_policy
-from .summary import RepoSummary, chokepoint_rank
+from .scanners._utils import parse_python, safe_read
+from .summary import RepoSummary, chokepoint_rank, is_low_reachability_path
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,24 @@ class WrapTarget:
     file: str           # absolute path (UI strips to relative)
     line: int           # 1-indexed
     why: str            # "central tool router — one wrapper here covers all tools"
+    # Names of peer dispatch methods (when the class has ≥2 like
+    # `dispatch_sla_alert`, `dispatch_deadline_alert`). Empty tuple for the
+    # normal single-entry-point case. The renderer uses this to flip the copy
+    # from "one wrapper covers all" to "wrap each of N methods".
+    parallel_methods: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FrameworkSignal:
+    """An agent framework detected in the repo (langchain / langgraph / autogen
+    / crewai / mastra). The import line itself is NOT a wrap point — the wrap
+    point is the framework's dispatch method or the tool callable it invokes.
+    Surfaced separately from WrapTarget so the "Best place to wrap first"
+    section never lists a non-wrappable line."""
+    framework: str      # "langchain", "langgraph", "autogen", "crewai", "mastra"
+    file: str           # absolute path (UI strips to relative)
+    line: int           # 1-indexed
+    snippet: str        # the matched code so the dev can search for it
 
 
 @dataclass(frozen=True)
@@ -58,6 +79,9 @@ class StartHere:
     top_risks: list[Risk] = field(default_factory=list)
     do_this_now: str = ""                       # markdown snippet — code block + 1 line
     hidden_counter: dict[str, int] = field(default_factory=dict)
+    # Agent frameworks detected via import patterns (langchain, langgraph, …).
+    # Informational — these are loop signals, not wrap points.
+    framework_signals: list[FrameworkSignal] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -182,20 +206,50 @@ def _wrap_target_label(cp_kind: str, cp_label: str) -> str:
     return cp_label
 
 
-def _wrap_target_why(cp_kind: str, rank_tier: int) -> str:
-    """Plain-English rationale for why this wrap target is the best first move."""
+def _wrap_target_why(cp_kind: str, rank_tier: int,
+                     parallel_methods: tuple[str, ...] = ()) -> str:
+    """Plain-English rationale for why this wrap target is the best first move.
+
+    Only invoked for chokepoints that survived the framework-import filter in
+    `_build_wrap_targets`, so `cp_kind` is always "agent-class" or
+    "tool-registration".
+
+    When the class has ≥2 peer dispatch methods (`AlertDispatcher` with
+    `dispatch_sla_alert`, `dispatch_deadline_alert`, …), the "one wrapper
+    covers all" claim is FALSE — each method is a separate public entry. The
+    copy flips to acknowledge this so the dev wraps each one (or refactors
+    through a common helper).
+    """
+    if parallel_methods:
+        n = len(parallel_methods)
+        first = ", ".join(parallel_methods[:3])
+        suffix = ", …" if n > 3 else ""
+        return (
+            f"class with {n} peer dispatch methods ({first}{suffix}) — "
+            f"wrap each one, or refactor through a shared helper"
+        )
     if rank_tier == 0:
         return "central agent class — one wrapper here covers every tool it dispatches"
     if cp_kind == "tool-registration":
         return "tool registered with the framework — wrap the registration site"
-    if cp_kind == "agent-class":
-        return "agent class — wrap its dispatch / handle / execute method"
-    return "framework entrypoint — signals the loop, not the wrap point itself"
+    return "agent class — wrap its dispatch / handle / execute method"
 
 
 def _build_wrap_targets(summary: RepoSummary, max_targets: int) -> list[WrapTarget]:
-    """Top N agent_chokepoints by chokepoint_rank, deduplicated by (file, line)."""
-    ranked = sorted(summary.agent_chokepoints, key=chokepoint_rank)
+    """Top N actionable agent_chokepoints by chokepoint_rank, deduplicated by
+    (file, line).
+
+    Excludes:
+      - `kind == "framework-import"` (loop signal, not a wrap point — surfaces
+        in `StartHere.framework_signals`).
+      - chokepoints under low-reachability paths (test/setup/scripts/legacy).
+        They remain in FULL_REPORT but never reach the "do this now" top.
+    """
+    actionable = [
+        cp for cp in summary.agent_chokepoints
+        if cp.kind != "framework-import" and not is_low_reachability_path(cp.file)
+    ]
+    ranked = sorted(actionable, key=chokepoint_rank)
     seen: set[tuple[str, int]] = set()
     out: list[WrapTarget] = []
     for cp in ranked:
@@ -204,13 +258,68 @@ def _build_wrap_targets(summary: RepoSummary, max_targets: int) -> list[WrapTarg
             continue
         seen.add(key)
         rank = chokepoint_rank(cp)
+        # `chokepoint_rank` adds +10 for low-reachability paths; the actual
+        # tier (the wrappability bucket the why-string is keyed on) is the
+        # base rank without that demotion.
+        base_tier = rank[0] % 10
         out.append(WrapTarget(
             label=_wrap_target_label(cp.kind, cp.label),
             file=cp.file,
             line=cp.line,
-            why=_wrap_target_why(cp.kind, rank[0]),
+            why=_wrap_target_why(cp.kind, base_tier, cp.parallel_methods),
+            parallel_methods=cp.parallel_methods,
         ))
         if len(out) >= max_targets:
+            break
+    return out
+
+
+def _build_framework_signals(
+    summary: RepoSummary,
+    findings: list[Finding],
+    max_signals: int = 5,
+) -> list[FrameworkSignal]:
+    """Collect framework-import chokepoints into FrameworkSignal records.
+
+    Joins on (file, line) against agent-orchestrators findings to recover the
+    framework name (from `extra["framework"]`) and the original snippet, so the
+    rendered markdown can show the exact line the dev needs to search for.
+    Dedup by (framework, file, line). Cap at `max_signals` to keep the section
+    skimmable.
+    """
+    finding_index: dict[tuple[str, int], Finding] = {}
+    for f in findings:
+        if f.scanner != "agent-orchestrators":
+            continue
+        if (f.extra or {}).get("kind") != "framework-import":
+            continue
+        finding_index.setdefault((f.file, f.line), f)
+
+    seen: set[tuple[str, str, int]] = set()
+    out: list[FrameworkSignal] = []
+    # Reachable chokepoints first; if there are none, fall back to all of them
+    # so the dev still sees that the framework exists in the repo (the ones in
+    # test/setup paths get a special note via the renderer).
+    reachable_first = sorted(
+        (cp for cp in summary.agent_chokepoints if cp.kind == "framework-import"),
+        key=lambda cp: (is_low_reachability_path(cp.file), cp.file, cp.line),
+    )
+    for cp in reachable_first:
+        f = finding_index.get((cp.file, cp.line))
+        framework = (f.extra or {}).get("framework") if f else None
+        framework = framework or cp.label or "agent framework"
+        key = (framework, cp.file, cp.line)
+        if key in seen:
+            continue
+        seen.add(key)
+        snippet = f.snippet if f else ""
+        out.append(FrameworkSignal(
+            framework=framework,
+            file=cp.file,
+            line=cp.line,
+            snippet=snippet,
+        ))
+        if len(out) >= max_signals:
             break
     return out
 
@@ -264,14 +373,29 @@ def _build_capabilities(summary: RepoSummary, findings: list[Finding],
 
 
 def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Risk]:
-    """One Risk per high-confidence capability key, ordered by risk_severity."""
+    """One Risk per high-confidence capability key, ordered by risk_severity.
+
+    Skip findings that:
+      - aren't high confidence,
+      - live on low-reachability paths (test/setup/scripts/legacy) — a
+        `subprocess.run` in `setup.py` is real code but not the agent's runtime
+        path,
+      - are already wrapped (`extra.already_gated == True`) — the user has
+        a `@supervised(...)` or a `guarded(...)` covering this call-site, so
+        rendering "do this now: wrap it" is wrong.
+
+    Such findings stay in FULL_REPORT for completeness.
+    """
     risk_severity: dict[str, int] = policy.get("risk_severity") or {}
     max_risks: int = policy.get("max_top_risks") or 3
 
-    # Pick one representative finding per capability key (first high-confidence).
     representative: dict[str, Finding] = {}
     for f in findings:
         if f.confidence != "high":
+            continue
+        if is_low_reachability_path(f.file):
+            continue
+        if (f.extra or {}).get("already_gated"):
             continue
         key = _capability_key(f)
         if key not in representative and key in _RISK_CARDS:
@@ -297,20 +421,170 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
     return risks
 
 
-def _build_do_this_now(targets: list[WrapTarget]) -> str:
+# Method names to prefer as the "main" wrap point inside an agent class, in
+# priority order. The first match wins. Falls back to the first public method
+# if none of these are present.
+_PRIMARY_METHOD_PREFERENCE = (
+    "handle", "execute", "dispatch", "run",
+    "process", "route", "invoke", "call", "step",
+)
+
+
+def _format_python_args(args: ast.arguments) -> str:
+    """Render an `ast.arguments` node back into a Python parameter list.
+
+    Used for the "do this now" snippet so we show the dev's REAL method
+    signature (e.g. `(self, decision: Decision)`) rather than a generic
+    `(...)`. Annotation rendering uses ast.unparse when available.
+    """
+    return ast.unparse(args) if hasattr(ast, "unparse") else "..."
+
+
+def _pick_method_for_wrap(
+    cls: ast.ClassDef,
+    parallel_methods: tuple[str, ...],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Choose the best method on `cls` to put `@supervised` on.
+
+    Order:
+      1. If parallel methods were detected, return the first one (renderer
+         tells the user to repeat for the rest).
+      2. Otherwise, prefer well-known entry-point names (handle, execute, …).
+      3. Otherwise, the first public method that isn't `__init__`.
+    """
+    methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for child in cls.body:
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            methods[child.name] = child
+
+    if parallel_methods:
+        for name in parallel_methods:
+            node = methods.get(name)
+            if node is not None:
+                return node
+
+    for name in _PRIMARY_METHOD_PREFERENCE:
+        node = methods.get(name)
+        if node is not None:
+            return node
+
+    for name, node in methods.items():
+        if name.startswith("_"):
+            continue
+        return node
+
+    return None
+
+
+def _python_wrap_snippet(target: WrapTarget) -> str | None:
+    """Generate a Python snippet that wraps the REAL method at the wrap target.
+
+    Returns None when:
+      - the file isn't .py / .ipynb,
+      - the file can't be parsed,
+      - no class matching the label is found,
+      - the class has no obvious method to wrap.
+
+    The caller then falls back to the generic placeholder snippet.
+    """
+    suffix = Path(target.file).suffix.lower()
+    if suffix not in (".py", ".ipynb"):
+        return None
+    text = safe_read(Path(target.file))
+    if text is None:
+        return None
+    tree = parse_python(text)
+    if tree is None:
+        return None
+
+    # Class label may be `ToolRegistrationLike "tool: foo"` for
+    # tool-registration kind. Strip that prefix.
+    label = target.label.split(":", 1)[-1].strip()
+
+    target_class: ast.ClassDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == label:
+            # Prefer the class whose body covers the reported line.
+            end = getattr(node, "end_lineno", node.lineno) or node.lineno
+            if node.lineno <= target.line <= end:
+                target_class = node
+                break
+            if target_class is None:
+                target_class = node
+    if target_class is None:
+        return None
+
+    method = _pick_method_for_wrap(target_class, target.parallel_methods)
+    if method is None:
+        return None
+
+    rel = _short_path(target.file)
+    is_async = isinstance(method, ast.AsyncFunctionDef)
+    keyword = "async def" if is_async else "def"
+    args_repr = _format_python_args(method.args)
+
+    header = f"Wrap **{label}.{method.name}** in `{rel}:{method.lineno}`:"
+    if target.parallel_methods and len(target.parallel_methods) > 1:
+        others = ", ".join(target.parallel_methods[1:4])
+        more = f" (+{len(target.parallel_methods) - 4} more)" if len(target.parallel_methods) > 4 else ""
+        header = (
+            f"Wrap **{label}.{method.name}** in `{rel}:{method.lineno}` — and "
+            f"repeat for the {len(target.parallel_methods) - 1} peer method(s) "
+            f"({others}{more}):"
+        )
+
+    return (
+        f"{header}\n"
+        f"\n"
+        f"```python\n"
+        f"from supervisor_guards import supervised\n"
+        f"\n"
+        f"class {label}:\n"
+        f"    @supervised(\"tool_use\")\n"
+        f"    {keyword} {method.name}({args_repr}):\n"
+        f"        ...\n"
+        f"```"
+    )
+
+
+def _build_do_this_now(
+    targets: list[WrapTarget],
+    framework_signals: list[FrameworkSignal] | None = None,
+) -> str:
     """Render the single concrete next step as a markdown snippet block.
 
     Picks the SDK + syntax based on the wrap target's file extension so a
     `.ts` chokepoint gets a TypeScript snippet (`@runtime-supervisor/guards`)
     and a `.py` chokepoint gets the Python decorator. Defaults to Python
     when extension is unknown.
+
+    When `targets` is empty but a framework signal is present (e.g. the repo
+    only has `from langchain.agents import …`), point at that file with a
+    concrete next step instead of the generic empty-state copy.
     """
     if not targets:
+        signals = framework_signals or []
+        if signals:
+            sig = signals[0]
+            rel = _short_path(sig.file)
+            return (
+                f"No agent class or tool registration to point at directly. "
+                f"`{sig.framework}` runs the loop in `{rel}:{sig.line}` — "
+                f"the wrap point is the tool callable passed to it (e.g. the "
+                f"function inside a `Tool(func=…)`) or the function that calls "
+                f"`agent.run(...)` / `AgentExecutor.invoke(...)`. "
+                f"Open `runtime-supervisor/FULL_REPORT.md` for the full list "
+                f"of detected callables."
+            )
         return (
             "No obvious wrap target in this repo. Start with the entry-point "
             "of your agent loop (the function that decides which tool to call)."
         )
     primary = targets[0]
+    # Try to render a snippet from the real method signature first.
+    ast_snippet = _python_wrap_snippet(primary)
+    if ast_snippet is not None:
+        return ast_snippet
     rel = _short_path(primary.file)
     suffix = Path(primary.file).suffix.lower()
     is_ts = suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs")
@@ -362,15 +636,17 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     capability_phrases = p.get("capability_phrases") or {}
 
     targets = _build_wrap_targets(summary, max_wrap)
+    framework_signals = _build_framework_signals(summary, findings)
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(findings, p)
-    do_now = _build_do_this_now(targets)
+    do_now = _build_do_this_now(targets, framework_signals)
     return StartHere(
         top_wrap_targets=targets,
         repo_capabilities=capabilities,
         top_risks=top_risks,
         do_this_now=do_now,
         hidden_counter=dict(summary.hidden_findings),
+        framework_signals=framework_signals,
     )
 
 
@@ -401,6 +677,21 @@ def render_start_here_md(sh: StartHere) -> str:
         parts.append(
             "_Why this first: one wrapper here covers most current and future tools._"
         )
+    elif sh.framework_signals:
+        sig = sh.framework_signals[0]
+        rel = _short_path(sig.file)
+        parts.append(
+            f"We didn't find an agent class or tool registration to point at "
+            f"directly. The agent loop runs through `{sig.framework}` "
+            f"(`{rel}:{sig.line}`)."
+        )
+        parts.append("")
+        parts.append(
+            "Wrap the tool callables passed in (e.g. functions inside "
+            "`Tool(func=…)`) or the function that calls `agent.run(...)` / "
+            "`AgentExecutor.invoke(...)` — not the import line itself. See "
+            "_Agent frameworks detected_ below for every framework hit."
+        )
     else:
         parts.append(
             "No obvious wrap target. Start with the entry-point of your agent "
@@ -423,6 +714,24 @@ def render_start_here_md(sh: StartHere) -> str:
         "agent-controlled._"
     )
     parts.append("")
+
+    # 2b. agent frameworks detected (only when present)
+    if sh.framework_signals:
+        parts.append("## Agent frameworks detected")
+        parts.append("")
+        for sig in sh.framework_signals:
+            rel = _short_path(sig.file)
+            parts.append(f"- **{sig.framework}** — `{rel}:{sig.line}`")
+            parts.append(
+                "  _wrap point isn't this line — wrap the tool callable or the "
+                "dispatch method (e.g. `AgentExecutor.invoke`)_"
+            )
+        parts.append("")
+        parts.append(
+            "_These tell you which loop to look inside, not where to put the "
+            "decorator._"
+        )
+        parts.append("")
 
     # 3. top risks
     parts.append("## Highest-risk things to care about now")
@@ -503,6 +812,15 @@ def render_cli_start_here(sh: StartHere, *, elapsed_s: float | None = None,
         for i, t in enumerate(sh.top_wrap_targets, 1):
             rel = _short_path(t.file)
             out.append(f"  {i}. {t.label:<28s}  {rel}:{t.line}")
+    elif sh.framework_signals:
+        sig = sh.framework_signals[0]
+        rel = _short_path(sig.file)
+        out.append(
+            f"  (no class / tool to point at — {sig.framework} loop in {rel}:{sig.line};"
+        )
+        out.append(
+            "   wrap the tool callable or the dispatch method, not the import)"
+        )
     else:
         out.append("  (no obvious wrap target — start at your agent loop's entry-point)")
     out.append("")

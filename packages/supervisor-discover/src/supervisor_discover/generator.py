@@ -31,6 +31,8 @@ from .templates import (
     REPORT_HEADER,
     TIER_COPY,
     TS_STUB,
+    py_payload_body_for,
+    ts_payload_body_for,
 )
 
 # Where the supervisor's own seed policies live — the generator copies them
@@ -149,20 +151,62 @@ def generate(
     stubs_ts = out_dir / "stubs" / "ts"
     stubs_py.mkdir(parents=True, exist_ok=True)
     stubs_ts.mkdir(parents=True, exist_ok=True)
+    orphan_count = 0
+    already_gated_count = 0
     for f in findings:
         if f.confidence == "low" or f.suggested_action_type == "other":
+            continue
+        # Skip stubs for findings whose source file has been deleted between
+        # scans — emitting a stub referencing a dead path is just orphan
+        # state that drifts away from reality. Symptom in real repos:
+        # `stubs/py/payments_L131.stub.py` after the original `payments.py:131`
+        # was removed in a refactor, scanner re-run never cleaned it up.
+        try:
+            if not Path(f.file).exists():
+                orphan_count += 1
+                continue
+        except OSError:
+            orphan_count += 1
+            continue
+        # Skip stubs for findings already wrapped by @supervised / guarded(...)
+        # — gate_coverage marked them, no need to ship a stub recommending
+        # the wrap a second time.
+        if (f.extra or {}).get("already_gated"):
+            already_gated_count += 1
             continue
         stub_name = f"{_safe_filename(f.file)}_L{f.line}"
         if f.file.endswith(".py"):
             (stubs_py / f"{stub_name}.stub.py").write_text(
-                PY_STUB.format(original_file=f.file, line=f.line, snippet=f.snippet,
-                               action_type=f.suggested_action_type, rationale=f.rationale)
+                PY_STUB.format(
+                    original_file=f.file, line=f.line, snippet=f.snippet,
+                    action_type=f.suggested_action_type, rationale=f.rationale,
+                    payload_body=py_payload_body_for(f.scanner),
+                )
             )
         else:
             (stubs_ts / f"{stub_name}.stub.ts").write_text(
-                TS_STUB.format(original_file=f.file, line=f.line, snippet=f.snippet,
-                               action_type=f.suggested_action_type, rationale=f.rationale)
+                TS_STUB.format(
+                    original_file=f.file, line=f.line, snippet=f.snippet,
+                    action_type=f.suggested_action_type, rationale=f.rationale,
+                    ts_payload_body=ts_payload_body_for(f.scanner),
+                )
             )
+    # Drop a one-line README in stubs/ to record the housekeeping counts.
+    if orphan_count or already_gated_count:
+        readme_lines = ["# stubs/", ""]
+        if orphan_count:
+            readme_lines.append(
+                f"_Skipped {orphan_count} stub(s): the source file no longer "
+                "exists (orphan finding from a stale scan)._"
+            )
+        if already_gated_count:
+            readme_lines.append(
+                f"_Skipped {already_gated_count} stub(s): the call-site is "
+                "already wrapped by `@supervised` / `guarded(...)`._"
+            )
+        readme_lines.append("")
+        readme_lines.append("Open `runtime-supervisor/FULL_REPORT.md` for the full set.")
+        (out_dir / "stubs" / "README.md").write_text("\n".join(readme_lines) + "\n")
 
     # .env.example
     (out_dir / ".env.example").write_text(ENV_EXAMPLE)

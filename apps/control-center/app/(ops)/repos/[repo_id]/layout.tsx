@@ -55,7 +55,18 @@ export default async function RepoDetailLayout({
         </div>
         <div className="row" style={{ gap: 8 }}>
           <RescanButton githubUrl={overview.github_url} />
-          <BuilderButton label="export bundle" />
+          {overview.latest_scan_id ? (
+            <a
+              href={`/v1/scans/${overview.latest_scan_id}/bundle.zip`}
+              download
+              className="button-secondary"
+              title="Download SUMMARY.md + policies/ + stubs/ + findings.json as ZIP"
+            >
+              export bundle
+            </a>
+          ) : (
+            <BuilderButton label="export bundle" />
+          )}
           <BuilderButton label="create PR" />
         </div>
       </div>

@@ -32,8 +32,9 @@ from sqlalchemy.orm import Session
 
 from .. import audit, github_api
 from ..config import get_settings
-from ..db import get_db
-from ..models import GitHubInstallation
+from ..db import SessionLocal, get_db
+from ..github_pr_comment import PrCommentInputs, render_pr_comment
+from ..models import GitHubInstallation, Scan
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/integrations/github", tags=["github-app"])
@@ -291,6 +292,40 @@ def _handle_pull_request_event(
     }
 
 
+def _key_of(finding: Any) -> str:
+    """Stable diff key — matches the frontend's diff drill-down logic.
+    Finding may be a dataclass or a dict (from a stored scan)."""
+    if hasattr(finding, "file"):
+        file = finding.file
+        line = finding.line
+        scanner = finding.scanner
+        family = (getattr(finding, "extra", None) or {}).get("family") or ""
+    else:
+        file = finding.get("file", "")
+        line = finding.get("line", 0)
+        scanner = finding.get("scanner", "")
+        extra = finding.get("extra") or {}
+        family = extra.get("family", "") if isinstance(extra, dict) else ""
+    return f"{file}:{line}:{scanner}:{family}"
+
+
+def _previous_scan_findings(db: Session, repo_url: str) -> dict[str, dict]:
+    """Look up the most recent successful scan for this repo and return
+    its findings keyed by `_key_of` so we can diff. Empty dict means
+    no prior scan — in which case every finding in the PR head is "new"
+    (first run of the App on this repo).
+    """
+    row = (
+        db.query(Scan)
+        .filter(Scan.repo_url == repo_url, Scan.status == "done")
+        .order_by(Scan.created_at.desc())
+        .first()
+    )
+    if row is None:
+        return {}
+    return {_key_of(f): f for f in (row.findings or [])}
+
+
 def _run_pr_scan(
     *,
     installation_id: int,
@@ -299,25 +334,124 @@ def _run_pr_scan(
     head_sha: str,
     head_clone_url: str,
 ) -> None:
-    """Background task: clone PR head, scan, post comment.
+    """Background task: clone PR head, scan, diff, post comment.
 
-    Stubbed body — wires the existing scanner pipeline via the public
-    `POST /v1/scans` flow. Full implementation: shallow clone with
-    installation token, run `supervisor-discover scan --path` against
-    the temp dir, diff vs. main's last scan, render markdown via
-    `github_pr_comment.render_pr_comment`, post via
-    `github_api.post_pr_comment`.
-
-    Kept narrow on purpose so we can ship the install + webhook UX
-    first and iterate on the scanner-on-PR pipeline as a separate PR.
+    Failures are logged but never propagate — webhooks already 200'd.
+    Each step runs inside a try/except so a flake in one stage (token
+    expired, git clone hung, etc) doesn't leave temp dirs hanging.
     """
-    log.info(
-        "github.pr.scan queued installation=%s repo=%s pr=%s sha=%s — clone+scan+comment not wired in this commit",
-        installation_id,
-        repo_full_name,
-        pr_number,
-        head_sha,
-    )
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    from supervisor_discover.scanners import scan_all
+
+    settings = get_settings()
+    workdir: str | None = None
+
+    try:
+        # 1. Mint installation token (1h lifetime, fresh per dispatch).
+        token = github_api.get_installation_token(installation_id)
+
+        # 2. Shallow clone the PR head ref. Using x-access-token in URL
+        # auths the clone with the install scope.
+        workdir = tempfile.mkdtemp(prefix=f"vibefixing-pr-{pr_number}-")
+        clone_url = f"https://x-access-token:{token.token}@github.com/{repo_full_name}.git"
+        try:
+            subprocess.run(
+                ["git", "clone", "--quiet", "--depth=20", clone_url, workdir],
+                check=True,
+                timeout=120,
+                capture_output=True,
+            )
+            if head_sha:
+                # Fetch + checkout the exact head SHA — the default branch
+                # of the clone is base, but we want the PR's tip.
+                subprocess.run(
+                    ["git", "-C", workdir, "fetch", "--quiet", "origin", head_sha, "--depth=1"],
+                    check=True,
+                    timeout=60,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", workdir, "checkout", "--quiet", head_sha],
+                    check=True,
+                    timeout=30,
+                    capture_output=True,
+                )
+        except subprocess.CalledProcessError as e:
+            log.error(
+                "github.pr.scan clone failed installation=%s repo=%s pr=%s: %s",
+                installation_id,
+                repo_full_name,
+                pr_number,
+                e.stderr.decode(errors="replace") if e.stderr else "",
+            )
+            return
+
+        # 3. Run the scanner against the cloned tree.
+        head_findings = scan_all(Path(workdir))
+
+        # 4. Diff against the most recent persisted scan for this repo.
+        repo_url = f"https://github.com/{repo_full_name}"
+        with SessionLocal() as db:
+            previous_by_key = _previous_scan_findings(db, repo_url)
+
+        head_by_key = {_key_of(f): f for f in head_findings}
+        new_findings = [f for k, f in head_by_key.items() if k not in previous_by_key]
+        fixed_count = sum(1 for k in previous_by_key if k not in head_by_key)
+
+        # 5. Render markdown. Empty body = clean PR; skip post.
+        from supervisor_discover.findings import Confidence  # for type alignment
+
+        repo_id_hash = __import__("hashlib").sha256(repo_url.lower().encode()).hexdigest()[:16]
+        body = render_pr_comment(
+            PrCommentInputs(
+                repo_full_name=repo_full_name,
+                repo_id=repo_id_hash,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                new_findings=new_findings,
+                fixed_count=fixed_count,
+                site_url=settings.site_url,
+            )
+        )
+        if not body:
+            log.info(
+                "github.pr.scan clean installation=%s repo=%s pr=%s — no comment posted",
+                installation_id,
+                repo_full_name,
+                pr_number,
+            )
+            return
+
+        # 6. Post the comment.
+        comment = github_api.post_pr_comment(
+            installation_token=token.token,
+            repo_full_name=repo_full_name,
+            pr_number=pr_number,
+            body_markdown=body,
+        )
+        log.info(
+            "github.pr.scan posted comment installation=%s repo=%s pr=%s comment_id=%s new=%d fixed=%d",
+            installation_id,
+            repo_full_name,
+            pr_number,
+            comment.get("id"),
+            len(new_findings),
+            fixed_count,
+        )
+    except Exception:
+        log.exception(
+            "github.pr.scan failed installation=%s repo=%s pr=%s",
+            installation_id,
+            repo_full_name,
+            pr_number,
+        )
+    finally:
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 # ----- public read of an installation (used by the post-install page) -------

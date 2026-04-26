@@ -47,9 +47,9 @@ export default async function PoliciesPage({
         <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
           Policies
           <InfoTip>
-            <strong>Qué:</strong> las reglas YAML que el supervisor evalúa en cada llamada del agente. Agrupadas por <code>action_type</code> (refund, payment, account_change, tool_use, data_access, compliance). Cada policy tiene reglas <code>when</code> que deciden <code>allow / deny / review</code>.<br /><br />
-            <strong>Quién:</strong> security lead + dev que entiende el negocio. Compliance las revisa para auditar.<br /><br />
-            <strong>Acción:</strong> click en una policy → editá el YAML → <code>promote</code> nueva versión. El cambio aplica en la próxima llamada — <em>sin redeploy</em>. Para volver atrás, promové la versión anterior.
+            <strong>What:</strong> the rules the supervisor checks on every agent call. Grouped by <code>action_type</code> (refund, payment, account_change, tool_use, data_access). Each rule has a <code>when</code> condition that decides <code>allow / deny / review</code>.<br /><br />
+            <strong>When:</strong> any time you want to tighten or loosen what your agent can do. A new rule is live on the next agent call — no redeploy.<br /><br />
+            <strong>Action:</strong> click a policy → edit YAML → <code>promote</code> a new version. The change applies on the next call. To roll back, promote the previous version.
           </InfoTip>
         </h1>
         <Link href="/policies/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New policy</Link>

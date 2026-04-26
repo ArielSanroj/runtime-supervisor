@@ -36,16 +36,18 @@ export default async function ThreatsPage({
   return (
     <div>
       <h1 style={{ display: "flex", alignItems: "center" }}>
-        Threat feed
+        Live attacks
         <InfoTip>
-          <strong>Qué:</strong> stream en vivo de detecciones del threat pipeline, independientes de tus policies. Cada evento apunta a una regla del <strong>OWASP LLM Top 10</strong>: <code>LLM01</code> prompt injection, <code>LLM02</code> PII disclosure, <code>LLM06</code> jailbreak, <code>LLM10</code> unbounded consumption, etc.<br /><br />
-          <strong>Quién:</strong> security / CISO — <em>¿qué ataques está recibiendo el agente?</em>.<br /><br />
-          <strong>Acción:</strong> click en un threat para ver el payload completo + detector. Si un detector genera muchos falsos positivos, calibrá sensibilidad o agregá excepciones.<br /><br />
-          <strong>Niveles:</strong> <span style={{ color: "var(--danger)" }}>critical</span> = ataque probable · <span style={{ color: "var(--warn)" }}>warn</span> = señal débil · <span style={{ color: "var(--ok)" }}>info</span> = log informativo.
+          <strong>What:</strong> attacks the supervisor caught against your agent in real time. Different from policy denies — these are detected behaviors (prompt injections, jailbreaks, PII exfiltration attempts, runaway loops) regardless of which action_type fired them.<br /><br />
+          <strong>When:</strong> something here means the supervisor blocked or escalated an attempted attack <em>before</em> your agent ran the action. Quiet feed = nobody is poking your agent yet.<br /><br />
+          <strong>Action:</strong> click an attack to see the full payload + which detector caught it. If a detector flags too many false positives, tune sensitivity or add an exception.<br /><br />
+          <strong>Levels:</strong> <span style={{ color: "var(--danger)" }}>critical</span> = likely attack · <span style={{ color: "var(--warn)" }}>warn</span> = soft signal · <span style={{ color: "var(--ok)" }}>info</span> = informational only.<br /><br />
+          <span className="muted">Footnote: detectors are mapped to the OWASP LLM Top 10 (LLM01 prompt injection, LLM02 PII, LLM06 jailbreak, LLM10 unbounded consumption) — visible in each row for compliance reporting.</span>
         </InfoTip>
       </h1>
       <p className="muted" style={{ marginBottom: 16 }}>
-        Live stream of detections raised by the threat pipeline. Mapped to OWASP LLM Top 10.
+        Attacks the supervisor caught against your agent in real time — prompt injection, jailbreak,
+        PII exfiltration, runaway loops, and more.
       </p>
 
       <div className="grid cols-3" style={{ marginBottom: 16 }}>

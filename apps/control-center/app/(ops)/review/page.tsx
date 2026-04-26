@@ -34,10 +34,10 @@ export default async function ReviewQueue({
       <h1 style={{ display: "flex", alignItems: "center" }}>
         Review queue
         <InfoTip>
-          <strong>Qué:</strong> cola de casos que superaron el risk score y esperan decisión humana. Cada caso muestra el payload, la policy que lo escaló, y la edad.<br /><br />
-          <strong>Quién:</strong> operador on-call — dev de guardia, compliance, o el founder.<br /><br />
-          <strong>Acción:</strong> click en un caso → ver payload completo → <code>approve</code> o <code>reject</code>. Al resolverlo, el agente recibe la decisión y continúa (o timeout según policy).<br /><br />
-          <strong>Tabs:</strong> pending (actual), approved/rejected (historial para auditoría).
+          <strong>What:</strong> the queue of agent actions that crossed your risk threshold and are waiting for a human call. Each case shows the payload, which rule escalated it, and how long it&apos;s been pending.<br /><br />
+          <strong>When:</strong> any time you set a rule to <code>review</code> instead of <code>deny</code>. The agent waits for your call before firing.<br /><br />
+          <strong>Action:</strong> click a case → see the full payload → <code>approve</code> or <code>reject</code>. When you resolve it, the agent receives your decision and continues (or times out per the rule).<br /><br />
+          <strong>Tabs:</strong> pending (current), approved/rejected (history for audit).
         </InfoTip>
       </h1>
       <div className="row" style={{ marginBottom: 16 }}>

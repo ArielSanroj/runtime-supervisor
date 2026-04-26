@@ -34,9 +34,9 @@ export default async function IntegrationsPage() {
         <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
           Integrations
           <InfoTip>
-            <strong>Qué:</strong> apps que hablan con el supervisor. Cada integration tiene su propio <code>APP_ID</code> + <code>SHARED_SECRET</code> con los que firma JWTs para autenticarse. Los scopes definen qué <code>action_type</code> puede evaluar.<br /><br />
-            <strong>Quién:</strong> tech lead al agregar un agente nuevo, o security para rotar secrets comprometidos.<br /><br />
-            <strong>Acción:</strong> <code>+ New integration</code> emite un secret. <em>Copialo al momento — no se vuelve a mostrar.</em> Para rotar, click en la integration existente → <code>rotate secret</code>.
+            <strong>What:</strong> apps that talk to the supervisor. Each integration has its own <code>APP_ID</code> + <code>SHARED_SECRET</code> for signing JWTs. Scopes define which <code>action_type</code> it can evaluate.<br /><br />
+            <strong>When:</strong> add a new one when you wire up a new agent or service. Rotate when a secret leaks or a teammate leaves.<br /><br />
+            <strong>Action:</strong> <code>+ New integration</code> issues a secret. <em>Copy it now — it won&apos;t be shown again.</em> To rotate, click an existing integration → <code>rotate secret</code>.
           </InfoTip>
         </h1>
         <Link href="/integrations/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New integration</Link>

@@ -131,9 +131,9 @@ export default async function ReviewDetail({ params }: { params: Promise<{ id: s
 
       <div className="grid cols-2">
         <div className="card">
-          <h2>Detalle de la acción</h2>
+          <h2>Action details</h2>
           <PayloadTable payload={item.action_payload} />
-          <h2 style={{ marginTop: 24 }}>Por qué llegó acá</h2>
+          <h2 style={{ marginTop: 24 }}>Why this is in review</h2>
           {item.policy_hits.length > 0 ? (
             <ul style={{ paddingLeft: 18 }}>
               {item.policy_hits.map((h) => (
@@ -153,18 +153,18 @@ export default async function ReviewDetail({ params }: { params: Promise<{ id: s
             </ul>
           ) : trigger.kind === "threat" ? (
             <p>
-              El threat pipeline detectó una señal ({trigger.label}). Mirá el evento{" "}
-              <span className="mono">threat.detected</span> en el audit trail abajo.
+              An attack signal was detected ({trigger.label}). Check the{" "}
+              <span className="mono">threat.detected</span> event in the audit trail below.
             </p>
           ) : (
-            <p>Sin policy hits — escalado por risk score ({item.risk_score}).</p>
+            <p>No policy hits — escalated by risk score ({item.risk_score}).</p>
           )}
           <h2 style={{ marginTop: 24 }}>Risk score</h2>
           <p className="kpi">{item.risk_score}</p>
         </div>
 
         <div className="card">
-          <h2>Resolver</h2>
+          <h2>Resolve</h2>
           {pending ? (
             <>
               <div style={{ marginBottom: 12, fontSize: "0.95rem", lineHeight: 1.5 }}>
@@ -199,7 +199,7 @@ export default async function ReviewDetail({ params }: { params: Promise<{ id: s
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h2 style={{ marginTop: 0 }}>Contexto del cliente</h2>
+        <h2 style={{ marginTop: 0 }}>Customer context</h2>
         {customerContext ? (
           <CustomerContextView ctx={customerContext} />
         ) : (
@@ -293,7 +293,7 @@ function AgentContextCard({ ctx }: { ctx: Record<string, unknown> }) {
 
   return (
     <div className="card" style={{ marginBottom: 16, borderLeft: "3px solid var(--accent)" }}>
-      <h3 style={{ margin: 0, marginBottom: 8 }}>Contexto del agente</h3>
+      <h3 style={{ margin: 0, marginBottom: 8 }}>Agent context</h3>
       <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: "0.9rem" }}>
         Lo que el agente dijo de sí mismo al abrir el `observing(...)` block.
       </p>

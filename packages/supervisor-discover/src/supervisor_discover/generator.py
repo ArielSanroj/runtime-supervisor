@@ -79,6 +79,10 @@ def generate(
         key=lambda d: (d["file"], d["line"], d["scanner"]),
     )
     payload: dict[str, Any] = {
+        # Schema version: increment when the on-disk shape changes. CI
+        # consumers (the future `supervisor-discover diff` command) read it
+        # to know whether their parser still applies.
+        "schema_version": "1.0",
         "repo_summary": summary.to_dict(),
         "findings": sorted_findings,
     }

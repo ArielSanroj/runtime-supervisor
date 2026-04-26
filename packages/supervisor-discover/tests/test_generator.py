@@ -39,7 +39,7 @@ def test_findings_json_is_sorted_for_stable_diff(tmp_path):
     out = tmp_path / "rs"
     generate(findings, out)
     payload = json.loads((out / "findings.json").read_text())
-    assert set(payload.keys()) == {"repo_summary", "findings"}
+    assert set(payload.keys()) == {"schema_version", "repo_summary", "findings"}
     keys = [(d["file"], d["line"], d["scanner"]) for d in payload["findings"]]
     assert keys == sorted(keys)
 
@@ -328,7 +328,10 @@ def test_findings_json_wraps_repo_summary(tmp_path):
     generate(findings, out)
     import json
     data = json.loads((out / "findings.json").read_text())
-    assert set(data.keys()) == {"repo_summary", "findings"}
+    # `schema_version` was added when stable IDs landed — CI consumers gate
+    # on this before parsing.
+    assert set(data.keys()) == {"schema_version", "repo_summary", "findings"}
+    assert data["schema_version"] == "1.0"
     assert "frameworks" in data["repo_summary"]
     assert "total_findings" in data["repo_summary"]
 

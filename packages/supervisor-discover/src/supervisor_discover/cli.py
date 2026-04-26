@@ -82,8 +82,37 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include findings under generated/ gen/ in visible set.",
     )
+    scan_p.add_argument(
+        "--baseline",
+        default=None,
+        help="Path to a previous findings.json to diff against (default: "
+             "<out>/findings.json if present). Use with --fail-on for CI gating.",
+    )
+    scan_p.add_argument(
+        "--fail-on",
+        default=None,
+        choices=("any", "new-low", "new-medium", "new-high", "never"),
+        help="Exit non-zero when this scan adds findings vs baseline. "
+             "`new-high`: any new high-confidence finding fails. "
+             "`new-medium`: new medium or high. `new-low` / `any`: anything new. "
+             "`never`: never fail. Default: don't gate.",
+    )
 
     sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
+
+    # `diff` — compare two findings.json files. Useful manually and as the
+    # core of the `--fail-on` CI gate above.
+    diff_p = sub.add_parser(
+        "diff",
+        help="Diff two findings.json files (added / removed / severity-changed).",
+    )
+    diff_p.add_argument("--baseline", required=True, help="Path to the older findings.json.")
+    diff_p.add_argument("--current", required=True, help="Path to the newer findings.json.")
+    diff_p.add_argument(
+        "--fail-on", default=None,
+        choices=("any", "new-low", "new-medium", "new-high", "never"),
+        help="Exit non-zero when the diff exceeds this budget. See `scan --fail-on`.",
+    )
 
     # Level 2 (opt-in) — auto-fix a combo. Stub; prints roadmap for now.
     fix_p = sub.add_parser(
@@ -155,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_fix(args)
     if args.cmd == "combos":
         return _handle_combos(args)
+    if args.cmd == "diff":
+        return _handle_diff(args)
 
     root = Path(args.path if args.cmd == "scan" else ".").resolve()
     out = Path(args.out if args.cmd == "scan" else "runtime-supervisor").resolve()
@@ -212,6 +243,17 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         return 0
 
+    # Diff against a baseline BEFORE writing the new findings.json — otherwise
+    # we'd diff the current scan against itself when --baseline points at the
+    # default `<out>/findings.json`. Snapshot first, generate after.
+    fail_on = getattr(args, "fail_on", None)
+    baseline_arg = getattr(args, "baseline", None)
+    pre_existing_baseline = None
+    if fail_on or baseline_arg:
+        from .diff import diff_payloads, exceeds_budget, load_payload, render_text
+        baseline_path = Path(baseline_arg) if baseline_arg else (out / "findings.json")
+        pre_existing_baseline = load_payload(baseline_path)
+
     generate(
         findings, out, repo_root=root,
         include_resolved=bool(getattr(args, "show_resolved", False)),
@@ -220,7 +262,43 @@ def main(argv: list[str] | None = None) -> int:
     _print_start_here(root, findings, elapsed, out, hidden_counts)
     if getattr(args, "full", False):
         _print_tier_summary(root, findings, elapsed, out)
+
+    # CI gate — runs after the report is on disk so the human sees the same
+    # output whether the build passes or fails.
+    if pre_existing_baseline is not None:
+        from .diff import diff_payloads, exceeds_budget, load_payload, render_text
+        current_payload = load_payload(out / "findings.json")
+        result = diff_payloads(pre_existing_baseline, current_payload)
+        diff_text = render_text(result)
+        print("", file=sys.stderr)
+        for line in diff_text.splitlines():
+            print(line, file=sys.stderr)
+        if fail_on:
+            failed, reason = exceeds_budget(result, fail_on)
+            if failed:
+                print(f"\n{reason}", file=sys.stderr)
+                return 3
+
     _prompt_remediation_level(findings, out, args)
+    return 0
+
+
+def _handle_diff(args: argparse.Namespace) -> int:
+    """Standalone diff between two findings.json files. Exits non-zero only
+    when --fail-on is set and the budget is exceeded; otherwise informational."""
+    from .diff import diff_payloads, exceeds_budget, load_payload, render_text
+
+    baseline = load_payload(Path(args.baseline))
+    current = load_payload(Path(args.current))
+    result = diff_payloads(baseline, current)
+    print(render_text(result))
+
+    fail_on = getattr(args, "fail_on", None)
+    if fail_on:
+        failed, reason = exceeds_budget(result, fail_on)
+        if failed:
+            print(f"\n{reason}", file=sys.stderr)
+            return 3
     return 0
 
 

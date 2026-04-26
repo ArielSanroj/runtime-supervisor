@@ -66,7 +66,11 @@ def scan_all(root: Path) -> list[Finding]:
     rules = load_rules(root)
     if rules:
         annotate_suppressions(findings, rules, root)
-    return findings
+    # Stamp every finding with a stable id so `supervisor-discover diff`
+    # can match across scans even after reformatting / comment edits on
+    # nearby lines. Last step so the id covers the final post-pass state.
+    from ..findings import assign_ids
+    return assign_ids(findings, root)
 
 
 # Paths that imply "this is research / benchmark / test code, not the agent's

@@ -104,6 +104,10 @@ def generate(
         full_report += "\n---\n\n"
         full_report += render_combos_md(combos)
     full_report += _render_applicable_guardrails(findings)
+    suppression_block = _render_suppressed_section(findings, repo_root)
+    if suppression_block:
+        full_report += "\n---\n\n"
+        full_report += suppression_block
     full_report += "\n---\n\n"
     full_report += REPORT_HEADER.format(
         total=len(findings),
@@ -260,6 +264,59 @@ def _load_policy_rules(action_type: str) -> list[dict[str, Any]] | None:
         return data.get("rules") or []
     except (yaml.YAMLError, OSError):
         return None
+
+
+def _render_suppressed_section(findings: list[Finding], repo_root: Path | None) -> str:
+    """Render the `## Suppressed` block for FULL_REPORT.md.
+
+    Lists every finding tagged `suppressed: True` (by `.supervisor-ignore`)
+    grouped by suppression rule, plus a footer pointing the dev at the
+    ignore file. Returns the empty string when nothing is suppressed — the
+    common case, so we don't add an empty section to clean reports.
+
+    The intent is honesty + auditability: the dev sees exactly what was
+    hidden and why, without surfacing it as a "do this now" item again.
+    """
+    suppressed = [f for f in findings if (f.extra or {}).get("suppressed")]
+    if not suppressed:
+        return ""
+
+    by_rule: dict[str, list[Finding]] = {}
+    for f in suppressed:
+        rule = str((f.extra or {}).get("suppressed_by") or "(unknown rule)")
+        by_rule.setdefault(rule, []).append(f)
+
+    ignore_path = (
+        f"`{(repo_root / '.supervisor-ignore').name}`"
+        if repo_root is not None
+        else "`.supervisor-ignore`"
+    )
+    lines: list[str] = [
+        f"## Suppressed ({len(suppressed)})",
+        "",
+        f"These findings matched a rule in {ignore_path} and are not in the "
+        "priority list. Review periodically — a rule that no longer matches "
+        "anything probably means the call moved or was deleted.",
+        "",
+    ]
+    for rule_text in sorted(by_rule):
+        items = by_rule[rule_text]
+        lines.append(f"### Rule: `{rule_text}`")
+        reason = (items[0].extra or {}).get("suppression_reason") or "(no reason)"
+        lines.append(f"_{len(items)} finding(s) — reason: **{reason}**_")
+        lines.append("")
+        for f in items[:8]:
+            short = f.file
+            if repo_root is not None:
+                try:
+                    short = str(Path(f.file).resolve().relative_to(repo_root.resolve()))
+                except (OSError, ValueError):
+                    pass
+            lines.append(f"- `{short}:{f.line}` · `{f.snippet[:60]}` ({f.scanner})")
+        if len(items) > 8:
+            lines.append(f"- … +{len(items) - 8} more")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _render_applicable_guardrails(findings: list[Finding]) -> str:

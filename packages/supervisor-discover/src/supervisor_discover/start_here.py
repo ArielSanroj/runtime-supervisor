@@ -287,7 +287,11 @@ def _wrap_target_why(cp_kind: str, rank_tier: int,
     return "agent class — wrap its dispatch / handle / execute method"
 
 
-def _build_wrap_targets(summary: RepoSummary, max_targets: int) -> list[WrapTarget]:
+def _build_wrap_targets(
+    summary: RepoSummary,
+    max_targets: int,
+    findings: list[Finding] | None = None,
+) -> list[WrapTarget]:
     """Top N actionable agent_chokepoints by chokepoint_rank, deduplicated by
     (file, line).
 
@@ -296,10 +300,19 @@ def _build_wrap_targets(summary: RepoSummary, max_targets: int) -> list[WrapTarg
         in `StartHere.framework_signals`).
       - chokepoints under low-reachability paths (test/setup/scripts/legacy).
         They remain in FULL_REPORT but never reach the "do this now" top.
+      - chokepoints whose underlying finding was tagged as `suppressed` by
+        `.supervisor-ignore`. The dev explicitly said "don't surface this".
     """
+    suppressed_locs: set[tuple[str, int]] = set()
+    if findings:
+        for f in findings:
+            if (f.extra or {}).get("suppressed"):
+                suppressed_locs.add((f.file, f.line))
     actionable = [
         cp for cp in summary.agent_chokepoints
-        if cp.kind != "framework-import" and not is_low_reachability_path(cp.file)
+        if cp.kind != "framework-import"
+        and not is_low_reachability_path(cp.file)
+        and (cp.file, cp.line) not in suppressed_locs
     ]
     ranked = sorted(actionable, key=chokepoint_rank)
     seen: set[tuple[str, int]] = set()
@@ -453,6 +466,8 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
         if is_low_reachability_path(f.file):
             continue
         if (f.extra or {}).get("already_gated"):
+            continue
+        if (f.extra or {}).get("suppressed"):
             continue
         key = _capability_key(f)
         if key not in representative and key in _RISK_CARDS:
@@ -698,7 +713,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     max_wrap = p.get("max_wrap_targets") or 3
     capability_phrases = p.get("capability_phrases") or {}
 
-    targets = _build_wrap_targets(summary, max_wrap)
+    targets = _build_wrap_targets(summary, max_wrap, findings)
     framework_signals = _build_framework_signals(summary, findings)
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(findings, p)

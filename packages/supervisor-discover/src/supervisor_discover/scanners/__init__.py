@@ -57,8 +57,16 @@ def scan_all(root: Path) -> list[Finding]:
     # or a guarded(...) call — without this, re-scans tell the user to "wrap"
     # things they wrapped on a previous PR. Runs after _self_check so we only
     # pay AST cost on findings we'll actually keep.
-    from ..gate_coverage import annotate_findings
-    return annotate_findings(findings)
+    from ..gate_coverage import annotate_findings as annotate_gated
+    findings = annotate_gated(findings)
+    # Read `<repo>/.supervisor-ignore` and tag the findings the dev
+    # explicitly silenced. Renderers route them out of the priority list and
+    # into a dedicated "Suppressed" section in FULL_REPORT.md.
+    from ..suppression import annotate_findings as annotate_suppressions, load_rules
+    rules = load_rules(root)
+    if rules:
+        annotate_suppressions(findings, rules, root)
+    return findings
 
 
 # Paths that imply "this is research / benchmark / test code, not the agent's

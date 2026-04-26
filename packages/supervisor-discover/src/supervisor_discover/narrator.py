@@ -81,6 +81,12 @@ def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
         "wrap": [], "prod": [], "confirm": [], "discard": [],
     }
     for f in findings:
+        # `.supervisor-ignore` rules — the dev told us to silence this. Skip
+        # ahead of every scanner-specific branch so suppressed findings never
+        # reach any priority bucket.
+        if (f.extra or {}).get("suppressed"):
+            continue
+
         # Agent orchestrator findings have their own routing: class defs and
         # tool registrations are wrap points (what the user should decorate);
         # framework imports are signal only; method defs in orchestrator paths

@@ -167,7 +167,7 @@
     },
     {
       "class_name": null,
-      "confidence": "high",
+      "confidence": "low",
       "downgraded_eval_path": false,
       "family": "fs-delete",
       "file": "agent/tools/local_tools.py",
@@ -496,7 +496,7 @@
       "suggested_action_type": "other"
     }
   ],
-  "high_confidence": 12,
+  "high_confidence": 11,
   "repo": "huggingface/ml-intern",
   "scanner_counts": {
     "agent-orchestrators": 5,

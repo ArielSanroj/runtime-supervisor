@@ -59,6 +59,14 @@ def scan_all(root: Path) -> list[Finding]:
     # pay AST cost on findings we'll actually keep.
     from ..gate_coverage import annotate_findings as annotate_gated
     findings = annotate_gated(findings)
+    # Light taint pass: demote fs-shell findings whose sensitive arg is
+    # provably system-derived (tempfile.*, os.environ.*, settings.*) or a
+    # plain constant. Cuts ~30-50% of medium FPs the reviewer flagged on
+    # supervincent (`onboarding.py:594` tempfile path) and castor-1
+    # (`e14_data.py:564` tempfile.mkdtemp). Conservative — UNKNOWN sources
+    # keep their original severity.
+    from ..taint import annotate_findings as annotate_taint
+    findings = annotate_taint(findings)
     # Read `<repo>/.supervisor-ignore` and tag the findings the dev
     # explicitly silenced. Renderers route them out of the priority list and
     # into a dedicated "Suppressed" section in FULL_REPORT.md.

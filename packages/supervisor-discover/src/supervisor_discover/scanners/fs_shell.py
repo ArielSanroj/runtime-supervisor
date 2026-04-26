@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Any
 
 from ..findings import Finding
 from ._utils import parse_python, python_files, safe_read, ts_js_files
@@ -221,6 +222,37 @@ def _refine_python_severity(node: ast.Call, family: str, default: str) -> tuple[
     return (default, False)
 
 
+def _extract_argv(node: ast.Call) -> list[str] | None:
+    """For shell-exec calls with a literal list arg, return the strings.
+
+    Returns:
+      - `["python", "-m", "pip", "install", "-r", "requirements.txt"]` for
+        `subprocess.run(["python", "-m", "pip", ...])`.
+      - `["git log"]` (single-element list) for the rare
+        `subprocess.run("git log")` literal-string form, so the allowlist
+        extractor still gets *something* to seed.
+      - `None` when the first arg is a variable / expression / missing.
+
+    Used by `policy_extractors.py` to seed the `tool_use.llm-plus-shell-exec`
+    YAML's allowlist with commands the repo actually runs.
+    """
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.List) and all(
+        isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        for elt in first.elts
+    ):
+        return [str(elt.value) for elt in first.elts]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        # `subprocess.run("git log")` — single-arg form. Split on whitespace
+        # so the allowlist YAML reads as `["git", "log"]` rather than as a
+        # single opaque string.
+        parts = first.value.split()
+        return parts if parts else None
+    return None
+
+
 def _scan_python(path: Path, text: str) -> list[Finding]:
     tree = parse_python(text)
     if tree is None:
@@ -251,11 +283,27 @@ def _scan_python(path: Path, text: str) -> list[Finding]:
         # for subprocess.run / open are much lower risk than variable args.
         severity, refined = _refine_python_severity(node, family, severity)
 
+        # Capture the literal argv on shell-exec calls so the allowlist
+        # extractor (`policy_extractors`) can pre-populate the
+        # `tool_use.llm-plus-shell-exec.v1.yaml` policy with the actual
+        # commands this repo runs — instead of the placeholder symbol
+        # `ALLOWED_COMMANDS` users had to fill in by hand.
+        argv: list[str] | None = None
+        if family == "shell-exec":
+            argv = _extract_argv(node)
+
         line = node.lineno
         # Use the real source line as the snippet — gives the UI a useful
         # slice of the call site (`subprocess.run(["echo", event])` vs the
         # generic `subprocess.run(`).
         snippet = source_lines[line - 1].strip()[:80] if 0 <= line - 1 < len(source_lines) else f"{label}("
+        extra: dict[str, Any] = {
+            "family": family,
+            "label": label,
+            "severity_refined": refined,
+        }
+        if argv is not None:
+            extra["argv"] = argv
         out.append(Finding(
             scanner="fs-shell",
             file=str(path),
@@ -264,7 +312,7 @@ def _scan_python(path: Path, text: str) -> list[Finding]:
             suggested_action_type="tool_use",
             confidence=severity,  # type: ignore[arg-type]
             rationale=_RATIONALES[family],
-            extra={"family": family, "label": label, "severity_refined": refined},
+            extra=extra,
         ))
     return out
 

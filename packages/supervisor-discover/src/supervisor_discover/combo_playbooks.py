@@ -258,32 +258,75 @@ rules:
     )
 
 
+def _yaml_inline_list(items: list[str]) -> str:
+    """Render `["python", "-m", "pip"]` as a JSON-compatible YAML flow list,
+    handling quoting safely. Used to seed `allowed_commands:` in policy YAMLs.
+    """
+    import json
+
+    return json.dumps(items, ensure_ascii=False)
+
+
 def _llm_plus_shell_exec(combo: Combo, findings: list[Finding], summary: RepoSummary) -> Playbook:
+    from .policy_extractors import extract_shell_command_allowlist
+
     shell_sites = [f for f in findings if f.scanner == "fs-shell" and f.extra.get("family") == "shell-exec"]
-    policy_yaml = """name: tool_use.llm-plus-shell-exec
-version: 1
-description: >
-  Agent has both LLM access and shell-exec. Enforces allowlist of commands;
-  denies everything else. Also denies when command args contain shell
-  metacharacters (classic injection surface).
-rules:
-  - id: shell-command-allowlist
-    when: "payload.get('tool') == 'shell' and payload.get('command') not in ALLOWED_COMMANDS"
-    action: deny
-    reason: shell-command-not-in-allowlist
-    explanation: >
-      Los únicos comandos aprobados viven en ALLOWED_COMMANDS. Cualquier
-      otro viene a review manual si es legítimo; caso contrario, deny.
-  - id: shell-metachar-in-args
-    when: "payload.get('tool') == 'shell'
-           and any(c in str(payload.get('args', '')) for c in ['|', ';', '&', '`', '$('])"
-    action: deny
-    reason: shell-metacharacters-detected
-    explanation: >
-      Pipes, subcomandos, o backticks en los args son la forma clásica de
-      inyección. Si realmente necesitas un pipe, ejecútalo con subprocess
-      args=[...] en vez de shell=True.
-"""
+    extracted_allowlist = extract_shell_command_allowlist(findings)
+    if extracted_allowlist:
+        # Build a real YAML list with the commands the repo actually runs.
+        # The rule then references `allowed_commands` (the list defined in
+        # this same file) instead of the previous undefined `ALLOWED_COMMANDS`
+        # symbol the user had to fill in by hand.
+        allowlist_yaml = "\n".join(
+            "  - " + _yaml_inline_list(argv) for argv in extracted_allowlist
+        )
+        rule_when = (
+            "payload.get('tool') == 'shell' "
+            "and [payload.get('command'), *payload.get('args', [])] not in allowed_commands"
+        )
+        explanation = (
+            "Los únicos comandos aprobados son los que ya viven en `allowed_commands` "
+            "(extraídos del repo). Cualquier otro va a review si es legítimo, deny si no.\n"
+            "Revisá la lista antes de promover la policy — eliminá los comandos que "
+            "NO querés que el agente pueda invocar."
+        )
+    else:
+        allowlist_yaml = "  # TODO: replace with the commands your agent legitimately runs.\n  # Example: [\"git\", \"--version\"]"
+        rule_when = (
+            "payload.get('tool') == 'shell' "
+            "and [payload.get('command'), *payload.get('args', [])] not in allowed_commands"
+        )
+        explanation = (
+            "Los únicos comandos aprobados viven en `allowed_commands`. Cualquier "
+            "otro viene a review manual si es legítimo; caso contrario, deny.\n"
+            "Llename `allowed_commands` con la lista exacta antes de promover."
+        )
+    policy_yaml = (
+        "name: tool_use.llm-plus-shell-exec\n"
+        "version: 1\n"
+        "description: >\n"
+        "  Agent has both LLM access and shell-exec. Enforces allowlist of commands;\n"
+        "  denies everything else. Also denies when command args contain shell\n"
+        "  metacharacters (classic injection surface).\n"
+        "allowed_commands:\n"
+        f"{allowlist_yaml}\n"
+        "rules:\n"
+        "  - id: shell-command-allowlist\n"
+        f"    when: \"{rule_when}\"\n"
+        "    action: deny\n"
+        "    reason: shell-command-not-in-allowlist\n"
+        "    explanation: >\n"
+        f"      {explanation}\n"
+        "  - id: shell-metachar-in-args\n"
+        "    when: \"payload.get('tool') == 'shell'\n"
+        "           and any(c in str(payload.get('args', '')) for c in ['|', ';', '&', '`', '$('])\"\n"
+        "    action: deny\n"
+        "    reason: shell-metacharacters-detected\n"
+        "    explanation: >\n"
+        "      Pipes, subcomandos, o backticks en los args son la forma clásica de\n"
+        "      inyección. Si realmente necesitas un pipe, ejecútalo con subprocess\n"
+        "      args=[...] en vez de shell=True.\n"
+    )
 
     ev_lines = [
         f"`{_relative_path(f.file)}:{f.line}` — `{f.snippet[:60]}`"
@@ -296,12 +339,37 @@ rules:
         "",
     ]
     md_lines.extend(_intro_block(combo, evidence_lines=ev_lines))
+    md_lines.append("## Step 1 — Restrictive policy")
+    md_lines.append("")
+    md_lines.append(
+        "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (already written)."
+    )
+    md_lines.append("")
+    if extracted_allowlist:
+        md_lines.append(
+            f"The scanner pre-populated `allowed_commands` with **{len(extracted_allowlist)} "
+            "command(s)** it found in your repo:"
+        )
+        md_lines.append("")
+        md_lines.append("```yaml")
+        md_lines.append("allowed_commands:")
+        for argv in extracted_allowlist[:8]:
+            md_lines.append(f"  - {_yaml_inline_list(argv)}")
+        if len(extracted_allowlist) > 8:
+            md_lines.append(f"  # … +{len(extracted_allowlist) - 8} more — see the YAML")
+        md_lines.append("```")
+        md_lines.append("")
+        md_lines.append(
+            "**Review before promoting**: each entry is a command your code already "
+            "runs. If any of them shouldn't be reachable from the agent path "
+            "(build scripts, dev tools), remove it before `POST /v1/policies`."
+        )
+    else:
+        md_lines.append(
+            "Set `allowed_commands` to the exact commands your agent needs to run "
+            "(e.g. `[\"git\", \"--version\"]`). Promote via `POST /v1/policies`."
+        )
     md_lines.extend([
-        "## Step 1 — Restrictive policy",
-        "",
-        "`runtime-supervisor/policies/tool_use.llm-plus-shell-exec.v1.yaml` (already written).",
-        "",
-        "Set `ALLOWED_COMMANDS` to the exact commands your agent needs to run (e.g. `['ls', 'git', 'pytest']`). Promote via `POST /v1/policies`.",
         "",
         "## Step 2 — Wrap shell calls",
         "",
@@ -320,7 +388,7 @@ rules:
         "",
         "## ✅ Done when",
         "",
-        "- [ ] Policy promoted with explicit `ALLOWED_COMMANDS`",
+        "- [ ] Policy promoted with `allowed_commands` reviewed and trimmed",
         "- [ ] Every `subprocess.run` / `child_process.exec` goes through `guarded()`",
         "- [ ] Step 3 check returns `deny`",
         "- [ ] 7 days in shadow mode with no false positives",

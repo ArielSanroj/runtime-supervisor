@@ -304,15 +304,35 @@ def _build_wrap_targets(
         `.supervisor-ignore`. The dev explicitly said "don't surface this".
     """
     suppressed_locs: set[tuple[str, int]] = set()
+    # Map class name → parent class name. Built by `agent_graph.annotate_findings`
+    # at scan time; the parent_agent flag is on each child finding's `extra`.
+    # We rebuild a label-keyed map here so the chokepoint loop can demote
+    # children whose parent is also in the chokepoint set.
+    parent_of: dict[str, str] = {}
     if findings:
         for f in findings:
-            if (f.extra or {}).get("suppressed"):
+            extra = f.extra or {}
+            if extra.get("suppressed"):
                 suppressed_locs.add((f.file, f.line))
-    actionable = [
+            parent = extra.get("parent_agent")
+            if parent and extra.get("kind") == "agent-class":
+                cls_name = extra.get("class_name")
+                if cls_name:
+                    parent_of[str(cls_name)] = str(parent)
+
+    actionable_pre_graph = [
         cp for cp in summary.agent_chokepoints
         if cp.kind != "framework-import"
         and not is_low_reachability_path(cp.file)
         and (cp.file, cp.line) not in suppressed_locs
+    ]
+    # Drop children whose parent is also in the chokepoint set: the parent
+    # covers them transitively (the parent's __init__ instantiates the
+    # child, so wrapping the parent's dispatch method gates the child too).
+    parent_labels = {cp.label for cp in actionable_pre_graph}
+    actionable = [
+        cp for cp in actionable_pre_graph
+        if not (cp.kind == "agent-class" and parent_of.get(cp.label) in parent_labels)
     ]
     ranked = sorted(actionable, key=chokepoint_rank)
     seen: set[tuple[str, int]] = set()

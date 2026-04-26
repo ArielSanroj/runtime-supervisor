@@ -230,8 +230,26 @@ def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
     Framework imports (no class / no registration) still fire the combo at
     lower severity — the user's repo is agentic, we just couldn't pinpoint
     the wrap site. The playbook tells them how to find it themselves."""
+    from .summary import finding_wrap_rank
+
     orch = [f for f in findings if f.scanner == "agent-orchestrators"]
-    classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
+    # Sort classes by wrap rank so factory-file agents (e.g.
+    # `BudgetSupervisorAgent` whose file matches `_FACTORY_FILE_HINTS`)
+    # surface before non-factory ones (`BudgetExtractorAgent`). Without
+    # this, `classes[0]` was whatever came first in the scan order — the
+    # alphabetical winner — which made the combo cite a different class
+    # than START_HERE's "Best place to wrap first".
+    classes = sorted(
+        [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"],
+        key=finding_wrap_rank,
+    )
+    # Drop children whose parent is also in `classes` — the parent covers
+    # them. Same logic as start_here._build_wrap_targets.
+    parent_set = {f.extra.get("class_name") for f in classes}
+    classes = [
+        f for f in classes
+        if not (f.extra.get("parent_agent") and f.extra.get("parent_agent") in parent_set)
+    ]
     registrations = [f for f in orch if f.extra.get("kind") == "tool-registration"]
     imports = [f for f in orch if f.extra.get("kind") == "framework-import"]
 

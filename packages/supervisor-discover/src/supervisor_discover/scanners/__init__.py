@@ -67,6 +67,13 @@ def scan_all(root: Path) -> list[Finding]:
     # keep their original severity.
     from ..taint import annotate_findings as annotate_taint
     findings = annotate_taint(findings)
+    # Cross-file agent call-graph: detect parent → child instantiations
+    # so the renderer can mark `BudgetExtractorAgent` as covered by
+    # `BudgetSupervisorAgent` (which instantiates it in __init__). Without
+    # this, both classes show up as wrap targets and the dev gets two
+    # contradictory recommendations.
+    from ..agent_graph import annotate_findings as annotate_graph
+    annotate_graph(findings)
     # Read `<repo>/.supervisor-ignore` and tag the findings the dev
     # explicitly silenced. Renderers route them out of the priority list and
     # into a dedicated "Suppressed" section in FULL_REPORT.md.

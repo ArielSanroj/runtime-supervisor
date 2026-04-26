@@ -618,3 +618,82 @@ class PlainAgent:
     summary = RepoSummary(agent_chokepoints=[cp])
     sh = build_start_here(summary, [])
     assert "def handle" in sh.do_this_now
+
+
+# 8. Cross-file agent call-graph — children covered by parent fall out
+# of "Best place to wrap first" so the report stops giving the dev two
+# contradictory recommendations.
+
+def test_child_agent_with_parent_in_chokepoints_falls_out_of_top(tmp_path: Path):
+    """The supervincent shape: BudgetSupervisor instantiates BudgetExtractor.
+    Both are agent-class chokepoints. Without the call-graph, both compete
+    for top-3. With it, the child drops because the parent covers it
+    transitively."""
+    cps = [
+        AgentChokepoint(
+            file="src/agents/budget_supervisor_agent.py", line=17,
+            kind="agent-class", label="BudgetSupervisorAgent",
+        ),
+        AgentChokepoint(
+            file="src/agents/budget_extractor_agent.py", line=33,
+            kind="agent-class", label="BudgetExtractorAgent",
+        ),
+        AgentChokepoint(
+            file="src/agents/ingestion/agent.py", line=14,
+            kind="agent-class", label="IngestionAgent",
+        ),
+    ]
+    summary = RepoSummary(agent_chokepoints=cps)
+    # Synthetic finding that carries the `parent_agent` annotation produced
+    # by `agent_graph.annotate_findings` at scan time.
+    findings = [
+        Finding(
+            scanner="agent-orchestrators",
+            file="src/agents/budget_extractor_agent.py", line=33,
+            snippet="class BudgetExtractorAgent",
+            suggested_action_type="tool_use", confidence="high",
+            rationale="...",
+            extra={
+                "kind": "agent-class",
+                "class_name": "BudgetExtractorAgent",
+                "parent_agent": "BudgetSupervisorAgent",
+            },
+        ),
+    ]
+    sh = build_start_here(summary, findings)
+    labels = [t.label for t in sh.top_wrap_targets]
+    assert "BudgetSupervisorAgent" in labels
+    assert "IngestionAgent" in labels
+    assert "BudgetExtractorAgent" not in labels, (
+        "Child agent must drop out of the top — its parent covers it transitively."
+    )
+
+
+def test_child_without_parent_in_chokepoints_stays(tmp_path: Path):
+    """Edge case: a child is annotated with `parent_agent`, but the parent
+    isn't itself in the chokepoint set (low confidence / suppressed / etc).
+    The child should NOT be demoted — wrapping the parent isn't an option."""
+    cps = [
+        AgentChokepoint(
+            file="src/agents/orphan_extractor.py", line=1,
+            kind="agent-class", label="OrphanExtractor",
+        ),
+    ]
+    summary = RepoSummary(agent_chokepoints=cps)
+    findings = [
+        Finding(
+            scanner="agent-orchestrators",
+            file="src/agents/orphan_extractor.py", line=1,
+            snippet="class OrphanExtractor",
+            suggested_action_type="tool_use", confidence="high",
+            rationale="...",
+            extra={
+                "kind": "agent-class",
+                "class_name": "OrphanExtractor",
+                "parent_agent": "MissingParent",  # not in chokepoints
+            },
+        ),
+    ]
+    sh = build_start_here(summary, findings)
+    labels = [t.label for t in sh.top_wrap_targets]
+    assert "OrphanExtractor" in labels

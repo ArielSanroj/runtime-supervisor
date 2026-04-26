@@ -633,8 +633,20 @@ def _agent_orchestrator(combo: Combo, findings: list[Finding], summary: RepoSumm
     """Playbook for repos with an agent orchestrator chokepoint. The #1
     recommendation is to wrap the orchestrator, not every leaf call-site —
     this file generates the specific code + policy snippets."""
+    from .summary import finding_wrap_rank
+
     orch = [f for f in findings if f.scanner == "agent-orchestrators"]
-    classes = [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"]
+    classes = sorted(
+        [f for f in orch if f.extra.get("kind") == "agent-class" and f.confidence == "high"],
+        key=finding_wrap_rank,
+    )
+    # Filter children whose parent is also in the class list: the playbook
+    # should point at the root, not the child the supervisor instantiates.
+    parent_set = {f.extra.get("class_name") for f in classes}
+    classes = [
+        f for f in classes
+        if not (f.extra.get("parent_agent") and f.extra.get("parent_agent") in parent_set)
+    ]
     registrations = [f for f in orch if f.extra.get("kind") == "tool-registration"]
     imports = [f for f in orch if f.extra.get("kind") == "framework-import"]
     tools = sorted({

@@ -320,6 +320,36 @@ def _run_pr_scan(
     )
 
 
+# ----- public read of an installation (used by the post-install page) -------
+
+
+@router.get("/installations/{installation_id}")
+def get_installation_public(installation_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Public read of basic install fields. Used by the post-install
+    confirmation page so anonymous browsers (the user's redirect from
+    github.com) can render meaningful state without login.
+
+    Exposes only fields that are not sensitive: account login + type,
+    repo names (or "*"), active status, install timestamp. Anything
+    that tied this install to an integration / tenant lives behind
+    auth.
+    """
+    row = db.execute(
+        select(GitHubInstallation).where(GitHubInstallation.installation_id == installation_id)
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="installation not found")
+    return {
+        "installation_id": row.installation_id,
+        "account_login": row.github_account_login,
+        "account_type": row.github_account_type,
+        "repos": list(row.repo_full_names or []),
+        "active": row.active,
+        "linked_to_integration": row.integration_id is not None,
+        "installed_at": row.installed_at.isoformat() if row.installed_at else None,
+    }
+
+
 @router.post("/webhook")
 async def webhook(
     request: Request,

@@ -368,6 +368,9 @@ function BuilderUnlock({
               <BuilderBullet>scan history and diffs</BuilderBullet>
               <BuilderBullet>CI and PR comments</BuilderBullet>
             </ul>
+            <p className="mt-3 text-xs leading-5 text-zinc-500">
+              Pro ($99/workspace/mo) adds team workflows, shared review queues, SSO, and org controls.
+            </p>
           </div>
           {hiddenCount > 0 && (
             <p className="mt-4 font-mono text-xs text-emerald-400">

@@ -74,7 +74,7 @@ runtime-supervisor backend            ← evaluates each call against policies +
 dashboard at vibefixing.me/dashboard  ← shadow / sample / enforce, review queue, audit chain
 ```
 
-The CLI is open-source (Apache-2.0). The hosted backend + dashboard are at [vibefixing.me](https://vibefixing.me) — `Builder` ($29/mo) unlocks private repo scans, scan history, and CI integration.
+The CLI is open-source (Apache-2.0). The hosted backend + dashboard are at [vibefixing.me](https://vibefixing.me) — `Builder` ($29/mo) unlocks private repo scans, scan history, and CI integration. `Pro` ($99/workspace/mo) adds team workflows, SSO, and org controls.
 
 ## Self-host
 

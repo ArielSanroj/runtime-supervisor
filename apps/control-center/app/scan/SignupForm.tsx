@@ -98,7 +98,7 @@ export default function SignupForm({ headline, subline }: { headline?: string; s
       )}
 
       <p className="mt-4 text-xs text-zinc-500">
-        Free for any public repo. No credit card. Builder ($29/mo) unlocks private repos, history, CI comments.
+        Free for any public repo. No credit card. Builder ($29/mo) unlocks private repos, history, CI comments. Pro ($99/workspace/mo) adds team workflows + SSO.
       </p>
     </div>
   );

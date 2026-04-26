@@ -254,7 +254,7 @@ function PairingStrip({
       <p className="mt-2 text-sm text-zinc-300">
         Your PRs already get scanned and commented — that&apos;s free and works without an account.
         To pair this install with a personal dashboard (history, multi-repo aggregation, audit
-        export), you need a Vibefixing Builder account.
+        export), you need a Vibefixing Builder account. Pro ($99/workspace/mo) adds team workflows, SSO, and org controls.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {sessionEmail ? (

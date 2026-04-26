@@ -39,7 +39,7 @@ export default function ScanPage() {
         </h1>
         <p className="mt-5 max-w-2xl text-lg text-zinc-400">
           Shallow clone, run the scanners, and get a risk-ranked preview in seconds.
-          Public repos are free. Builder unlocks private repos and full exports.
+          Public repos are free. Builder unlocks private repos and full exports. Pro adds team workflows and org controls.
         </p>
         </div>
         <aside className="rounded-xl border border-emerald-900/50 bg-emerald-500/5 p-5">
@@ -51,6 +51,9 @@ export default function ScanPage() {
             <li>Scan history and diffs</li>
             <li>CI and PR comments</li>
           </ul>
+          <p className="mt-4 text-xs leading-5 text-zinc-500">
+            Pro ($99/workspace/mo) adds team workflows, org controls, SSO, and shared review queues.
+          </p>
         </aside>
       </section>
 

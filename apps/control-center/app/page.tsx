@@ -33,8 +33,8 @@ export default async function Landing() {
             <Cmd cmd="npm i @runtime-supervisor/guards" />
           </div>
           <p className="mt-4 text-sm text-zinc-500">
-            Free scan + free SDK + free credentials by email. Builder ($29/mo) unlocks private repos,
-            history, and CI comments.
+            Free scan + free SDK + free credentials by email. Builder ($29/mo) unlocks private repo scans,
+            history, and CI comments. Pro ($99/workspace/mo) adds team workflows and org controls.
           </p>
         </div>
 
@@ -238,7 +238,7 @@ def handle_tool_call(tool, args):
                 >
                   install on a repo →
                 </a>
-                <span className="font-mono text-xs text-zinc-500">free for public repos · $29/mo for private</span>
+                <span className="font-mono text-xs text-zinc-500">free for public repos · Builder $29/mo · Pro $99/workspace/mo</span>
               </div>
             </div>
 
@@ -250,12 +250,13 @@ def handle_tool_call(tool, args):
       <section className="border-y border-zinc-900 bg-zinc-950">
         <div className="mx-auto max-w-6xl px-6 py-16">
           <div className="mb-8">
-            <h2 className="text-3xl font-bold tracking-tight">Pricing for solo builders</h2>
+            <h2 className="text-3xl font-bold tracking-tight">Pricing for builders and teams</h2>
             <p className="mt-3 max-w-2xl text-zinc-400">
-              Start with a public scan. Pay when the scanner becomes part of your shipping workflow.
+              Start with a public scan. Pay when the scanner becomes part of your shipping workflow,
+              then move up when you need team review and org-level controls.
             </p>
           </div>
-          <div className="grid gap-5 md:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
             <Plan
               name="Free"
               price="$0"
@@ -264,7 +265,6 @@ def handle_tool_call(tool, args):
               items={["Public GitHub repo scan", "Top findings preview", "Risk tier summary", "Local CLI install"]}
             />
             <Plan
-              featured
               name="Builder"
               price="$29/mo"
               cta="upgrade to builder"
@@ -272,11 +272,31 @@ def handle_tool_call(tool, args):
               items={["Private repo scans", "Full runtime-supervisor export", "Stubs and YAML policies", "Scan history and diffs", "CI/GitHub PR comments"]}
             />
             <Plan
-              name="Team"
-              price="Later"
-              cta="open dashboard"
-              href="/dashboard"
-              items={["Shared fix queue", "Team review workflow", "Audit retention", "Webhooks", "SSO when needed"]}
+              featured
+              name="Pro"
+              price="$99/workspace/mo"
+              cta="contact us"
+              href="mailto:ariel@vibefixing.me?subject=Pro%20pricing%20-%20Vibefixing"
+              items={[
+                "Everything in Builder, for your team",
+                "Unlimited repos in this workspace",
+                "Shared fix queue + team review",
+                "Audit retention + webhooks",
+                "SSO when needed",
+              ]}
+            />
+            <Plan
+              name="Enterprise"
+              price="Talk to us"
+              cta="email sales"
+              href="mailto:ariel@vibefixing.me?subject=Enterprise%20-%20Vibefixing"
+              items={[
+                "Multi-workspace",
+                "Custom retention + audit export",
+                "Priority support + SLAs",
+                "Dedicated infrastructure",
+                "Mono-repos >200MB / high-volume scans",
+              ]}
             />
           </div>
         </div>
@@ -390,7 +410,8 @@ def handle_tool_call(tool, args):
               scanned automatically. Within 5 seconds of opening a PR, vibefixing diffs the head
               ref against your previous scan and posts a comment listing only the <em>new</em>
               unsafe call-sites. Clean PRs get nothing — no spam. Free for public repos; private
-              repos and CI integration are part of Builder ($29/mo).
+              repos and CI integration are part of Builder ($29/mo), while team workflows and org-level
+              controls start at Pro ($99/workspace/mo).
             </p>
           </div>
 

@@ -123,7 +123,14 @@ def _pick_capability_hotspot(findings: list[Finding]) -> WrapTarget | None:
     """File with the highest concentration of high-confidence calls a
     supervisor would gate. Used as the wrap-target fallback when the repo
     has no agent class and no framework signal — the typical SaaS repo
-    (Stripe checkout + a webhook + Supabase) lives in this branch."""
+    (Stripe checkout + a webhook + Supabase) lives in this branch.
+
+    Skips low-reachability paths (tests, examples, CI configs, generated
+    code, migrations, ...) — the 10-repo benchmark caught the picker
+    landing on `features.repository.integration-test.ts` (cal-diy), CI
+    setup files (chatwoot), and example directories (supabase). When all
+    candidates are low-reachability, returns `None` rather than picking
+    the least-bad noise file; the renderer already handles `None`."""
     by_file: dict[str, list[Finding]] = {}
     for f in findings:
         if f.confidence != "high":
@@ -131,6 +138,8 @@ def _pick_capability_hotspot(findings: list[Finding]) -> WrapTarget | None:
         if f.scanner not in _HOTSPOT_SCANNERS:
             continue
         if (f.extra or {}).get("suppressed"):
+            continue
+        if is_low_reachability_path(f.file):
             continue
         by_file.setdefault(f.file, []).append(f)
     if not by_file:

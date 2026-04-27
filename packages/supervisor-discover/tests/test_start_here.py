@@ -740,3 +740,80 @@ def test_child_without_parent_in_chokepoints_stays(tmp_path: Path):
     sh = build_start_here(summary, findings)
     labels = [t.label for t in sh.top_wrap_targets]
     assert "OrphanExtractor" in labels
+
+
+# 8. Capability hotspot picker (10-repo benchmark regressions)
+#
+# The hotspot fallback fires when there's no agent class and no framework
+# signal. Before the benchmark fix it picked the file with the most
+# high-confidence calls — even when that file lived under tests/, examples/,
+# or CI scaffolding. cal-diy chose `features.repository.integration-test.ts`,
+# chatwoot chose CI SQL files, supabase chose example directories. The
+# hotspot must filter by `is_low_reachability_path`.
+
+def test_hotspot_ignores_integration_test_file():
+    """cal-diy regression: a `features.repository.integration-test.ts` had
+    more high-confidence findings than any production handler. The picker
+    used to land on it; now reachability filtering rejects it."""
+    from supervisor_discover.start_here import _pick_capability_hotspot
+
+    test_file = "src/features/users.repository.integration-test.ts"
+    real_handler = "src/api/routes/checkout.ts"
+    findings = [
+        # 3 hits in the test file — would win on count alone.
+        Finding(scanner="payment-calls", file=test_file, line=10,
+                snippet="stripe.charges.create(", suggested_action_type="payment",
+                confidence="high", rationale="x", extra={}),
+        Finding(scanner="payment-calls", file=test_file, line=20,
+                snippet="stripe.refunds.create(", suggested_action_type="refund",
+                confidence="high", rationale="x", extra={}),
+        Finding(scanner="db-mutations", file=test_file, line=30,
+                snippet="DELETE FROM", suggested_action_type="data_access",
+                confidence="high", rationale="x", extra={"verb": "DELETE"}),
+        # 1 hit in the real handler — wins after the test file is filtered.
+        Finding(scanner="payment-calls", file=real_handler, line=42,
+                snippet="stripe.charges.create(", suggested_action_type="payment",
+                confidence="high", rationale="x", extra={}),
+    ]
+    hotspot = _pick_capability_hotspot(findings)
+    assert hotspot is not None
+    assert hotspot.file == real_handler
+
+
+def test_hotspot_ignores_circleci_directory():
+    """chatwoot regression: CI setup SQL was the highest-density file."""
+    from supervisor_discover.start_here import _pick_capability_hotspot
+
+    findings = [
+        Finding(scanner="db-mutations", file=".circleci/db-bootstrap.py",
+                line=10, snippet="INSERT INTO users", suggested_action_type="account_change",
+                confidence="high", rationale="x", extra={"verb": "INSERT", "table": "users"}),
+        Finding(scanner="db-mutations", file=".circleci/db-bootstrap.py",
+                line=20, snippet="UPDATE users SET", suggested_action_type="account_change",
+                confidence="high", rationale="x", extra={"verb": "UPDATE", "table": "users"}),
+    ]
+    hotspot = _pick_capability_hotspot(findings)
+    assert hotspot is None, (
+        "all candidates are low-reachability — picker must yield None "
+        "instead of choosing the least-bad noise file"
+    )
+
+
+def test_hotspot_returns_none_when_all_candidates_demoted():
+    """When every high-confidence finding is in a demoted path, return
+    None. The renderer already handles None by falling back to the
+    'no obvious wrap target' copy."""
+    from supervisor_discover.start_here import _pick_capability_hotspot
+
+    findings = [
+        Finding(scanner="payment-calls", file="examples/checkout.ts", line=1,
+                snippet="stripe.charges.create(", suggested_action_type="payment",
+                confidence="high", rationale="x", extra={}),
+        Finding(scanner="db-mutations", file="docs/sample.py", line=1,
+                snippet="INSERT INTO users", suggested_action_type="account_change",
+                confidence="high", rationale="x", extra={"verb": "INSERT", "table": "users"}),
+        Finding(scanner="payment-calls", file="src/__generated__/types.ts",
+                line=1, snippet="stripe.refunds.create(", suggested_action_type="refund",
+                confidence="high", rationale="x", extra={}),
+    ]
+    assert _pick_capability_hotspot(findings) is None

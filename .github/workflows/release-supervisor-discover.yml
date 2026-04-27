@@ -1,0 +1,74 @@
+name: release-supervisor-discover
+
+# Triggers on tags shaped `supervisor-discover-v0.4.0`. The prefix lets the
+# monorepo carry release cadences for multiple packages without collisions.
+# Pure-Python build (hatchling) — produces a wheel + sdist for PyPI.
+#
+# To cut a release:
+#   1. Bump `version` in packages/supervisor-discover/pyproject.toml.
+#   2. Commit + push.
+#   3. Tag: git tag supervisor-discover-vX.Y.Z && git push --tags
+#   4. The workflow builds + uploads to PyPI via Trusted Publishing
+#      (no API token in repo secrets — configure once at
+#      https://pypi.org/manage/account/publishing/).
+#
+# Trusted Publishing setup (one-time, on PyPI):
+#   - Project: supervisor-discover
+#   - Owner: ArielSanroj
+#   - Repository: runtime-supervisor (or whatever the GitHub repo name is)
+#   - Workflow: release-supervisor-discover.yml
+#   - Environment: pypi
+on:
+  push:
+    tags:
+      - "supervisor-discover-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build
+        working-directory: packages/supervisor-discover
+        run: python -m build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-discover-dist
+          path: packages/supervisor-discover/dist/
+
+  pypi-publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/supervisor-discover
+    permissions:
+      id-token: write   # required for Trusted Publishing
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: supervisor-discover-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

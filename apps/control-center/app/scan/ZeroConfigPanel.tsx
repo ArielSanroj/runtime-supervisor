@@ -106,16 +106,52 @@ guarded(
   return (
     <div className="rounded-xl border border-emerald-900/50 bg-emerald-500/5 p-6">
       <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
-        next: 5 lines, zero credentials
+        next: one comment per PR
       </div>
-      <h3 className="mt-3 text-xl font-semibold text-zinc-100">Drop the SDK into your code</h3>
+      <h3 className="mt-3 text-xl font-semibold text-zinc-100">
+        Connect the GitHub App
+      </h3>
       <p className="mt-3 text-sm leading-7 text-zinc-400">
-        Shadow mode by default. No signup. The SDK posts <em>would-have-blocked</em> events to the public
-        supervisor under your <code className="text-zinc-300">client_id</code>. Claim them with an email below
-        when you want to see the dashboard view.
+        Get a comment on every PR with the <em>new</em> ungated call-sites
+        introduced by the change — diffed against your last scan, not the
+        whole repo. Zero CI config. One install per repo.
       </p>
 
-      <div className="mt-5">
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <a
+          href="https://github.com/apps/vibefixing/installations/new"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-black hover:bg-emerald-400"
+        >
+          Install the GitHub App →
+        </a>
+        <a
+          href="/integrations/github"
+          className="font-mono text-xs text-zinc-400 hover:text-zinc-200"
+        >
+          already installed? link to your tenant
+        </a>
+      </div>
+      <p className="mt-3 text-xs leading-6 text-zinc-500">
+        Backend handles webhooks for <code>opened</code>, <code>synchronize</code>, and
+        <code> reopened</code>. Comment lists each new finding with file:line, family, and
+        confidence. Existing findings aren&apos;t reposted.
+      </p>
+
+      <hr className="my-6 border-zinc-800" />
+
+      <div className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+        prefer code? drop the SDK in 5 lines
+      </div>
+      <p className="mt-2 text-sm leading-6 text-zinc-400">
+        Shadow mode by default. The SDK posts <em>would-have-blocked</em>{" "}
+        events to the public supervisor under your{" "}
+        <code className="text-zinc-300">client_id</code>. Claim them with an
+        email below when you want a dashboard.
+      </p>
+
+      <div className="mt-4">
         <div className="flex gap-1 border-b border-zinc-800">
           <TabButton active={activeTab === "ts"} onClick={() => setActiveTab("ts")}>
             TypeScript

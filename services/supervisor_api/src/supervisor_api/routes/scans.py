@@ -636,7 +636,12 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
             start_here = build_start_here(summary, findings, repo_root=tmp_path)
             summary = dc_replace(summary, start_here=start_here)
             repo_summary = summary.to_dict()
-            detected_combos = detect_combos(findings)
+            # Pass root so combos get refined with import-graph
+            # reachability — combos whose two findings live in modules
+            # without any import path connecting them are downgraded to
+            # `low` instead of firing as `critical`. Public-scan-facing
+            # since this endpoint feeds the landing page.
+            detected_combos = detect_combos(findings, root=tmp_path)
         except Exception as e:
             log.exception("scan.scanner_crash scan_id=%s", scan_id)
             _finalize_error(scan_id, base, f"scanner error: {type(e).__name__}: {e}"[:500], started)

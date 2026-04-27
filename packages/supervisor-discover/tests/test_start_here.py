@@ -898,3 +898,46 @@ def test_hotspot_returns_none_when_all_candidates_demoted():
                 confidence="high", rationale="x", extra={}),
     ]
     assert _pick_capability_hotspot(findings) is None
+
+
+def test_hotspot_does_not_choose_http_route_inventory():
+    """nextjs-subscription-payments regression: auth helper route inventory
+    outnumbered Stripe calls and became the suggested wrap target. Route
+    inventory should not drive the hotspot fallback."""
+    from supervisor_discover.start_here import _pick_capability_hotspot
+
+    findings = [
+        Finding(scanner="http-routes", file="utils/auth-helpers/server.ts",
+                line=i, snippet="export async function GET(",
+                suggested_action_type="other", confidence="high",
+                rationale="x", extra={})
+        for i in range(1, 10)
+    ]
+    findings.append(
+        Finding(scanner="payment-calls", file="utils/stripe/server.ts",
+                line=89, snippet="stripe.checkout.sessions.create",
+                suggested_action_type="payment", confidence="high",
+                rationale="x", extra={})
+    )
+    hotspot = _pick_capability_hotspot(findings)
+    assert hotspot is not None
+    assert hotspot.file == "utils/stripe/server.ts"
+
+
+def test_no_agent_hotspot_copy_is_inventory_not_wrap_instruction():
+    """Plain SaaS repos can have Stripe/DB capabilities without an agent path.
+    START_HERE should tell the user to review the handler, not to wrap it
+    immediately."""
+    summary = RepoSummary(agent_path_present=False)
+    findings = [
+        Finding(scanner="payment-calls", file="utils/stripe/server.ts",
+                line=89, snippet="stripe.checkout.sessions.create",
+                suggested_action_type="payment", confidence="high",
+                rationale="x", extra={})
+    ]
+    sh = build_start_here(summary, findings)
+    md = render_start_here_md(sh)
+    assert "capability hotspot" in md
+    assert "not an immediate wrap instruction" in md
+    assert "Open that file and wrap the exported handler" not in md
+    assert "add `@supervised(...)` once" in md.lower()

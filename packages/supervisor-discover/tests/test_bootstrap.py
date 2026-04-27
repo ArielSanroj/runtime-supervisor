@@ -260,3 +260,25 @@ def test_build_bootstrap_info_empty_repo(tmp_path: Path):
     assert bs.manager is None
     assert bs.entrypoint is None
     assert bs.configure_already_called is False
+
+
+# ─── Entrypoint detection ignores test mock servers ──────────────
+
+
+def test_entrypoint_detection_ignores_mock_server_in_tests(tmp_path: Path):
+    """langchain's `tests/mock_servers/robot/server.py` has `app = FastAPI()`.
+    Without skipping `tests/`, `_shallow_files` finds it and `entrypoint` is
+    populated, which then mis-classifies the repo as a deployed app
+    downstream. The skip list keeps test artifacts out of production-shape
+    detection so library scans (langchain shape) stay accurate."""
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'mylib'\n")
+    _write(tmp_path, "src/mylib/__init__.py", "")
+    _write(tmp_path, "tests/mock_servers/robot/server.py", """
+from fastapi import FastAPI
+app = FastAPI()
+""")
+    bs = build_bootstrap_info(tmp_path, prefer_language="python")
+    assert bs.entrypoint is None, (
+        f"mock server in tests/ leaked into entrypoint detection: "
+        f"entrypoint={bs.entrypoint}"
+    )

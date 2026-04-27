@@ -64,6 +64,9 @@ default_hidden_dirs:
     - __tests__
     - spec
     - specs
+    - integration-tests
+    - integration_tests
+    - e2e
   legacy:
     - legacy
     - archive
@@ -75,6 +78,38 @@ default_hidden_dirs:
   generated:
     - generated
     - gen
+    - __generated__
+    - codegen
+    - monaco-editor
+    - vendor
+    - third_party
+    - third-party
+  examples:
+    - examples
+    - example
+    - demo
+    - demos
+    - samples
+    - sample
+  ci:
+    - .circleci
+    - .github
+    - workflows
+    - ci
+  docs:
+    - docs
+    - doc
+    - website
+    - site
+    - storybook
+    - .storybook
+  templates:
+    - template
+    - templates
+    - registry
+    - registries
+    - playground
+    - playgrounds
 
 # Confidence-gate behavior. The Python output applies this; UI consumes the
 # pre-gated payload + the hidden_counter for the upsell.

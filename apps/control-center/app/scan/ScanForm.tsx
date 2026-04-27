@@ -21,10 +21,11 @@ export default function ScanForm() {
     };
   }, []);
 
-  const poll = useCallback((scanId: string, attempt: number) => {
+  const poll = useCallback((scanId: string, attempt: number, accessToken: string | null) => {
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`, {
+        const qs = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
+        const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}${qs}`, {
           cache: "no-store",
         });
         const data = (await res.json()) as ScanResponse & { error?: string };
@@ -33,7 +34,11 @@ export default function ScanForm() {
           setSubmitting(false);
           return;
         }
-        setScan(data);
+        // Preserve the access_token across poll iterations: the GET
+        // response never echoes it back, so we have to merge the value
+        // we got from POST into the polled data so children (FindingsList)
+        // can render share / unlock links that include it.
+        setScan((prev) => ({ ...data, access_token: accessToken ?? prev?.access_token ?? null }));
         if (data.status === "done") {
           if (data.github_url) {
             const highCount = (data.findings ?? []).filter((f) => f.confidence === "high").length;
@@ -58,7 +63,7 @@ export default function ScanForm() {
           setSubmitting(false);
           return;
         }
-        poll(scanId, attempt + 1);
+        poll(scanId, attempt + 1, accessToken);
       } catch (e) {
         setError((e as Error).message);
         setSubmitting(false);
@@ -85,7 +90,11 @@ export default function ScanForm() {
         return;
       }
       setScan(data);
-      poll(data.scan_id, 1);
+      // Capture the per-scan access token from the POST response. We
+      // pass it into poll() so subsequent GETs return full detail; if
+      // the user refreshes the page or shares the URL without the
+      // token, the response will be redacted.
+      poll(data.scan_id, 1, data.access_token ?? null);
     } catch (e) {
       setError((e as Error).message);
       setSubmitting(false);

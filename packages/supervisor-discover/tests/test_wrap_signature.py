@@ -118,6 +118,86 @@ class AsyncAgent:
     assert sig.is_async is True
 
 
+def test_skips_property_decorated_method(tmp_path: Path):
+    """`@property` getters can't be `@supervised` targets — wrapping them
+    decorates metadata, not the agent loop. The XMLAgent.input_keys symptom:
+    the picker used to fall through name-preference to "first public method"
+    and recommend wrapping `input_keys` (a `@property`). It must skip the
+    property and pick the next eligible method (`plan` here)."""
+    src = _write(tmp_path, "agent.py", """
+class XMLAgent:
+    @property
+    def input_keys(self):
+        return ["input"]
+
+    def plan(self, msgs):
+        return None
+
+    async def aplan(self, msgs):
+        return None
+""")
+    sig = extract_dispatcher_signature(str(src), "XMLAgent")
+    assert sig is not None
+    assert sig.method_name == "plan"
+
+
+def test_skips_classmethod_and_staticmethod(tmp_path: Path):
+    """`@classmethod` / `@staticmethod` aren't bound to instances, so the
+    gate can't read tenant/user context off `self`. Picker should walk
+    past them to a real instance method."""
+    src = _write(tmp_path, "agent.py", """
+class HelperAgent:
+    @classmethod
+    def from_config(cls, cfg):
+        return cls()
+
+    @staticmethod
+    def parse(text):
+        return text
+
+    def handle(self, msgs):
+        return None
+""")
+    sig = extract_dispatcher_signature(str(src), "HelperAgent")
+    assert sig is not None
+    assert sig.method_name == "handle"
+
+
+def test_returns_none_when_only_decorated_methods_exist(tmp_path: Path):
+    """If every method is a property/classmethod/staticmethod, there's no
+    real chokepoint to wrap — picker returns None and the renderer falls
+    back to the generic 'document threat model' empty-state copy."""
+    src = _write(tmp_path, "agent.py", """
+class MetadataOnlyAgent:
+    @property
+    def input_keys(self):
+        return ["input"]
+
+    @staticmethod
+    def get_default_prompt():
+        return None
+""")
+    assert extract_dispatcher_signature(str(src), "MetadataOnlyAgent") is None
+
+
+def test_picks_plan_when_handle_absent(tmp_path: Path):
+    """Langchain agents expose `plan` / `aplan` as their dispatcher; the
+    legacy preference list omitted them, so the picker fell through to
+    'first public method'. Adding `plan` / `aplan` to the preference list
+    is the second half of the XMLAgent.input_keys fix."""
+    src = _write(tmp_path, "agent.py", """
+class LangchainStyleAgent:
+    def some_helper(self, x):
+        return x
+
+    def plan(self, msgs):
+        return None
+""")
+    sig = extract_dispatcher_signature(str(src), "LangchainStyleAgent")
+    assert sig is not None
+    assert sig.method_name == "plan"
+
+
 # ─── render_lambda_args ────────────────────────────────────────────
 
 

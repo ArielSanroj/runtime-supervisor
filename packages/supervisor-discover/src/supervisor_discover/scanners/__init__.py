@@ -143,6 +143,34 @@ def _is_eval_path(file: str, root: Path | None = None) -> bool:
 # from those files) but route them out of the visible set into a per-category
 # counter the UI surfaces as "+ N hidden — open Builder for full set".
 
+_HIDDEN_FILENAME_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "tests",
+        (
+            ".test.", ".spec.", ".integration-test.", ".integration_test.",
+            ".e2e.", "_e2e.", "_test.py", "_tests.py", "_spec.py",
+        ),
+    ),
+    (
+        "generated",
+        (
+            ".d.ts", ".min.js", ".bundle.js", ".chunk.js", ".map",
+            "monaco.", ".monaco.",
+        ),
+    ),
+    ("templates", (".template.", ".registry.")),
+)
+
+_HIDDEN_PATH_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Supabase ships bootstrap SQL under docker/volumes. It is useful
+    # inventory for Builder, but not a "wrap this app path" preview item.
+    ("infra", ("/docker/volumes/", "/volumes/db/")),
+    # Medusa's CLI scaffolding runs shell/file commands by design. Treat it
+    # as developer tooling unless an agent path reaches it.
+    ("tooling", ("/packages/cli/",)),
+)
+
+
 def _classify_hidden_category(file: str, root: Path | None,
                               category_dirs: dict[str, set[str]]) -> str | None:
     """Return the hidden-category name for `file` (under any tests/legacy/
@@ -156,9 +184,17 @@ def _classify_hidden_category(file: str, root: Path | None,
             rel_parts = Path(file).parts
     else:
         rel_parts = Path(file).parts
+    rel_path = "/" + "/".join(str(p).lower() for p in rel_parts).lstrip("/")
     parts_lower = {p.lower() for p in rel_parts}
     for category, dir_names in category_dirs.items():
-        if parts_lower & dir_names:
+        if parts_lower & {d.lower() for d in dir_names}:
+            return category
+    for category, hints in _HIDDEN_PATH_HINTS:
+        if any(hint in rel_path for hint in hints):
+            return category
+    name = rel_parts[-1].lower() if rel_parts else Path(file).name.lower()
+    for category, hints in _HIDDEN_FILENAME_HINTS:
+        if any(hint in name for hint in hints):
             return category
     return None
 

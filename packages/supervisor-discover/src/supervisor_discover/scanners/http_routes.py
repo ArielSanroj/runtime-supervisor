@@ -19,6 +19,19 @@ _PY_HTTP_DECORATORS = {"route", "get", "post", "put", "patch", "delete"}
 _TS_EXPRESS_PATTERN = re.compile(r"\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(", re.IGNORECASE)
 _TS_NEXT_API_PATH = re.compile(r"(?:app/.*?/route\.(?:ts|js)|pages/api/.+\.(?:ts|js))$")
 
+# Next.js Server Actions: a file whose first non-blank, non-comment line is
+# `'use server'` (or "use server"), with optional trailing semicolon. Every
+# `export (async )?function` underneath becomes an HTTP-callable server action
+# the framework wires up on its own — no `route.ts`, no decorator. The
+# directive turns plain functions into a public POST surface.
+_TS_USE_SERVER_DIRECTIVE = re.compile(
+    r"""^[\s]*['"]use\s+server['"]\s*;?\s*$""",
+)
+_TS_EXPORTED_FUNCTION = re.compile(
+    r"""^export\s+(?:async\s+)?function\s+(\w+)\s*\(""",
+    re.MULTILINE,
+)
+
 
 def _scan_python(root: Path) -> list[Finding]:
     findings: list[Finding] = []
@@ -81,6 +94,21 @@ def _guess_framework(name: str) -> str:
     return "unknown"
 
 
+def _is_use_server_module(text: str) -> bool:
+    """True when the first significant line of `text` is `'use server'`.
+
+    Skips blank lines and `//` line comments at the top of the file. Block
+    comments (`/* */`) are deliberately ignored — Next.js itself treats the
+    directive the same way, so we shouldn't be stricter than the framework.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("//"):
+            continue
+        return bool(_TS_USE_SERVER_DIRECTIVE.match(raw))
+    return False
+
+
 def _scan_ts_js(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in ts_js_files(root):
@@ -89,6 +117,31 @@ def _scan_ts_js(root: Path) -> list[Finding]:
         text = safe_read(path)
         if text is None:
             continue
+
+        # Next.js Server Actions: each exported function under a `'use server'`
+        # module is its own POST endpoint. We tag the directive line plus each
+        # exported function so the wrap-target ranker can point at concrete
+        # handlers instead of just "this file".
+        if _is_use_server_module(text):
+            for m in _TS_EXPORTED_FUNCTION.finditer(text):
+                line = text[: m.start()].count("\n") + 1
+                fn = m.group(1)
+                findings.append(Finding(
+                    scanner="http-routes",
+                    file=str(path),
+                    line=line,
+                    snippet=m.group(0).rstrip("("),
+                    suggested_action_type="other",
+                    confidence="high",
+                    rationale=(
+                        f"Next.js server action `{fn}` — the `'use server'` "
+                        "directive at the top of the file makes every export "
+                        "a public POST endpoint. Wrap with @supervised(...) "
+                        "matching what the function actually does (account_change "
+                        "for profile mutations, payment for Stripe calls)."
+                    ),
+                    extra={"function": fn, "framework": "next-server-action"},
+                ))
 
         if is_next_api:
             # Next.js app router: export async function GET/POST/... at top level

@@ -126,3 +126,90 @@ def test_include_flag_re_enables_hidden_category():
     assert any(f.file == "repo/tests/test_x.py" for f in visible)
     # Counter must NOT count it once it's been re-included.
     assert hidden.get("tests", 0) == 0
+
+
+def test_benchmark_noise_paths_hidden_from_preview():
+    """Regression coverage for the 10-repo benchmark noise buckets:
+    Cal.com integration tests, Supabase generated Monaco/registry/examples,
+    and Chatwoot CI SQL should not be visible preview findings."""
+    noisy = [
+        Finding(
+            scanner="db-mutations",
+            file="repo/packages/features/foo.repository.integration-test.ts",
+            line=1,
+            snippet="prisma.user.create",
+            suggested_action_type="account_change",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="fs-shell",
+            file="repo/apps/studio/public/monaco-editor/base/worker/workerMain.js",
+            line=1,
+            snippet="new Function(",
+            suggested_action_type="tool_use",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="mcp-tools",
+            file="repo/examples/edge-functions/simple-mcp-server/index.ts",
+            line=1,
+            snippet="server.registerTool(",
+            suggested_action_type="tool_use",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="http-routes",
+            file="repo/apps/ui-library/registry/default/app/auth/confirm/route.ts",
+            line=1,
+            snippet="export async function GET(",
+            suggested_action_type="other",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="db-mutations",
+            file="repo/.circleci/setup_chatwoot.sql",
+            line=1,
+            snippet="UPDATE pg_database SET",
+            suggested_action_type="other",
+            confidence="medium",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="db-mutations",
+            file="repo/docker/volumes/db/webhooks.sql",
+            line=1,
+            snippet="CREATE TRIGGER",
+            suggested_action_type="other",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+        Finding(
+            scanner="fs-shell",
+            file="repo/packages/cli/medusa-cli/src/commands/new.ts",
+            line=1,
+            snippet="execa(",
+            suggested_action_type="tool_use",
+            confidence="high",
+            rationale="...",
+            extra={},
+        ),
+    ]
+    visible, hidden = apply_default_hidden(noisy, None)
+    assert visible == []
+    assert hidden.get("tests") == 1
+    assert hidden.get("generated") == 1
+    assert hidden.get("examples") == 1
+    assert hidden.get("templates") == 1
+    assert hidden.get("ci") == 1
+    assert hidden.get("infra") == 1
+    assert hidden.get("tooling") == 1

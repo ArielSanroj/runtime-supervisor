@@ -116,7 +116,7 @@ class StartHere:
 # the hotspot fallback. Excludes `agent-orchestrators` (already covered by
 # `top_wrap_targets`) and informational tiers.
 _HOTSPOT_SCANNERS = frozenset({
-    "payment-calls", "db-mutations", "http-routes",
+    "payment-calls", "db-mutations",
     "llm-calls", "fs-shell", "email-sends", "messaging",
     "voice-actions", "calendar-actions", "media-gen",
     "auth-bypass", "mcp-tools",
@@ -161,8 +161,7 @@ def _pick_capability_hotspot(findings: list[Finding]) -> WrapTarget | None:
         line=primary.line,
         why=(
             f"{len(items)} high-confidence calls concentrate in this file "
-            f"({', '.join(scanners)}). One wrapper at this entrypoint covers "
-            "most of the repo's supervised-worthy surface."
+            f"({', '.join(scanners)})."
         ),
     )
 
@@ -918,6 +917,7 @@ def _build_do_this_now(
     repo_kind: str = "unknown",
     *,
     hotspot: WrapTarget | None = None,
+    agent_path_present: bool = True,
 ) -> str:
     """Render the single concrete next step as a markdown snippet block.
 
@@ -990,6 +990,15 @@ def _build_do_this_now(
             )
         if hotspot is not None:
             rel = _short_path(hotspot.file)
+            if not agent_path_present:
+                return (
+                    f"No agent loop is reachable in this scan. Treat "
+                    f"`{rel}:{hotspot.line}` as a capability hotspot, not "
+                    f"an immediate `@supervised` target. {hotspot.why} "
+                    "Review auth, direct user input, and webhook idempotency "
+                    "around this handler today; add `@supervised(...)` once "
+                    "an agent or automation path can trigger it."
+                )
             return (
                 f"No agent class detected, but supervised-worthy calls "
                 f"concentrate in `{rel}:{hotspot.line}`. {hotspot.why} "
@@ -1082,7 +1091,9 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         else None
     )
     do_now = _build_do_this_now(
-        targets, framework_signals, summary.repo_kind, hotspot=hotspot,
+        targets, framework_signals, summary.repo_kind,
+        hotspot=hotspot,
+        agent_path_present=summary.agent_path_present,
     )
     return StartHere(
         top_wrap_targets=targets,
@@ -1314,19 +1325,33 @@ def render_start_here_md(sh: StartHere) -> str:
     elif sh.capability_hotspot is not None:
         h = sh.capability_hotspot
         rel = _short_path(h.file)
-        parts.append(
-            f"No agent class detected. The supervised-worthy calls cluster "
-            f"in `{rel}:{h.line}`."
-        )
-        parts.append("")
-        parts.append(f"_{h.why}_")
-        parts.append("")
-        parts.append(
-            "Open that file and wrap the exported handler with "
-            "`@supervised(...)` matching what it does — `payment` for Stripe "
-            "calls, `account_change` for profile mutations, `data_access` for "
-            "general DB writes."
-        )
+        if sh.agent_path_present:
+            parts.append(
+                f"No agent class detected. The supervised-worthy calls cluster "
+                f"in `{rel}:{h.line}`."
+            )
+            parts.append("")
+            parts.append(f"_{h.why}_")
+            parts.append("")
+            parts.append(
+                "Open that file and wrap the exported handler with "
+                "`@supervised(...)` matching what it does — `payment` for Stripe "
+                "calls, `account_change` for profile mutations, `data_access` for "
+                "general DB writes."
+            )
+        else:
+            parts.append(
+                f"No agent loop detected. `{rel}:{h.line}` is the highest-density "
+                "capability hotspot, not an immediate wrap instruction."
+            )
+            parts.append("")
+            parts.append(f"_{h.why}_")
+            parts.append("")
+            parts.append(
+                "Review auth, direct user input, and webhook idempotency around "
+                "this handler. Add `@supervised(...)` only once an agent or "
+                "automation path can trigger it."
+            )
     else:
         parts.append(
             "No agent class and no high-confidence supervised-worthy calls "
@@ -1426,7 +1451,7 @@ def render_start_here_md(sh: StartHere) -> str:
     parts.append("- HTTP route inventory")
     parts.append("- medium- and low-confidence findings")
     parts.append("- informational inventory")
-    parts.append("- tests / legacy / migrations / generated code")
+    parts.append("- tests / examples / CI / tooling / generated code")
     parts.append("")
     if sh.hidden_counter:
         total = sum(sh.hidden_counter.values())
@@ -1501,8 +1526,12 @@ def render_cli_start_here(sh: StartHere, *, elapsed_s: float | None = None,
     elif sh.capability_hotspot is not None:
         h = sh.capability_hotspot
         rel = _short_path(h.file)
-        out.append(f"  (no agent class — calls cluster in {rel}:{h.line};")
-        out.append("   open that file and wrap the exported handler)")
+        if sh.agent_path_present:
+            out.append(f"  (no agent class — calls cluster in {rel}:{h.line};")
+            out.append("   open that file and wrap the exported handler)")
+        else:
+            out.append(f"  (no agent loop — capability hotspot at {rel}:{h.line};")
+            out.append("   review auth/input now; wrap only once an agent can trigger it)")
     else:
         out.append("  (no agent class and no supervised-worthy calls — re-scan after first SDK use)")
     out.append("")

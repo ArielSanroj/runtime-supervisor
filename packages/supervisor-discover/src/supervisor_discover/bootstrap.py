@@ -57,6 +57,11 @@ class BootstrapInfo:
     call where you bootstrap your app". `configure_already_called == True`
     means the renderer should omit the configure-call paste (the dev did
     it on a previous PR).
+
+    Repo kind classification (library vs deployed agent) is **not** here —
+    it lives in `repo_kind.py` and is surfaced via `summary.repo_kind` /
+    `StartHere.repo_kind`. Keeping it out of bootstrap avoids two
+    different detectors disagreeing on what counts as a framework.
     """
     manager: DepManager | None
     entrypoint: EntryPoint | None
@@ -85,12 +90,23 @@ _PY_VERSION_PIN = ">=0.3"
 
 def _shallow_files(root: Path, names: Iterable[str], max_depth: int = 3) -> list[Path]:
     """Return matching files up to `max_depth` levels deep, skipping common
-    cache / build dirs. Walks breadth-first and stops at depth.
+    cache / build / test dirs. Walks breadth-first and stops at depth.
+
+    Test / fixture / mock-server dirs are skipped so a `tests/mock_servers/
+    server.py` with `app = FastAPI()` doesn't flip the repo kind to
+    deployed-agent. langchain ships exactly that shape — without the skip
+    list a library scan returns "deployed_agent" because of a test mock.
     """
     skip_dirs = {
         ".git", ".venv", "venv", "node_modules", "__pycache__",
         "dist", "build", ".next", "target", ".tox", ".turbo",
         "coverage", "htmlcov", "runtime-supervisor",
+        # Test / fixture / mock surfaces — never the production app.
+        "tests", "test", "__tests__", "e2e", "spec", "specs",
+        "unit_tests", "integration_tests", "__mocks__",
+        "mock", "mocks", "mock_servers", "mock_server",
+        "fixtures", "fixture", "samples", "sample",
+        "examples", "example", "demo", "demos",
     }
     out: list[Path] = []
     target_names = set(names)

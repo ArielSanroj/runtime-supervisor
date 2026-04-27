@@ -39,7 +39,9 @@ export default function ScanPage() {
         </h1>
         <p className="mt-5 max-w-2xl text-lg text-zinc-400">
           Shallow clone, run the scanners, and get a risk-ranked preview in seconds.
-          Public repos are free. Builder unlocks private repos and full exports. Pro adds team workflows and org controls.
+          Public repos are free. Then connect the GitHub App and get a comment
+          on every PR with the new ungated call-sites — diffed against your
+          last scan. Builder unlocks private repos, history, and CI integration.
         </p>
         </div>
         <aside className="rounded-xl border border-emerald-900/50 bg-emerald-500/5 p-5">

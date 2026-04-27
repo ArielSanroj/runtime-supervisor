@@ -674,7 +674,7 @@ wheels = [
 
 [[package]]
 name = "mcp-supervisor"
-version = "0.1.0"
+version = "0.3.1"
 source = { editable = "packages/mcp-supervisor" }
 dependencies = [
     { name = "mcp" },
@@ -1441,6 +1441,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "python-json-logger" },
     { name = "pyyaml" },
@@ -1474,6 +1475,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -1490,7 +1492,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "supervisor-client"
-version = "0.1.0"
+version = "0.3.1"
 source = { editable = "packages/supervisor-client-py" }
 dependencies = [
     { name = "httpx" },
@@ -1510,7 +1512,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "supervisor-discover"
-version = "0.1.0"
+version = "0.4.0"
 source = { editable = "packages/supervisor-discover" }
 
 [package.optional-dependencies]
@@ -1524,7 +1526,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "supervisor-guards"
-version = "0.1.0"
+version = "0.3.1"
 source = { editable = "packages/supervisor-guards-py" }
 dependencies = [
     { name = "httpx" },

@@ -24,10 +24,15 @@ from .scanners._utils import parse_python, safe_read
 
 
 # Method names to prefer as the dispatcher when no method actually
-# branches on a decision key. Same list that `start_here` keeps locally.
+# branches on a decision key. Same list that `start_here` keeps locally —
+# both must include the langchain idioms `plan` / `aplan` / `ainvoke` /
+# `arun` so the picker doesn't fall through to "first public method" on
+# classes whose first def is a `@property` (the XMLAgent.input_keys bug).
 _PRIMARY_METHOD_PREFERENCE = (
     "handle", "execute", "dispatch", "run",
     "process", "route", "invoke", "call", "step",
+    "plan", "aplan", "ainvoke", "arun",
+    "reason", "decide", "orchestrate",
 )
 
 # Decision-key names. Methods whose body branches on one of these
@@ -37,6 +42,50 @@ _DISPATCH_DECISION_KEYS = frozenset({
     "action", "intent", "tool", "kind", "type", "command",
     "operation", "step", "task_type", "verb",
 })
+
+
+# Mirror of `start_here._SKIP_METHOD_DECORATOR_NAMES`. Decorators that mean
+# "don't put @supervised here" — wrapping these has no runtime effect or
+# applies the gate to metadata, not behaviour.
+_SKIP_METHOD_DECORATOR_NAMES = frozenset({
+    "property",
+    "classmethod",
+    "staticmethod",
+    "abstractmethod", "abc.abstractmethod",
+    "abstractproperty", "abc.abstractproperty",
+    "abstractclassmethod", "abc.abstractclassmethod",
+    "abstractstaticmethod", "abc.abstractstaticmethod",
+    "cached_property", "functools.cached_property",
+})
+
+
+def _decorator_dotted(node: ast.expr) -> str | None:
+    """Render a decorator AST node as a dotted name. Mirror of
+    `start_here._decorator_dotted` — kept duplicated to avoid a cross-module
+    import on a hot path."""
+    target = node.func if isinstance(node, ast.Call) else node
+    parts: list[str] = []
+    while isinstance(target, ast.Attribute):
+        parts.append(target.attr)
+        target = target.value
+    if isinstance(target, ast.Name):
+        parts.append(target.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
+
+def _method_is_skippable(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True when `method` carries a decorator that disqualifies it as a
+    `@supervised` target — properties, class/static methods, abstracts."""
+    for dec in method.decorator_list:
+        dotted = _decorator_dotted(dec)
+        if dotted is None:
+            continue
+        bare = dotted.rsplit(".", 1)[-1]
+        if dotted in _SKIP_METHOD_DECORATOR_NAMES or bare in _SKIP_METHOD_DECORATOR_NAMES:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -80,6 +129,8 @@ def _pick_method(
     methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for child in cls.body:
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _method_is_skippable(child):
+                continue
             methods[child.name] = child
 
     if parallel_methods:

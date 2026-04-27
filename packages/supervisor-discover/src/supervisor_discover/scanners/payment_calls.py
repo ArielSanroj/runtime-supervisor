@@ -33,6 +33,9 @@ _PAYMENT_SIGNATURES = {
     "stripe.SubscriptionItem.create", "stripe.SubscriptionItem.update",
     # hosted checkout — initiates a payment flow
     "stripe.checkout.Session.create",
+    # customer-portal session — lets the user self-serve cancel / change plan;
+    # the URL it returns hands billing control to the caller.
+    "stripe.billing_portal.Session.create", "stripe.billingPortal.Session.create",
     # invoice + customer billing state
     "stripe.Invoice.create", "stripe.invoices.create",
     "stripe.Invoice.pay", "stripe.invoices.pay",
@@ -84,8 +87,17 @@ def _scan_python(root: Path) -> list[Finding]:
 _TS_REFUND_RE = re.compile(
     r"""\b(?:stripe|Stripe)\.refunds\.create\s*\(|\bpaypal\.refunds\.create\s*\("""
 )
+# `stripe-node` SDK surface that moves or schedules money. The Vercel
+# subscription-payments template hits checkout.sessions and billingPortal.sessions
+# from a server action — both got missed by the original detector and are
+# the actual chokepoints for an end-to-end Stripe SaaS flow.
 _TS_PAYMENT_RE = re.compile(
     r"""\b(?:stripe|Stripe)\.(?:charges|paymentIntents|payouts|transfers)\.create\s*\("""
+    r"""|\b(?:stripe|Stripe)\.checkout\.sessions\.create\s*\("""
+    r"""|\b(?:stripe|Stripe)\.billingPortal\.sessions\.create\s*\("""
+    r"""|\b(?:stripe|Stripe)\.subscriptions\.(?:create|update|cancel|del)\s*\("""
+    r"""|\b(?:stripe|Stripe)\.subscriptionItems\.(?:create|update)\s*\("""
+    r"""|\b(?:stripe|Stripe)\.invoices\.(?:create|pay)\s*\("""
     r"""|\bpaypal\.(?:payouts|orders)\.create\s*\("""
     r"""|\bplaid\.transfer\.create\s*\("""
 )

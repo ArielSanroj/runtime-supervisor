@@ -19,6 +19,9 @@ build/
 # supervisor-discover scan output when run against this repo itself
 runtime-supervisor/
 
+# disposable benchmark clones/results
+.vibefixing-benchmark/
+
 # control-center build artifact
 apps/control-center/tsconfig.tsbuildinfo
 .DS_Store

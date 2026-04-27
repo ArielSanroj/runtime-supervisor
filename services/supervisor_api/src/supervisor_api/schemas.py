@@ -396,3 +396,14 @@ class ScanResponse(BaseModel):
     combos: list[ScanCombo] | None = None
     created_at: UTCDateTime | None = None
     completed_at: UTCDateTime | None = None
+    # One-time access token returned at submission. Holders see full
+    # detail (file:line, snippet); anonymous callers only see counts +
+    # categories. Stops mass-recon abuse where someone scans random
+    # public repos to map their attack surface — without the token the
+    # response is the same shape but with `[hidden]` substituted for
+    # any path / snippet.
+    access_token: str | None = None
+    # Set when the GET response was redacted because the caller did not
+    # present a valid `access_token`. UI uses it to render the
+    # "claim with email or sign in for full detail" CTA.
+    redacted: bool = False

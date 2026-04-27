@@ -56,10 +56,23 @@ _FALLBACK: dict[str, Any] = {
         "agent-orchestrators": "run an agent loop",
     },
     "default_hidden_dirs": {
-        "tests": ["tests", "test", "__tests__", "spec", "specs"],
+        "tests": [
+            "tests", "test", "__tests__", "spec", "specs",
+            "integration-tests", "integration_tests", "e2e",
+        ],
         "legacy": ["legacy", "archive", "deprecated", "old"],
         "migrations": ["migrations", "migrate"],
-        "generated": ["generated", "gen"],
+        "generated": [
+            "generated", "gen", "__generated__", "codegen",
+            "monaco-editor", "vendor", "third_party", "third-party",
+        ],
+        "examples": ["examples", "example", "demo", "demos", "samples", "sample"],
+        "ci": [".circleci", ".github", "workflows", "ci"],
+        "docs": ["docs", "doc", "website", "site", "storybook", ".storybook"],
+        "templates": [
+            "template", "templates", "registry", "registries",
+            "playground", "playgrounds",
+        ],
     },
     "public_output": {
         "show_priority_confidence": ["high"],

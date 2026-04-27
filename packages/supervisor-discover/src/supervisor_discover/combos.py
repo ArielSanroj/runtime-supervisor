@@ -13,14 +13,26 @@ Examples:
 
 The detector is deterministic (no LLM), operates over the same `Finding` list
 the rest of the generator already has.
+
+Reachability refinement: when the caller passes `root` to `detect_combos`,
+the LLM-paired combos (shell-exec / fs-delete / fs-write / payment /
+account-change) are post-processed against the within-repo import graph.
+If no import path connects the LLM module to the side-effect module, the
+combo is downgraded to `low` severity and the narrative says so
+explicitly. False negatives are impossible (no import path = no
+data-flow); false positives where two modules import each other but
+never actually pipe data remain — and the narrative copy already calls
+that out.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
+from pathlib import Path
 from typing import Callable
 
 from .findings import Finding
+from .reachability import any_path_between, build_import_graph, format_path
 
 
 @dataclass(frozen=True)
@@ -116,11 +128,12 @@ def _llm_plus_shell_exec(findings: list[Finding]) -> Combo | None:
         title="LLM call + shell execution in the same codebase",
         severity="critical",
         narrative=(
-            "The agent can call an LLM AND execute shell commands. If the "
-            "shell args (or the command itself) come from LLM output, you "
-            "have an LLM-to-RCE pipeline: a prompt injection controls what "
-            "runs on your host directly. This is the highest blast radius "
-            "combo in the catalog."
+            "Co-occurrence: the codebase contains both LLM calls and shell "
+            "execution. The scanner does not verify a data-flow path between "
+            "them — taint analysis is intentionally out of scope. If any "
+            "code path in this repo connects LLM output to subprocess/exec "
+            "args, that path is RCE-equivalent: a prompt injection picks the "
+            "command. Worth checking by hand even when no path is obvious."
         ),
         evidence=_short_paths(findings, "fs-shell", limit=3) + _short_paths(findings, "llm-calls", limit=3),
         mitigation=(
@@ -142,10 +155,12 @@ def _llm_plus_fs_delete(findings: list[Finding]) -> Combo | None:
         title="LLM call + filesystem delete",
         severity="high",
         narrative=(
-            "The agent can both call an LLM and delete files on the host. "
-            "A prompt-injected agent can generate a path and pass it to "
-            "`rm`, `unlink`, `rmtree` — wiping logs, configs, user data, or "
-            "its own source tree."
+            "Co-occurrence: the codebase contains both LLM calls and "
+            "filesystem-delete operations (`rm`, `unlink`, `rmtree`). The "
+            "scanner does not verify a data-flow path between them. If the "
+            "agent ends up passing an LLM-generated path to a delete call, "
+            "a prompt injection can wipe logs, configs, user data, or the "
+            "agent's own source tree."
         ),
         evidence=_short_paths(findings, "fs-shell", limit=3),
         mitigation="Policy: deny paths outside an allowlist of directories.",
@@ -200,6 +215,50 @@ def _media_gen_plus_messaging(findings: list[Finding]) -> Combo | None:
     )
 
 
+def _webhook_plus_db_write(findings: list[Finding]) -> Combo | None:
+    """Webhook handler + database writes — the canonical idempotency trap.
+
+    Stripe, Shopify, GitHub, Slack: every webhook re-delivers the same event
+    when the handler returns 5xx (or the network hiccups). If the write is
+    not keyed on the event id, the retry replays the mutation — duplicate
+    plan changes on a Stripe subscription renewal, duplicate charges,
+    duplicate audit rows. The handler can verify the signature perfectly
+    and still corrupt data on the second delivery."""
+    webhook_routes = [
+        f for f in findings
+        if f.scanner == "http-routes"
+        and "webhooks" in f.file.lower()
+        and (f.extra or {}).get("method", "").upper() == "POST"
+    ]
+    if not webhook_routes:
+        return None
+    if not _has_scanner(findings, "db-mutations", "medium"):
+        return None
+    return Combo(
+        id="webhook-plus-db-write",
+        title="Webhook handler + database writes (idempotency)",
+        severity="high",
+        narrative=(
+            "Your repo handles webhook events AND writes to the database. "
+            "Stripe, Shopify, GitHub, Slack — every webhook re-delivers the "
+            "same event when the handler returns 5xx (or the network hiccups). "
+            "If the write is not keyed on the event id, the retry replays the "
+            "mutation: duplicate plan changes on a Stripe subscription "
+            "renewal, duplicate charges, duplicate audit rows. Signature "
+            "verification doesn't help — the second delivery is also signed."
+        ),
+        evidence=_short_paths(findings, "http-routes", limit=2)
+                + _short_paths(findings, "db-mutations", limit=2),
+        mitigation=(
+            "Minimum guard: insert `event.id` into a `processed_events` "
+            "table inside the same transaction; bail out if the row already "
+            "exists. Ideal guard: wrap the whole handler in a transaction "
+            "keyed on the event id and let the unique constraint enforce "
+            "exactly-once delivery."
+        ),
+    )
+
+
 def _llm_plus_fs_write(findings: list[Finding]) -> Combo | None:
     if not _has_scanner(findings, "llm-calls", "medium"):
         return None
@@ -210,8 +269,9 @@ def _llm_plus_fs_write(findings: list[Finding]) -> Combo | None:
         title="LLM call + filesystem write",
         severity="medium",
         narrative=(
-            "The agent calls an LLM AND writes files to disk. A prompt "
-            "injection controlling the path + content can plant payloads, "
+            "Co-occurrence: the codebase contains both LLM calls and "
+            "filesystem writes. If a path or contents in any write goes "
+            "through LLM output, a prompt injection can plant payloads, "
             "overwrite configs, or modify the agent's own source (self-"
             "modifying agent). Medium because many writes are legit "
             "(caches, logs) — risk depends on the path."
@@ -418,25 +478,149 @@ _COMBO_RULES: list[Callable[[list[Finding]], Combo | None]] = [
     _agent_orchestrator_present,
     _voice_clone_plus_outbound_call,
     _llm_plus_shell_exec,
-    _llm_plus_payment,         # NEW: LLM × money path = critical
-    _llm_plus_account_change,  # NEW: LLM × account writes = ATO surface
+    _llm_plus_payment,         # LLM × money path = critical
+    _llm_plus_account_change,  # LLM × account writes = ATO surface
     _llm_plus_fs_delete,
     _llm_plus_fs_write,
+    _webhook_plus_db_write,    # webhook re-delivery without idempotency
     _mass_email_plus_customer_db,
     _media_gen_plus_messaging,
     _voice_call_plus_scheduler,
 ]
 
 
-def detect_combos(findings: list[Finding]) -> list[Combo]:
+def detect_combos(
+    findings: list[Finding], root: Path | None = None,
+) -> list[Combo]:
     """Run every combo rule; return only the combos that triggered, in the
-    order they were registered (stable for diffing)."""
+    order they were registered (stable for diffing).
+
+    When `root` is provided, LLM-paired combos are refined against the
+    within-repo import graph: combos whose LLM finding can't reach the
+    paired side-effect finding (no import path either direction) are
+    downgraded to `low` severity and the narrative is rewritten to make
+    the disconnection explicit. Without `root`, behaviour is unchanged —
+    pure co-occurrence with the existing copy.
+    """
     results: list[Combo] = []
     for rule in _COMBO_RULES:
         hit = rule(findings)
         if hit is not None:
             results.append(hit)
+    if root is not None:
+        results = _refine_combos_with_reachability(results, findings, root)
     return results
+
+
+# ── reachability post-processing ───────────────────────────────────────
+
+
+# Combo id → (LLM-side scanner, paired-side scanner+family) for combos
+# whose narrative claims "if LLM output reaches X". For these we can
+# verify reachability through imports; without an import path the
+# claim is structurally impossible. Other combos (voice/voice,
+# mass-email/db, voice/cron, agent-orchestrator) aren't in this table —
+# they describe co-presence rather than a directional flow.
+_LLM_PAIRED_COMBOS: dict[str, tuple[str, str | None, str | None]] = {
+    # combo_id            : (paired_scanner, paired_family, paired_action_type)
+    "llm-plus-shell-exec":      ("fs-shell",      "shell-exec", None),
+    "llm-plus-fs-delete":       ("fs-shell",      "fs-delete",  None),
+    "llm-plus-fs-write":        ("fs-shell",      "fs-write",   None),
+    "llm-plus-payment":         ("payment-calls", None,         None),
+    "llm-plus-account-change":  ("db-mutations",  None,         None),
+}
+
+
+def _files_for_combo_side(
+    findings: list[Finding], scanner: str, family: str | None,
+) -> list[Path]:
+    """Resolve the absolute file paths of every finding matching the
+    given scanner (and optional family). Findings without a file (rare
+    edge case in older fixtures) are skipped."""
+    out: list[Path] = []
+    for f in findings:
+        if f.scanner != scanner:
+            continue
+        if family is not None and f.extra.get("family") != family:
+            continue
+        if not f.file:
+            continue
+        out.append(Path(f.file))
+    return out
+
+
+def _llm_files(findings: list[Finding]) -> list[Path]:
+    """All files containing an LLM-call finding. Both `invocation` and
+    `construction` kinds count: the constructor still imports the LLM
+    SDK, and what matters for reachability is whether the *module*
+    is connected to the side-effect module — not which line of it ran."""
+    return [Path(f.file) for f in findings if f.scanner == "llm-calls" and f.file]
+
+
+def _refine_combos_with_reachability(
+    combos: list[Combo], findings: list[Finding], root: Path,
+) -> list[Combo]:
+    """Walk the combos, refine LLM-paired ones via the import graph.
+
+    The graph is built once and reused across every refinement. Cost is
+    O(files) for the AST walk and O(edges) for each BFS — well under a
+    second on repos of langchain's size in practice.
+    """
+    graph = build_import_graph(root)
+    llm_files = _llm_files(findings)
+    if not llm_files:
+        # No LLM findings → nothing to refine. (Should be unreachable
+        # given the rule predicates, but defensive.)
+        return combos
+
+    refined: list[Combo] = []
+    for combo in combos:
+        spec = _LLM_PAIRED_COMBOS.get(combo.id)
+        if spec is None:
+            refined.append(combo)
+            continue
+        paired_scanner, paired_family, _ = spec
+        paired_files = _files_for_combo_side(findings, paired_scanner, paired_family)
+        if not paired_files:
+            refined.append(combo)
+            continue
+        result = any_path_between(graph, llm_files, paired_files)
+        if result is None:
+            refined.append(_downgrade_unreachable(combo))
+        else:
+            src, dst, path = result
+            refined.append(_annotate_reachable(combo, root, path))
+    return refined
+
+
+def _downgrade_unreachable(combo: Combo) -> Combo:
+    """Rewrite a combo to make explicit that no import path connects the
+    two findings. Drops severity to `low` and keeps the existing
+    mitigation copy — the recommended fix doesn't change just because
+    the path doesn't exist *yet* (a future commit could add one)."""
+    note = (
+        " No import path was found between the LLM module and the "
+        "paired module — within-repo data-flow is not reachable today, "
+        "so this is co-occurrence only, not an active chain. Worth "
+        "revisiting if a future change wires them together."
+    )
+    new_narrative = combo.narrative.rstrip() + note
+    return dc_replace(combo, severity="low", narrative=new_narrative)
+
+
+def _annotate_reachable(combo: Combo, root: Path, path: list[Path]) -> Combo:
+    """When a within-repo import path exists, surface it in the
+    narrative + evidence. Severity stays at the rule's original value —
+    reachability turned a "possible" into a "real" surface."""
+    rendered = format_path(path, root)
+    note = (
+        f" Import path detected ({len(path)} hop"
+        f"{'s' if len(path) != 1 else ''}): `{rendered}`. Any data-flow "
+        f"along this chain is the path a prompt injection would travel."
+    )
+    new_narrative = combo.narrative.rstrip() + note
+    new_evidence = list(combo.evidence) + [f"reach: {rendered}"]
+    return dc_replace(combo, narrative=new_narrative, evidence=new_evidence)
 
 
 def render_markdown(combos: list[Combo]) -> str:

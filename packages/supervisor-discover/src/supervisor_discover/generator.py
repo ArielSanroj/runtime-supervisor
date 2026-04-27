@@ -46,6 +46,57 @@ def _safe_filename(path: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", rel)
 
 
+_STABLE_ID_RE = re.compile(r"stable_id:\s*([a-f0-9]+|\(legacy\))")
+
+
+def _read_embedded_stable_id(stub: Path) -> str | None:
+    """Parse the `stable_id: <hash>` line from a stub's docstring/header.
+
+    Returns None when the stub doesn't carry an id (older format) or
+    can't be read. Legacy stubs without an id pass through unchanged —
+    they're invisible to staleness detection but the user can still
+    delete them by hand.
+    """
+    try:
+        text = stub.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    m = _STABLE_ID_RE.search(text[:1000])  # only scan the header
+    if m is None:
+        return None
+    return m.group(1)
+
+
+def _rename_stale_stubs(stubs_py: Path, stubs_ts: Path, findings: list[Finding]) -> int:
+    """Walk pre-existing stubs in `stubs_py` / `stubs_ts`, rename ones whose
+    embedded `stable_id` no longer matches a current finding to
+    `*.stale.stub.{py,ts}`. Already-stale stubs are left alone (idempotent).
+
+    Returns the number of stubs renamed in this pass.
+    """
+    current_ids = {f.id for f in findings if f.id}
+    stale = 0
+    for stubs_dir, ext in ((stubs_py, ".stub.py"), (stubs_ts, ".stub.ts")):
+        if not stubs_dir.is_dir():
+            continue
+        for stub in stubs_dir.glob(f"*{ext}"):
+            # Skip already-renamed stale stubs.
+            if stub.name.endswith(f".stale{ext}"):
+                continue
+            embedded = _read_embedded_stable_id(stub)
+            if embedded is None or embedded == "(legacy)":
+                continue
+            if embedded in current_ids:
+                continue
+            stale_path = stub.parent / stub.name.replace(ext, f".stale{ext}")
+            try:
+                stub.rename(stale_path)
+                stale += 1
+            except OSError:
+                continue
+    return stale
+
+
 def _py_payload_for_finding(f: Finding) -> tuple[str, str]:
     """Return `(payload_args, payload_body)` for `f`.
 
@@ -202,6 +253,13 @@ def generate(
     stubs_ts.mkdir(parents=True, exist_ok=True)
     orphan_count = 0
     already_gated_count = 0
+    # Stale stub detection: walk pre-existing stubs in the output dir,
+    # parse their embedded `stable_id`, and rename ones whose id is no
+    # longer in the current findings list. The reviewer flagged on
+    # supervincent that 19 stubs were marked `D` in git status because
+    # the dev applied changes manually and the source files moved — we
+    # never told them which old stubs were now pointing at moved code.
+    stale_count = _rename_stale_stubs(stubs_py, stubs_ts, findings)
     for f in findings:
         if f.confidence == "low" or f.suggested_action_type == "other":
             continue
@@ -232,6 +290,7 @@ def generate(
                     action_type=f.suggested_action_type, rationale=f.rationale,
                     payload_args=payload_args,
                     payload_body=payload_body,
+                    stable_id=f.id or "(legacy)",
                 )
             )
         else:
@@ -240,10 +299,11 @@ def generate(
                     original_file=f.file, line=f.line, snippet=f.snippet,
                     action_type=f.suggested_action_type, rationale=f.rationale,
                     ts_payload_body=ts_payload_body_for(f.scanner),
+                    stable_id=f.id or "(legacy)",
                 )
             )
     # Drop a one-line README in stubs/ to record the housekeeping counts.
-    if orphan_count or already_gated_count:
+    if orphan_count or already_gated_count or stale_count:
         readme_lines = ["# stubs/", ""]
         if orphan_count:
             readme_lines.append(
@@ -254,6 +314,12 @@ def generate(
             readme_lines.append(
                 f"_Skipped {already_gated_count} stub(s): the call-site is "
                 "already wrapped by `@supervised` / `guarded(...)`._"
+            )
+        if stale_count:
+            readme_lines.append(
+                f"_Renamed {stale_count} stub(s) to `*.stale.stub.{{py,ts}}`: "
+                "the underlying call moved or was deleted between scans. "
+                "Review and remove if no longer relevant._"
             )
         readme_lines.append("")
         readme_lines.append("Open `runtime-supervisor/FULL_REPORT.md` for the full set.")

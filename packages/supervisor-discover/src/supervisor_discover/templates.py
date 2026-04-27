@@ -243,6 +243,8 @@ arguments of the function being guarded.
 Original call-site: {snippet}
 Suggested action_type: {action_type}
 Rationale: {rationale}
+
+stable_id: {stable_id}
 """
 from supervisor_guards import SupervisorBlocked, supervised
 
@@ -376,6 +378,8 @@ TS_STUB = """/**
  * Original call-site: {snippet}
  * Suggested action_type: {action_type}
  * Rationale: {rationale}
+ *
+ * stable_id: {stable_id}
  *
  * NOTE: `onReview: "shadow"` means the supervisor evaluates every call but
  * NEVER blocks — safe to deploy on day 1. When you're ready to actually

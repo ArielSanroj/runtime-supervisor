@@ -39,6 +39,7 @@ export type Risk = {
   possible_chain: string;
   do_this_now: string;
   family: string;
+  example?: string;
 };
 
 export type StartHere = {
@@ -93,6 +94,13 @@ export type ScanResponse = {
   combos?: ScanCombo[] | null;
   created_at?: string | null;
   completed_at?: string | null;
+  // One-time access token returned by POST /v1/scans. Pass it back via
+  // ?access_token= on subsequent GETs to receive full detail. Without
+  // the token, the response is redacted (counts + categories only).
+  access_token?: string | null;
+  // Set when the GET response was redacted. UI uses it to switch the
+  // findings view into the "claim with email or sign in" CTA mode.
+  redacted?: boolean;
 };
 
 /**
@@ -157,8 +165,12 @@ export async function createScan(github_url: string, ref?: string): Promise<Scan
   return JSON.parse(body) as ScanResponse;
 }
 
-export async function getScan(scan_id: string): Promise<ScanResponse> {
-  const res = await fetch(`${API}/v1/scans/${encodeURIComponent(scan_id)}`, {
+export async function getScan(
+  scan_id: string,
+  access_token?: string | null,
+): Promise<ScanResponse> {
+  const qs = access_token ? `?access_token=${encodeURIComponent(access_token)}` : "";
+  const res = await fetch(`${API}/v1/scans/${encodeURIComponent(scan_id)}${qs}`, {
     headers: await authHeaders(),
     cache: "no-store",
   });

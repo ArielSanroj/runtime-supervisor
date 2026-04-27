@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import re
+import secrets
 import subprocess
 import tempfile
 import time
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -147,6 +149,134 @@ def _directory_bytes(path: Path) -> int:
     return total
 
 
+# ---- access-token redaction --------------------------------------------------
+#
+# Every public scan mints a one-time access token at submission time. The token
+# is returned in the POST response body (frontend keeps it in the URL) and
+# persisted alongside the scan payload. GET callers without the matching
+# token receive a redacted response: counts and categories survive, but
+# file paths, line numbers, and code snippets get scrubbed. This stops the
+# "honeypot at reverse" abuse — anyone can paste a public repo URL and get
+# back a free attack-surface map. Counts alone aren't useful for recon.
+#
+# Anonymous redaction is **not** an ownership check. A real ownership flow
+# (GitHub OAuth + `/repos/{owner}/{repo}/permission`) is the right next
+# step. This token gate is the MVP that breaks the trivial recon vector
+# without blocking the submitter from seeing their own scan.
+
+_REDACTED_FILE = "[hidden — claim scan with email or sign in]"
+_REDACTED_SNIPPET = "[hidden]"
+
+
+def _redact_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop file:line and snippet from each finding; keep scanner, tier,
+    confidence, suggested_action_type. Caller still sees `5 LLM call-sites
+    detected, 3 shell exec` but not where they live."""
+    out = []
+    for f in findings:
+        d = dict(f)
+        d["file"] = _REDACTED_FILE
+        d["line"] = 0
+        d["snippet"] = _REDACTED_SNIPPET
+        # `extra` can carry method names (`openai.chat.completions.create`)
+        # which leak nothing, but it can also carry `class_name` for the
+        # agent-orchestrator scanner — those are repo-specific identifiers,
+        # so strip the dict entirely. The frontend treats missing extra as
+        # informational-only.
+        d["extra"] = {}
+        d["rationale"] = d.get("rationale", "")
+        out.append(d)
+    return out
+
+
+def _redact_repo_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Strip path-bearing fields from repo_summary and start_here. Counts,
+    categories, and capability copy stay intact — the user can still see
+    "this repo has Stripe + LLM calls" without learning where in the tree
+    those calls live."""
+    out = copy.deepcopy(summary)
+    # Chokepoints become anonymous tokens — we keep the *kind* count so the
+    # UI can render "3 agent classes detected" but not the labels/paths.
+    chokepoints = out.get("agent_chokepoints") or []
+    out["agent_chokepoints"] = [
+        {"kind": cp.get("kind"), "label": _REDACTED_SNIPPET, "file": _REDACTED_FILE,
+         "line": 0, "parallel_methods": []}
+        for cp in chokepoints
+    ]
+    sh = out.get("start_here")
+    if isinstance(sh, dict):
+        for tgt in sh.get("top_wrap_targets") or []:
+            tgt["label"] = _REDACTED_SNIPPET
+            tgt["file"] = _REDACTED_FILE
+            tgt["line"] = 0
+            tgt["why"] = ""
+            tgt["parallel_methods"] = []
+        for sig in sh.get("framework_signals") or []:
+            sig["file"] = _REDACTED_FILE
+            sig["line"] = 0
+            sig["snippet"] = ""
+        for risk in sh.get("top_risks") or []:
+            # `confirmed_in_code` and `example` both embed file paths.
+            risk["confirmed_in_code"] = _REDACTED_SNIPPET
+            risk["example"] = ""
+        sh["do_this_now"] = (
+            "Full detail (file paths, line numbers, code snippets) is hidden "
+            "for anonymous viewers. Claim this scan with your email or sign in "
+            "to unlock — or install the GitHub App to get the same detail "
+            "delivered as a PR comment on every change."
+        )
+        bs = sh.get("bootstrap")
+        if isinstance(bs, dict):
+            ep = bs.get("entrypoint")
+            if isinstance(ep, dict):
+                ep["file"] = _REDACTED_FILE
+                ep["line"] = 0
+            mgr = bs.get("manager")
+            if isinstance(mgr, dict):
+                mgr["manifest_path"] = _REDACTED_FILE
+    return out
+
+
+def _redact_combos(combos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip evidence (file:line strings) from combos. Keep id, title,
+    severity, mitigation, narrative — the narrative no longer contains
+    paths after the co-occurrence rewrite, so it's safe."""
+    out = []
+    for c in combos:
+        d = dict(c)
+        d["evidence"] = []
+        out.append(d)
+    return out
+
+
+def _redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Apply all three redactions to a persisted scan blob in place-ish
+    (returns a new dict; original payload untouched). Sets `redacted=True`
+    so the UI can show the unlock CTA."""
+    out = dict(payload)
+    if isinstance(payload.get("findings"), list):
+        out["findings"] = _redact_findings(payload["findings"])
+    if isinstance(payload.get("repo_summary"), dict):
+        out["repo_summary"] = _redact_repo_summary(payload["repo_summary"])
+    if isinstance(payload.get("combos"), list):
+        out["combos"] = _redact_combos(payload["combos"])
+    out["redacted"] = True
+    # The GET response never echoes the token — only POST does. Make sure
+    # we strip it even if the caller's token didn't match.
+    out.pop("access_token", None)
+    return out
+
+
+def _check_access_token(persisted: dict[str, Any], provided: str | None) -> bool:
+    """Constant-time comparison between the token persisted at scan
+    submission time and whatever the caller provided. Missing token on
+    either side means no match — anonymous callers get redacted output."""
+    expected = persisted.get("access_token")
+    if not expected or not provided:
+        return False
+    return secrets.compare_digest(str(expected), str(provided))
+
+
 def _preview_rank(finding: Any, tier: str) -> tuple[int, int, int, str, int]:
     """Sort public preview worst-first before truncating.
 
@@ -185,6 +315,11 @@ async def create_scan(
         )
 
     scan_id = str(uuid4())
+    # Mint a one-time access token. Submitter holds it (passed back in the
+    # response) → can fetch full detail. Anyone else GETting the scan_id
+    # later sees only counts + categories. 24-byte urlsafe token = 192 bits
+    # of entropy, brute-force is not a realistic attack surface here.
+    access_token = secrets.token_urlsafe(24)
     now = datetime.now(UTC).isoformat()
     ref = body.ref or None
 
@@ -194,6 +329,7 @@ async def create_scan(
         "github_url": url,
         "ref": ref,
         "created_at": now,
+        "access_token": access_token,
     })
 
     log.info("scan.queued scan_id=%s url=%s ip=%s", scan_id, url, ip)
@@ -205,16 +341,35 @@ async def create_scan(
         github_url=url,
         ref=ref,
         created_at=datetime.now(UTC),
+        access_token=access_token,
     )
 
 
 @router.get("/scans/{scan_id}", response_model=ScanResponse)
-async def get_scan(scan_id: str) -> ScanResponse:
+async def get_scan(
+    scan_id: str,
+    access_token: str | None = Query(default=None),
+    x_scan_access_token: str | None = Header(default=None, alias="X-Scan-Access-Token"),
+) -> ScanResponse:
+    """Return a scan. Full detail (file:line, snippets) requires the
+    `access_token` minted at POST. Without it the response is redacted to
+    counts + categories — same shape, scrubbed values.
+
+    Token can be passed via `?access_token=` (the natural fit for shareable
+    URLs) or `X-Scan-Access-Token` header (for programmatic clients that
+    don't want to leak the token through web logs)."""
     data = _load(scan_id)
     if data is None:
         raise HTTPException(status_code=404, detail="scan not found")
-    # Dates round-trip as ISO strings — Pydantic re-parses via UTCDateTime.
-    return ScanResponse(**data)
+    provided = access_token or x_scan_access_token
+    if _check_access_token(data, provided):
+        # Authorized: strip the persisted access_token before echoing back
+        # so we don't return the secret in the GET response body. Frontend
+        # already has it from the POST; no reason to re-deliver it.
+        full = dict(data)
+        full.pop("access_token", None)
+        return ScanResponse(**full)
+    return ScanResponse(**_redact_payload(data))
 
 
 class ScanSummary(BaseModel):
@@ -472,8 +627,13 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         try:
             all_findings = validate(scan_all(tmp_path))
             findings, hidden_counts = apply_default_hidden(all_findings, tmp_path)
-            summary = build_summary(findings, hidden_counts=hidden_counts)
-            start_here = build_start_here(summary, findings)
+            # Pass `root=tmp_path` so summary.repo_kind gets the framework /
+            # app classification from `repo_kind.py`. Without root the field
+            # stays at "unknown" and the start_here renderer never flips to
+            # the "document threat model" copy on framework repos like
+            # langchain.
+            summary = build_summary(findings, hidden_counts=hidden_counts, root=tmp_path)
+            start_here = build_start_here(summary, findings, repo_root=tmp_path)
             summary = dc_replace(summary, start_here=start_here)
             repo_summary = summary.to_dict()
             detected_combos = detect_combos(findings)
@@ -500,10 +660,13 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
     for tgt in sh_dict.get("top_wrap_targets") or []:
         if isinstance(tgt.get("file"), str):
             tgt["file"] = _clean(tgt["file"])
-    # Also strip absolute tmp paths from the Risk cards' confirmed_in_code text.
+    # Also strip absolute tmp paths from the Risk cards' confirmed_in_code text
+    # and from the wrap example (the `# path:line` comment inside the snippet).
     for risk in sh_dict.get("top_risks") or []:
         if isinstance(risk.get("confirmed_in_code"), str):
             risk["confirmed_in_code"] = _clean(risk["confirmed_in_code"])
+        if isinstance(risk.get("example"), str):
+            risk["example"] = _clean(risk["example"])
     if isinstance(sh_dict.get("do_this_now"), str):
         sh_dict["do_this_now"] = _clean(sh_dict["do_this_now"])
     # And the agent_chokepoints we expose at summary level.

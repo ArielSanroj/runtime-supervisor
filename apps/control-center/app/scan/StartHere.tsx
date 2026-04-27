@@ -175,6 +175,7 @@ function HighestRiskThings({ risks }: { risks: Risk[] }) {
 
 function RiskCard({ risk }: { risk: Risk }) {
   const tone = FAMILY_TONE[risk.family] ?? "border-zinc-800 bg-zinc-900/40";
+  const exampleCode = extractFencedCode(risk.example ?? "");
   return (
     <div className={`rounded-xl border p-5 ${tone}`}>
       <h3 className="text-base font-semibold text-zinc-100">{risk.title}</h3>
@@ -204,9 +205,26 @@ function RiskCard({ risk }: { risk: Risk }) {
             dangerouslySetInnerHTML={{ __html: renderInlineCode(risk.do_this_now) }}
           />
         </div>
+        {exampleCode && (
+          <div className="flex flex-col gap-1 sm:flex-row sm:gap-3">
+            <dt className="shrink-0 font-mono text-xs uppercase tracking-widest text-zinc-500 sm:w-44">
+              example
+            </dt>
+            <dd className="min-w-0 flex-1">
+              <pre className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-200">
+                <code>{exampleCode}</code>
+              </pre>
+            </dd>
+          </div>
+        )}
       </dl>
     </div>
   );
+}
+
+function extractFencedCode(markdown: string): string {
+  const m = markdown.match(/```(?:\w+)?\n([\s\S]*?)```/);
+  return m ? m[1].trim() : "";
 }
 
 function renderInlineCode(text: string): string {

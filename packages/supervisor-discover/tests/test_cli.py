@@ -47,6 +47,58 @@ def test_cli_init_alias(tmp_path, monkeypatch):
     assert rc == 0
     assert (tmp_path / "app/runtime-supervisor/START_HERE.md").exists()
     assert (tmp_path / "app/runtime-supervisor/FULL_REPORT.md").exists()
+    # `init` drops a `.supervisor-ignore` template when missing.
+    ignore = tmp_path / "app/.supervisor-ignore"
+    assert ignore.exists()
+    assert "PATH[:LINE]" in ignore.read_text()
+
+
+def test_cli_init_writes_ci_workflow_when_flag_set(tmp_path, monkeypatch):
+    """`init --ci` drops the GitHub Actions workflow with the scan +
+    fail-on=new-high gate. Without `--ci` it stays absent so we don't
+    surprise existing CI setups."""
+    from supervisor_discover.cli import main
+
+    import shutil
+    shutil.copytree(FLASK_FIXTURE, tmp_path / "app")
+    monkeypatch.chdir(tmp_path / "app")
+    rc = main(["init", "--ci"])
+    assert rc == 0
+    workflow = tmp_path / "app/.github/workflows/runtime-supervisor.yml"
+    assert workflow.exists()
+    body = workflow.read_text()
+    assert "supervisor-discover" in body
+    assert "--fail-on=new-high" in body
+    assert "--baseline runtime-supervisor/findings.json" in body
+
+
+def test_cli_init_does_not_overwrite_existing_ignore(tmp_path, monkeypatch):
+    """If the dev already has `.supervisor-ignore`, `init` must leave it
+    alone — overwriting suppression history is a footgun."""
+    from supervisor_discover.cli import main
+
+    import shutil
+    shutil.copytree(FLASK_FIXTURE, tmp_path / "app")
+    custom = "src/x.py:42  reviewed-by-team  ariel\n"
+    (tmp_path / "app/.supervisor-ignore").write_text(custom)
+    monkeypatch.chdir(tmp_path / "app")
+    main(["init"])
+    assert (tmp_path / "app/.supervisor-ignore").read_text() == custom
+
+
+def test_cli_init_does_not_overwrite_existing_ci_workflow(tmp_path, monkeypatch):
+    """Same protection for the CI workflow."""
+    from supervisor_discover.cli import main
+
+    import shutil
+    shutil.copytree(FLASK_FIXTURE, tmp_path / "app")
+    ci_dir = tmp_path / "app/.github/workflows"
+    ci_dir.mkdir(parents=True)
+    custom_ci = "name: my-existing-workflow\non: pull_request\n"
+    (ci_dir / "runtime-supervisor.yml").write_text(custom_ci)
+    monkeypatch.chdir(tmp_path / "app")
+    main(["init", "--ci"])
+    assert (ci_dir / "runtime-supervisor.yml").read_text() == custom_ci
 
 
 def test_cli_path_not_found_returns_2():

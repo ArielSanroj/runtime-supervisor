@@ -98,7 +98,29 @@ def _build_parser() -> argparse.ArgumentParser:
              "`never`: never fail. Default: don't gate.",
     )
 
-    sub.add_parser("init", help="Alias for `scan` with defaults that write to ./runtime-supervisor/")
+    init_p = sub.add_parser(
+        "init",
+        help="One-shot bootstrap: scan + write `.supervisor-ignore` template + "
+             "optional CI workflow + print next steps. Use this on the first "
+             "scan in a repo.",
+    )
+    init_p.add_argument(
+        "--ci",
+        action="store_true",
+        help="Also write `.github/workflows/runtime-supervisor.yml` (CI gate "
+             "running scan + --fail-on=new-high on every PR). Skip if your CI "
+             "lives elsewhere or you want to wire it manually.",
+    )
+    init_p.add_argument(
+        "--out",
+        default="runtime-supervisor",
+        help="Output directory (default: ./runtime-supervisor)",
+    )
+    init_p.add_argument(
+        "--path",
+        default=".",
+        help="Repo root to scan (default: cwd)",
+    )
 
     # `diff` — compare two findings.json files. Useful manually and as the
     # core of the `--fail-on` CI gate above.
@@ -187,8 +209,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "diff":
         return _handle_diff(args)
 
-    root = Path(args.path if args.cmd == "scan" else ".").resolve()
-    out = Path(args.out if args.cmd == "scan" else "runtime-supervisor").resolve()
+    # Both `scan` and `init` accept --path / --out; other subcommands fall
+    # back to the cwd / default output dir.
+    if args.cmd in ("scan", "init"):
+        root = Path(args.path).resolve()
+        out = Path(args.out).resolve()
+    else:
+        root = Path(".").resolve()
+        out = Path("runtime-supervisor").resolve()
     dry_run = bool(getattr(args, "dry_run", False))
 
     if not root.exists():
@@ -279,8 +307,140 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\n{reason}", file=sys.stderr)
                 return 3
 
+    if args.cmd == "init":
+        _write_init_extras(root, out, args)
+        # `init` is a one-shot bootstrap, not a wizard — skip the
+        # interactive remediation prompt.
+        return 0
+
     _prompt_remediation_level(findings, out, args)
     return 0
+
+
+def _write_init_extras(root: Path, out: Path, args: argparse.Namespace) -> None:
+    """Drop the files that turn `init` into a one-shot bootstrap:
+      - `.supervisor-ignore` template (if missing) so the user has a
+        place to triage findings on the first re-scan.
+      - `.github/workflows/runtime-supervisor.yml` when `--ci` is set,
+        wiring the scan + `--fail-on=new-high` gate into PRs.
+
+    Files that already exist are left alone — `init` isn't authorized
+    to overwrite the dev's existing setup. Prints a "Next steps" block
+    explaining the remaining manual moves (commit baseline, etc.).
+    """
+    next_steps: list[str] = []
+    relative_out = out.relative_to(root) if out.is_relative_to(root) else out
+
+    ignore_path = root / ".supervisor-ignore"
+    if not ignore_path.exists():
+        ignore_path.write_text(_IGNORE_TEMPLATE)
+        next_steps.append(
+            f"  • Wrote `.supervisor-ignore` template at `{ignore_path.relative_to(root)}`."
+        )
+    else:
+        next_steps.append(
+            f"  • `.supervisor-ignore` already present — left untouched."
+        )
+
+    if getattr(args, "ci", False):
+        ci_dir = root / ".github" / "workflows"
+        ci_path = ci_dir / "runtime-supervisor.yml"
+        if not ci_path.exists():
+            ci_dir.mkdir(parents=True, exist_ok=True)
+            ci_path.write_text(_CI_GATE_WORKFLOW.format(out_dir=relative_out))
+            next_steps.append(
+                f"  • Wrote CI gate at `{ci_path.relative_to(root)}`."
+            )
+        else:
+            next_steps.append(
+                f"  • `runtime-supervisor.yml` already present — left untouched."
+            )
+    else:
+        next_steps.append(
+            f"  • Run `supervisor-discover init --ci` later to add the PR gate workflow."
+        )
+
+    print("", file=sys.stderr)
+    print("Next steps:", file=sys.stderr)
+    for line in next_steps:
+        print(line, file=sys.stderr)
+    print("", file=sys.stderr)
+    print(
+        f"  • Commit `{relative_out}/findings.json` as the baseline so future "
+        "scans can diff against it.",
+        file=sys.stderr,
+    )
+    print(
+        f"  • Open `{relative_out}/START_HERE.md` and apply Step 0 (install + "
+        "configure_supervisor()).",
+        file=sys.stderr,
+    )
+
+
+_IGNORE_TEMPLATE = """\
+# .supervisor-ignore — silence findings the dev triaged.
+# Format: PATH[:LINE]  reason  [reviewer]  [date]
+#
+# Examples:
+#   backend/setup.py:58              build-script-not-prod  ariel  2026-04-26
+#   backend/app/routes/clean.py:42   tempfile-controlled-path
+#   scripts/**                       build-only
+#
+# Suppressed findings move from the priority list to a "Suppressed"
+# section in FULL_REPORT.md with reason + reviewer + date for audit.
+# The reason field is REQUIRED — we refuse rules without one.
+"""
+
+
+_CI_GATE_WORKFLOW = """\
+name: runtime-supervisor
+
+# Runs supervisor-discover on every PR + push to main. The PR check
+# fails if a new high-confidence wrap site lands without a
+# corresponding `.supervisor-ignore` entry.
+#
+# Bootstrap: this workflow expects `{out_dir}/findings.json` to be
+# committed at the repo root as the baseline. Run `supervisor-discover
+# init` once locally, commit the resulting findings.json, then enable
+# this workflow.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{{{ runner.os }}}}-supervisor-discover
+
+      - name: Install supervisor-discover
+        run: pip install supervisor-discover>=0.4
+
+      - name: Scan + fail on new high-confidence findings
+        run: |
+          supervisor-discover scan \\
+            --path . \\
+            --out {out_dir} \\
+            --no-prompt \\
+            --baseline {out_dir}/findings.json \\
+            --fail-on=new-high
+"""
 
 
 def _handle_diff(args: argparse.Namespace) -> int:

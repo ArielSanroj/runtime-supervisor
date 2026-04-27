@@ -46,6 +46,47 @@ def _safe_filename(path: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", rel)
 
 
+def _py_payload_for_finding(f: Finding) -> tuple[str, str]:
+    """Return `(payload_args, payload_body)` for `f`.
+
+    For agent-class findings on Python files we can do better than the
+    generic per-scanner template: open the AST, find the dispatcher
+    method, and write a payload extractor with the method's actual
+    parameter names — both in the lambda's arg list AND in the body —
+    so the dev doesn't have to translate `raw_kwargs['amount']` from a
+    generic shape to the real signature.
+
+    Falls back to `(*args, **kwargs)` + the existing per-scanner template
+    when we can't resolve a dispatcher (non-Python file, missing class,
+    etc.).
+    """
+    extra = f.extra or {}
+    if (
+        f.scanner == "agent-orchestrators"
+        and extra.get("kind") == "agent-class"
+        and f.file.endswith((".py", ".ipynb"))
+    ):
+        from .wrap_signature import (
+            extract_dispatcher_signature,
+            render_lambda_args,
+            render_payload_body_from_signature,
+        )
+
+        class_name = str(extra.get("class_name") or "")
+        if class_name:
+            parallel = tuple(extra.get("parallel_methods") or ())
+            sig = extract_dispatcher_signature(
+                f.file, class_name,
+                target_line=f.line,
+                parallel_methods=parallel,
+            )
+            if sig is not None:
+                body = render_payload_body_from_signature(sig)
+                if body:
+                    return render_lambda_args(sig), body
+    return "*args, **kwargs", py_payload_body_for(f.scanner)
+
+
 def generate(
     findings: list[Finding],
     out_dir: Path,
@@ -184,11 +225,13 @@ def generate(
             continue
         stub_name = f"{_safe_filename(f.file)}_L{f.line}"
         if f.file.endswith(".py"):
+            payload_args, payload_body = _py_payload_for_finding(f)
             (stubs_py / f"{stub_name}.stub.py").write_text(
                 PY_STUB.format(
                     original_file=f.file, line=f.line, snippet=f.snippet,
                     action_type=f.suggested_action_type, rationale=f.rationale,
-                    payload_body=py_payload_body_for(f.scanner),
+                    payload_args=payload_args,
+                    payload_body=payload_body,
                 )
             )
         else:

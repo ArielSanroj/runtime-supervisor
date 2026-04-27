@@ -254,7 +254,7 @@ from supervisor_guards import SupervisorBlocked, supervised
 @supervised(
     "{action_type}",
     on_review="shadow",
-    payload=lambda *args, **kwargs: {{
+    payload=lambda {payload_args}: {{
 {payload_body}
     }},
 )

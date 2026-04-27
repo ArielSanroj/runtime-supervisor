@@ -317,6 +317,76 @@ def _agent_orchestrator_present(findings: list[Finding]) -> Combo | None:
     )
 
 
+def _llm_plus_payment(findings: list[Finding]) -> Combo | None:
+    """LLM + payment SDK in the same repo. The reviewer specifically
+    flagged this as a missing combo on supervincent — Anthropic + Stripe
+    coexist with no combo to trigger the right playbook. A prompt
+    injection that drives the agent toward a charge is now a real money
+    loss path."""
+    if not _has_scanner(findings, "llm-calls", "medium"):
+        return None
+    if not _has_scanner(findings, "payment-calls", "medium"):
+        return None
+    return Combo(
+        id="llm-plus-payment",
+        title="LLM call + payment SDK in the same codebase",
+        severity="critical",
+        narrative=(
+            "The agent can both call an LLM and move money. A prompt "
+            "injection that frames a refund or charge as 'the user just "
+            "asked for it' becomes a real transaction — the agent has "
+            "the credentials, the LLM has the convincing-sounding reason. "
+            "Same blast radius as LLM + shell-exec, but the consequence "
+            "is finance, not infra."
+        ),
+        evidence=(
+            _short_paths(findings, "payment-calls", limit=3)
+            + _short_paths(findings, "llm-calls", limit=3)
+        ),
+        mitigation=(
+            "Wrap every payment call with @supervised('payment') and a "
+            "policy that requires per-call hard caps + recipient/customer "
+            "allowlist + human review on amounts above the cap. Never let "
+            "the LLM produce the amount or recipient as a free-form field."
+        ),
+    )
+
+
+def _llm_plus_account_change(findings: list[Finding]) -> Combo | None:
+    """LLM + database mutations on user / customer / account tables.
+    A prompt injection here can change the user's email, role, password,
+    or merge accounts — classic ATO via the support agent path."""
+    if not _has_scanner(findings, "llm-calls", "medium"):
+        return None
+    # Sensitive tables = users / customers / accounts / profiles. Same
+    # criterion `_mass_email_plus_customer_db` uses.
+    if not _has_sensitive_tables(findings):
+        return None
+    return Combo(
+        id="llm-plus-account-change",
+        title="LLM call + writes to user/account tables",
+        severity="high",
+        narrative=(
+            "The agent can call an LLM AND write to user / customer / "
+            "account tables. A prompt injection that says 'this user "
+            "wants their email changed to x@evil.com' can become an "
+            "account takeover with no other indicator. Especially "
+            "dangerous in customer-support agents that already have the "
+            "credentials to do this."
+        ),
+        evidence=(
+            _short_paths(findings, "db-mutations", limit=3)
+            + _short_paths(findings, "llm-calls", limit=3)
+        ),
+        mitigation=(
+            "Wrap account-mutation call-sites with @supervised('account_change'). "
+            "Policy: require the original user's auth context (not the agent's "
+            "service token) before allowing email/phone/password updates; route "
+            "role changes through human review."
+        ),
+    )
+
+
 def _voice_call_plus_scheduler(findings: list[Finding]) -> Combo | None:
     voice_providers = _providers_for_scanner(findings, "voice-actions")
     call_providers = {"twilio", "retell", "vapi", "bland"}
@@ -348,6 +418,8 @@ _COMBO_RULES: list[Callable[[list[Finding]], Combo | None]] = [
     _agent_orchestrator_present,
     _voice_clone_plus_outbound_call,
     _llm_plus_shell_exec,
+    _llm_plus_payment,         # NEW: LLM × money path = critical
+    _llm_plus_account_change,  # NEW: LLM × account writes = ATO surface
     _llm_plus_fs_delete,
     _llm_plus_fs_write,
     _mass_email_plus_customer_db,

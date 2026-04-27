@@ -322,10 +322,13 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
     if not combos:
         return
 
-    # Resolve level precedence.
-    if args.level is not None:
-        level = args.level
-        _execute_level(level, combos, out, prompted=False)
+    # Resolve level precedence. `init` doesn't define --level / --no-prompt
+    # in its subparser (it's a thin alias for `scan`), so use getattr with
+    # safe defaults instead of attribute access — otherwise hitting the
+    # remediation prompt path under `init` raises AttributeError.
+    level_arg = getattr(args, "level", None)
+    if level_arg is not None:
+        _execute_level(level_arg, combos, out, prompted=False)
         return
 
     env_level = os.environ.get("SUPERVISOR_REMEDIATION_LEVEL")
@@ -333,7 +336,7 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
         _execute_level(int(env_level), combos, out, prompted=False)
         return
 
-    if args.no_prompt or not sys.stdin.isatty() or not sys.stderr.isatty():
+    if getattr(args, "no_prompt", False) or not sys.stdin.isatty() or not sys.stderr.isatty():
         _execute_level(1, combos, out, prompted=False)
         return
 

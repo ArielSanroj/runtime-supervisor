@@ -232,6 +232,21 @@ def generate(
         else:
             dst.write_text(_policy_template(action_type))
 
+    # Repo-specific tool_use policy seeded from the repo's action enums.
+    # The reviewer flagged on castor-1 that the generic policy referenced
+    # `'system.exec'` / `'fs.delete'` — names that never matched because
+    # the repo uses `class AgentAction(str, Enum)` with values like
+    # `CREATE_INCIDENT`, `DISPATCH_SLA_ALERT`. Now we extract those values
+    # and emit `tool_use.<repo>.v1.yaml` with them pre-populated.
+    if repo_root is not None:
+        from .policy_extractors import extract_action_enums, render_repo_action_policy
+
+        action_enums = extract_action_enums(repo_root)
+        if action_enums:
+            repo_policy = render_repo_action_policy(action_enums, repo_root.name)
+            if repo_policy is not None:
+                (policies_dir / f"tool_use.{repo_root.name}.v1.yaml").write_text(repo_policy)
+
     # combos/ — Nivel 1 remediation playbooks per detected combo.
     # Writes one markdown per combo + an index README. Combo-specific
     # policies also land in policies/ (created above) so the user can

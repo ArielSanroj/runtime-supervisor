@@ -172,3 +172,130 @@ def test_path_prefix_extractor_skips_fstrings():
         ),
     ]
     assert extract_fs_path_prefixes(findings) == []
+
+
+# ─── Action enum extraction ────────────────────────────────────────
+
+
+def _write(tmp: Path, name: str, body: str) -> Path:
+    p = tmp / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body.lstrip("\n"))
+    return p
+
+
+def test_extract_action_enum_from_real_shape(tmp_path: Path):
+    """The exact castor-1 shape: `class AgentAction(str, Enum)` with
+    string-literal values."""
+    from supervisor_discover.policy_extractors import extract_action_enums
+
+    _write(tmp_path, "agent/config.py", """
+from enum import Enum
+
+class AgentAction(str, Enum):
+    CREATE_INCIDENT = "create_incident"
+    DISPATCH_SLA_ALERT = "dispatch_sla_alert"
+    MASS_INCIDENT_CREATION = "mass_incident_creation"
+""")
+    enums = extract_action_enums(tmp_path)
+    assert "AgentAction" in enums
+    assert "create_incident" in enums["AgentAction"]
+    assert "dispatch_sla_alert" in enums["AgentAction"]
+
+
+def test_extract_skips_status_state_severity_enums(tmp_path: Path):
+    from supervisor_discover.policy_extractors import extract_action_enums
+
+    _write(tmp_path, "models.py", """
+from enum import Enum
+
+class IncidentStatus(str, Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+class Severity(str, Enum):
+    LOW = "low"
+    HIGH = "high"
+
+class TaskKind(str, Enum):
+    ALERT = "alert"
+    REPORT = "report"
+""")
+    enums = extract_action_enums(tmp_path)
+    # All three enums match action-shape suffixes (Status, Severity, Kind)
+    # but contain deny-list tokens — should be excluded.
+    assert enums == {}
+
+
+def test_extract_handles_intenum_and_strenum(tmp_path: Path):
+    from supervisor_discover.policy_extractors import extract_action_enums
+
+    _write(tmp_path, "tools.py", """
+from enum import IntEnum, StrEnum
+
+class ToolKind(IntEnum):
+    SEARCH = 1
+    WRITE = 2
+
+class CommandVerb(StrEnum):
+    CREATE = "create"
+    DELETE = "delete"
+""")
+    enums = extract_action_enums(tmp_path)
+    # ToolKind has "kind" in name → excluded by deny-list.
+    # CommandVerb passes (Verb suffix, no deny token).
+    assert "CommandVerb" in enums
+    assert "create" in enums["CommandVerb"]
+
+
+def test_extract_uses_member_name_when_no_string_value(tmp_path: Path):
+    from supervisor_discover.policy_extractors import extract_action_enums
+
+    _write(tmp_path, "ops.py", """
+from enum import Enum, auto
+
+class Operation(Enum):
+    INSERT = auto()
+    UPDATE = auto()
+""")
+    enums = extract_action_enums(tmp_path)
+    assert "Operation" in enums
+    # Falls back to lowercased member names when no string literal.
+    assert "insert" in enums["Operation"]
+    assert "update" in enums["Operation"]
+
+
+def test_extract_returns_empty_for_repo_with_no_enums(tmp_path: Path):
+    from supervisor_discover.policy_extractors import extract_action_enums
+
+    _write(tmp_path, "lib.py", "def helper(): return 1\n")
+    assert extract_action_enums(tmp_path) == {}
+
+
+def test_render_repo_action_policy_shape():
+    from supervisor_discover.policy_extractors import render_repo_action_policy
+
+    enums = {
+        "AgentAction": [
+            "create_incident", "mass_incident_creation",
+            "deploy_witnesses", "track_deadline",
+        ],
+    }
+    yaml_text = render_repo_action_policy(enums, "castor-1")
+    assert yaml_text is not None
+    assert "name: tool_use.castor-1" in yaml_text
+    # Allowed actions list is the union of all enum members.
+    assert "create_incident" in yaml_text
+    assert "track_deadline" in yaml_text
+    # High-blast subset routes to review.
+    assert '"mass_incident_creation"' in yaml_text
+    assert '"deploy_witnesses"' in yaml_text
+    # Rule shapes.
+    assert "action-allowlist" in yaml_text
+    assert "high-blast-action-review" in yaml_text
+
+
+def test_render_repo_action_policy_returns_none_when_empty():
+    from supervisor_discover.policy_extractors import render_repo_action_policy
+
+    assert render_repo_action_policy({}, "x") is None

@@ -376,7 +376,11 @@ def _minutes_for(scanner: str, count: int) -> int:
     return max(5, per_site.get(scanner, 5) * count)
 
 
-def _scanner_problem(f: Finding, count: int) -> str:
+def _scanner_problem(
+    f: Finding,
+    count: int,
+    agent_path_present: bool = True,
+) -> str:
     """Pick the right 'problem' copy for a finding. Handles per-family
     overrides (fs-shell), per-kind overrides (agent-orchestrators), and
     per-table overrides (db-mutations — customer vs business)."""
@@ -395,16 +399,27 @@ def _scanner_problem(f: Finding, count: int) -> str:
     if scanner == "db-mutations":
         from .classifier import tier_of
         table = str(f.extra.get("table") or "")
+        actor = "your agent can" if agent_path_present else "this code can"
         if tier_of(f) == "business_data":
-            return (
-                f"your agent can modify business-state tables (e.g. `{table}`) — "
-                f"not PII, but a `DELETE` without `WHERE` or a bad LLM-generated "
-                f"`UPDATE` corrupts your books."
+            update_source = (
+                "a bad LLM-generated `UPDATE`"
+                if agent_path_present
+                else "a malformed `UPDATE`"
             )
+            return (
+                f"{actor} modify business-state tables (e.g. `{table}`) — "
+                f"not PII, but a `DELETE` without `WHERE` or {update_source} "
+                f"corrupts your books."
+            )
+        rewrite_source = (
+            "can quietly rewrite credentials"
+            if agent_path_present
+            else "can rewrite credentials if this path is reachable"
+        )
         return (
-            f"your agent can modify customer tables (`{table}`) directly — "
+            f"{actor} modify customer tables (`{table}`) directly — "
             f"`DELETE FROM users` without `WHERE` wipes the whole table, and "
-            f"a multi-field `UPDATE` can quietly rewrite credentials."
+            f"a multi-field `UPDATE` {rewrite_source}."
         )
     return _PROBLEM_BY_SCANNER.get(
         scanner, f"{count} call-sites in {scanner}."
@@ -474,6 +489,7 @@ def _group_item(
     priority: Priority,
     scanner: str,
     findings: list[Finding],
+    agent_path_present: bool = True,
 ) -> PriorityItem:
     # `scanner` may be a tier-aware key like "db-mutations:customer_data".
     # The suffix is used to pick a more specific label/copy; the bare name
@@ -495,7 +511,7 @@ def _group_item(
 
     if priority == "prod":
         label = f"Gate {count} {capability} call-site(s)"
-        problem = _scanner_problem(primary, count)
+        problem = _scanner_problem(primary, count, agent_path_present)
         solution = _scanner_solution(primary)
     elif priority == "confirm":
         label = f"Confirm {count} {capability} call-site(s)"
@@ -512,7 +528,7 @@ def _group_item(
             )
         else:
             problem = (
-                f"{_scanner_problem(primary, count)} Medium confidence — "
+                f"{_scanner_problem(primary, count, agent_path_present)} Medium confidence — "
                 f"check whether this call-site applies in your flow."
             )
             solution = _scanner_solution(primary)
@@ -533,7 +549,10 @@ def _group_item(
     )
 
 
-def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
+def _build_priority_list(
+    findings: list[Finding],
+    agent_path_present: bool = True,
+) -> list[PriorityItem]:
     buckets = _bucket_findings(findings)
     items: list[PriorityItem] = []
 
@@ -609,11 +628,21 @@ def _build_priority_list(findings: list[Finding]) -> list[PriorityItem]:
 
     # 🔒 Prod — group by scanner, largest first
     for scanner, fs in _group_by_scanner(buckets["prod"]):
-        items.append(_group_item("prod", scanner, fs))
+        items.append(_group_item(
+            "prod",
+            scanner,
+            fs,
+            agent_path_present=agent_path_present,
+        ))
 
     # ⚠️ Confirm — same pattern
     for scanner, fs in _group_by_scanner(buckets["confirm"]):
-        items.append(_group_item("confirm", scanner, fs))
+        items.append(_group_item(
+            "confirm",
+            scanner,
+            fs,
+            agent_path_present=agent_path_present,
+        ))
 
     # 🗑️ Discard — collapse all test-path findings into one line regardless of scanner
     if buckets["discard"]:
@@ -725,7 +754,10 @@ def render_summary(
 ) -> str:
     """Build the SUMMARY.md content — a mandable security review."""
     combos = combos or []
-    items = _build_priority_list(findings)
+    items = _build_priority_list(
+        findings,
+        agent_path_present=summary.agent_path_present,
+    )
     clean_notes = _clean_tiers_notes(findings, summary)
 
     intro: list[str]

@@ -144,6 +144,23 @@ def test_render_summary_problem_copy_is_scanner_specific():
     assert "rce" in md_shell.lower()
 
 
+def test_render_summary_db_copy_does_not_claim_agent_when_no_agent_path():
+    finding = _f(
+        "/repo/server/index.js",
+        scanner="db-mutations",
+        confidence="high",
+        table="users",
+        verb="DELETE",
+    )
+    summary = build_summary([finding])
+
+    md = render_summary(summary, [finding])
+
+    assert summary.agent_path_present is False
+    assert "this code can modify customer tables" in md
+    assert "your agent can modify customer tables" not in md
+
+
 def test_render_summary_solution_links_to_combo_playbook_when_applicable():
     """shell-exec finding should reference the combo playbook."""
     shell_finding = _f("/repo/worker.py", scanner="fs-shell", confidence="high", family="shell-exec")

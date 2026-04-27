@@ -514,6 +514,52 @@ def test_vercel_saas_sql_rls_audit():
     assert by_table["audit_events"].extra["family"] == "rls-missing"
 
 
+def test_sqlite_schema_does_not_emit_rls_findings(tmp_path):
+    """SQLite DDL is not a Supabase/Postgres RLS surface.
+
+    The scanner should still report runtime SQL mutations elsewhere; only the
+    RLS DDL audit is gated by dialect evidence.
+    """
+    from supervisor_discover.scanners.db_mutations import scan as scan_db
+
+    server = tmp_path / "server"
+    server.mkdir()
+    (server / "schema.sql").write_text(
+        "PRAGMA foreign_keys=ON;\n"
+        "\n"
+        "CREATE TABLE IF NOT EXISTS reservations (\n"
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        "  name TEXT NOT NULL\n"
+        ");\n"
+        "\n"
+        "CREATE TABLE IF NOT EXISTS leads (\n"
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        "  email TEXT NOT NULL\n"
+        ");\n"
+        "\n"
+        "CREATE TABLE IF NOT EXISTS admin_users (\n"
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        "  email TEXT UNIQUE NOT NULL\n"
+        ");\n"
+    )
+    (server / "index.js").write_text(
+        "db.prepare('INSERT INTO leads (email) VALUES (?)').run(email);\n"
+    )
+
+    findings = scan_db(tmp_path)
+    rls = [
+        f for f in findings
+        if (f.extra or {}).get("family", "").startswith("rls-")
+    ]
+    inserts = [
+        f for f in findings
+        if f.scanner == "db-mutations" and (f.extra or {}).get("verb") == "INSERT"
+    ]
+    assert rls == []
+    assert len(inserts) == 1
+    assert inserts[0].extra["table"] == "leads"
+
+
 def test_skip_dirs_check_is_relative_to_scan_root(tmp_path):
     """Regression: repos inside ~/Library/CloudStorage/Dropbox (or any path
     whose absolute parts contain a _SKIP_DIRS entry like 'Library') must

@@ -221,7 +221,10 @@ def generate(
         tier_summary_table=tier_summary_table,
         headline_note=headline_note,
     )
-    full_report += _render_by_risk_tier(findings)
+    full_report += _render_by_risk_tier(
+        findings,
+        agent_path_present=summary.agent_path_present,
+    )
     (out_dir / "FULL_REPORT.md").write_text(full_report)
 
     # ROLLOUT.md — tailored to the repo's stack + surface + tier counts.
@@ -608,7 +611,10 @@ def _tier_summary(findings: list[Finding]) -> tuple[str, str]:
     return "\n".join(rows), note
 
 
-def _render_by_risk_tier(findings: list[Finding]) -> str:
+def _render_by_risk_tier(
+    findings: list[Finding],
+    agent_path_present: bool = True,
+) -> str:
     if not findings:
         return "_No findings — either nothing to supervise, or the scanners didn't recognize anything._\n"
     buckets = group_by_risk_tier(findings)
@@ -623,12 +629,22 @@ def _render_by_risk_tier(findings: list[Finding]) -> str:
         # `general` is demoted to a collapsed footer at the end.
         if tier == "general":
             continue
-        lines.extend(_render_tier_block(tier, items, collapse=False))
+        lines.extend(_render_tier_block(
+            tier,
+            items,
+            collapse=False,
+            agent_path_present=agent_path_present,
+        ))
 
     # General / informational goes at the bottom, collapsed.
     general = buckets["general"]
     if general:
-        lines.extend(_render_tier_block("general", general, collapse=True))
+        lines.extend(_render_tier_block(
+            "general",
+            general,
+            collapse=True,
+            agent_path_present=agent_path_present,
+        ))
 
     return "\n".join(lines) + "\n"
 
@@ -651,7 +667,45 @@ def _top_files_evidence(items: list[Finding], limit: int = 3) -> str:
     return rendered
 
 
-def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> list[str]:
+def _tier_problem(copy: dict[str, str], tier: Tier, agent_path_present: bool) -> str:
+    if agent_path_present:
+        return copy["problem"]
+    if tier == "customer_data":
+        return (
+            "This code can modify customer tables directly (users, accounts, "
+            "customers, orders). A `DELETE FROM users` without `WHERE`, an "
+            "`UPDATE` that changes email + phone + password all at once — both "
+            "are irreversible actions if this path is reachable from untrusted input."
+        )
+    if tier == "business_data":
+        return (
+            "This code can modify business-state tables — trades, positions, "
+            "inventory, products, events, logs. These aren't PII, but a "
+            "malformed SQL mutation can corrupt your books, log phantom "
+            "inventory, or fire trades nobody approved. Irreversible in most cases."
+        )
+    return copy["problem"]
+
+
+def _tier_runtime_behavior(copy: dict[str, str], tier: Tier, agent_path_present: bool) -> str:
+    if agent_path_present:
+        return copy.get("runtime_behavior", "")
+    if tier == "business_data":
+        return (
+            "when wrapped, blocks bulk mutations without `WHERE` and escalates "
+            "any write that touches more than the row limit per query. Shadow "
+            "mode logs which tables this path actually touches before you enforce."
+        )
+    return copy.get("runtime_behavior", "")
+
+
+def _render_tier_block(
+    tier: Tier,
+    items: list[Finding],
+    *,
+    collapse: bool,
+    agent_path_present: bool = True,
+) -> list[str]:
     copy = TIER_COPY[tier]
     high = [f for f in items if f.confidence == "high"]
     medium = [f for f in items if f.confidence == "medium"]
@@ -665,7 +719,7 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         lines.append(headline)
         lines.append("")
         # Tri-part block: 🔴 Problem · 📍 In your repo · ✅ Fix · (footnote)
-        lines.append(f"🔴 **Problem:** {copy['problem']}")
+        lines.append(f"🔴 **Problem:** {_tier_problem(copy, tier, agent_path_present)}")
         lines.append("")
         top_files = _top_files_evidence(items, limit=3)
         in_repo_prefix = copy["in_your_repo_prefix"].format(total=len(items))
@@ -678,7 +732,7 @@ def _render_tier_block(tier: Tier, items: list[Finding], *, collapse: bool) -> l
         # Optional 💡 runtime behavior — what the supervisor does at call time.
         # Kept so the reader understands block vs review vs shadow semantics,
         # not just the wrap pattern.
-        runtime = copy.get("runtime_behavior", "")
+        runtime = _tier_runtime_behavior(copy, tier, agent_path_present)
         if runtime:
             lines.append(f"💡 **Runtime behavior:** {runtime}")
             lines.append("")

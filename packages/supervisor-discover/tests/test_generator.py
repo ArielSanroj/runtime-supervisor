@@ -331,6 +331,27 @@ def test_rollout_md_surface_block_only_lists_active_tiers(tmp_path):
     assert "LLM tool-use" not in rollout
 
 
+def test_full_report_data_tier_copy_does_not_claim_agent_without_agent_path(tmp_path):
+    findings = validate([
+        Finding(
+            scanner="db-mutations",
+            file="/tmp/fake/server/index.js",
+            line=10,
+            snippet="DELETE FROM users",
+            suggested_action_type="account_change",
+            confidence="high",
+            rationale="Raw SQL DELETE on `users`.",
+            extra={"table": "users", "verb": "DELETE"},
+        )
+    ])
+    out = tmp_path / "rs"
+    generate(findings, out)
+    report = (out / "FULL_REPORT.md").read_text()
+
+    assert "This code can modify customer tables directly" in report
+    assert "The agent can modify customer tables directly" not in report
+
+
 def test_report_includes_applicable_guardrails_section(tmp_path):
     findings = validate(scan_all(FLASK_FIXTURE))
     out = tmp_path / "rs"

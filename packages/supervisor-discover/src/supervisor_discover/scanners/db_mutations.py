@@ -324,6 +324,34 @@ _SQL_CREATE_POLICY = re.compile(
     re.IGNORECASE,
 )
 
+# RLS is a Postgres / Supabase concept. Plain SQLite schemas often look like
+# small app schemas (`CREATE TABLE leads ...`) and should not be flagged as
+# missing RLS. Gate the RLS audit on dialect/path evidence so raw SQL mutation
+# detection still runs everywhere, but DDL policy advice stays stack-specific.
+_SQLITE_DIALECT_HINT = re.compile(
+    r"""\bPRAGMA\b|\bAUTOINCREMENT\b|\bINTEGER\s+PRIMARY\s+KEY\b|\bsqlite_\w+|\bWITHOUT\s+ROWID\b""",
+    re.IGNORECASE,
+)
+_POSTGRES_RLS_CONTEXT_HINT = re.compile(
+    r"""
+    \benable\s+row\s+level\s+security\b
+    |\bcreate\s+policy\b
+    |\bpublic\.
+    |\bauth\.users\b
+    |\bjsonb\b
+    |\bbigserial\b
+    |\bserial\b
+    |\buuid\b
+    |\btimestamptz\b
+    |\bgen_random_uuid\s*\(
+    |\buuid_generate_v4\s*\(
+    |\bcreate\s+extension\b
+    |\blanguage\s+plpgsql\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_POSTGRES_PATH_HINTS = {"supabase", "postgres", "postgresql", "postgrest"}
+
 
 def _strip_sql_comments(text: str) -> str:
     """Replace SQL comments with same-length whitespace so byte offsets
@@ -335,6 +363,23 @@ def _strip_sql_comments(text: str) -> str:
     cleaned = _SQL_BLOCK_COMMENT.sub(_blank, text)
     cleaned = _SQL_LINE_COMMENT.sub(_blank, cleaned)
     return cleaned
+
+
+def _path_suggests_postgres(path: Path, root: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    return any(part.lower() in _POSTGRES_PATH_HINTS for part in rel.parts)
+
+
+def _should_run_rls_audit(path: Path, root: Path, cleaned_sql: str) -> bool:
+    if _SQLITE_DIALECT_HINT.search(cleaned_sql):
+        return False
+    return (
+        bool(_POSTGRES_RLS_CONTEXT_HINT.search(cleaned_sql))
+        or _path_suggests_postgres(path, root)
+    )
 
 
 def _scan_sql_files(root: Path) -> list[Finding]:
@@ -411,6 +456,8 @@ def _scan_sql_rls(root: Path) -> list[Finding]:
         if text is None:
             continue
         cleaned = _strip_sql_comments(text)
+        if not _should_run_rls_audit(path, root, cleaned):
+            continue
 
         rls_tables = {m.group(1).lower() for m in _SQL_ENABLE_RLS.finditer(cleaned)}
         policy_tables = {

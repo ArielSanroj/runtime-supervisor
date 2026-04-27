@@ -123,6 +123,15 @@ class RepoSummary:
     #   {"voice / telephony": ["twilio", "elevenlabs"],
     #    "calendar events": ["google"]}
     real_world_actions: dict[str, list[str]] = field(default_factory=dict)
+    # Adjacent web-app security findings tagged `extra.scope=="non-agent-security"`
+    # at the scanner. Keyed by family (`rls-missing`, `rls-no-policy`) → list
+    # of `file:line` strings. These are real, accurate findings — but they're
+    # outside the "what your LLM can fire" charter, so the renderer presents
+    # them in a separate "Database hygiene" section instead of letting them
+    # compete with agent wrap-points for headline real estate. The tph
+    # benchmark surfaced this gap: 3 RLS findings dominated the `high` slot
+    # on a repo with no agent at all.
+    database_hygiene: dict[str, list[str]] = field(default_factory=dict)
     # Agent orchestration chokepoints — wrap ONE of these for total coverage.
     agent_chokepoints: list[AgentChokepoint] = field(default_factory=list)
     # Tool names the agent exposes (from dispatcher.register etc). Order-preserving.
@@ -346,6 +355,10 @@ def build_summary(
     scheduled = 0
     # capability label → set of providers detected for that capability
     rwa: dict[str, set[str]] = {}
+    # family (e.g. "rls-missing") → ordered list of "file:line" strings.
+    # Filled from findings whose scanner tagged `extra.scope = "non-agent-security"`.
+    db_hygiene: dict[str, list[str]] = {}
+    db_hygiene_seen: set[tuple[str, str, int]] = set()
     chokepoints: list[AgentChokepoint] = []
     tools: list[str] = []
     tools_seen: set[str] = set()
@@ -359,6 +372,20 @@ def build_summary(
     for f in findings:
         scanner = f.scanner
         extra = f.extra or {}
+
+        # Adjacent web-app security (e.g. RLS missing on Supabase tables) —
+        # routed to a separate bucket so it doesn't compete with agent
+        # wrap-points for the headline. Scanner-agnostic: any finding can
+        # opt in by tagging `extra["scope"] = "non-agent-security"`.
+        if extra.get("scope") == "non-agent-security":
+            family = str(extra.get("family") or scanner)
+            key = (family, f.file, f.line)
+            if key not in db_hygiene_seen:
+                db_hygiene_seen.add(key)
+                db_hygiene.setdefault(family, []).append(f"{f.file}:{f.line}")
+            # Continue the loop — these findings still feed `tables` count
+            # via the db-mutations branch below, which is fine; they just
+            # don't drive any of the agent-supervision tiers.
 
         if scanner == "http-routes":
             http_count += 1
@@ -467,6 +494,7 @@ def build_summary(
     all_tables = sorted(tables)
     payment_integrations = {k: sorted(v) for k, v in payments.items()}
     real_world_actions = {k: sorted(v) for k, v in rwa.items()}
+    database_hygiene = {k: sorted(v) for k, v in db_hygiene.items()}
 
     # Pick the most common framework as primary; keep others as extras.
     primary_fw = [fw for fw, _ in frameworks_seen.most_common()]
@@ -545,6 +573,7 @@ def build_summary(
         payment_integrations=payment_integrations,
         llm_providers=sorted(llms),
         real_world_actions=real_world_actions,
+        database_hygiene=database_hygiene,
         agent_chokepoints=unique_chokepoints,
         agent_tools=tools,
         mcp_tools=mcp_tools_list,

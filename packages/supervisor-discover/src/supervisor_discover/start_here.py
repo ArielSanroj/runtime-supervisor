@@ -107,6 +107,12 @@ class StartHere:
     # flip the "Highest-risk things" header into a "Capability inventory"
     # section when no agent/LLM is reachable in the scanned code.
     agent_path_present: bool = False
+    # Adjacent web-app security findings (RLS missing on Supabase tables,
+    # similar) — kept separate from `top_risks` so they don't compete for
+    # headline real estate with agent wrap-points. Mirrors
+    # `RepoSummary.database_hygiene`. Renderer emits a dedicated section
+    # below the "Highest-risk things" tier when this dict is non-empty.
+    database_hygiene: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -142,6 +148,13 @@ def _pick_capability_hotspot(findings: list[Finding]) -> WrapTarget | None:
         if f.scanner not in _HOTSPOT_SCANNERS:
             continue
         if (f.extra or {}).get("suppressed"):
+            continue
+        # RLS missing / RLS no-policy and other non-agent-security findings
+        # are accurate but off-thesis — they belong in `database_hygiene`,
+        # never in the "wrap here first" hotspot. Defensive: today these are
+        # always `medium`, but the filter holds even if a future variant
+        # promotes one to `high`.
+        if (f.extra or {}).get("scope") == "non-agent-security":
             continue
         if is_low_reachability_path(f.file):
             continue
@@ -295,6 +308,15 @@ _RISK_CARDS: dict[str, dict[str, str]] = {
 }
 
 
+# Plain-English labels for the "Database hygiene" section. Keep the copy
+# free of agent-supervision framing — these findings live next door to the
+# threat model, not inside it.
+_DATABASE_HYGIENE_LABELS: dict[str, str] = {
+    "rls-missing": "RLS missing on table creation",
+    "rls-no-policy": "RLS enabled but no policy declared",
+}
+
+
 def _capability_key(f: Finding) -> str:
     """Map a finding to the capability_phrases / risk_severity / _RISK_CARDS key.
 
@@ -312,6 +334,11 @@ def _capability_key(f: Finding) -> str:
     if f.scanner == "db-mutations":
         verb = (extra.get("verb") or "").lower()
         family = (extra.get("family") or "").lower()
+        # RLS findings live in the `database_hygiene` bucket — they must
+        # never resolve to a `_RISK_CARDS` / `capability_phrases` key, so
+        # the headline cards stay focused on what the LLM can fire.
+        if family in ("rls-missing", "rls-no-policy"):
+            return f"db-mutations-{family}"
         if family == "redis-flush":
             return "db-mutations-redis-flush"
         if verb in ("delete", "drop", "truncate"):
@@ -1106,6 +1133,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         repo_kind=summary.repo_kind,
         capability_hotspot=hotspot,
         agent_path_present=summary.agent_path_present,
+        database_hygiene=dict(summary.database_hygiene),
     )
 
 
@@ -1434,6 +1462,28 @@ def render_start_here_md(sh: StartHere) -> str:
             "OpenAI, sgMail, …) or a new mutation surface — and check the "
             "release notes if you expected a specific category to fire."
         )
+        parts.append("")
+
+    # 3b. database hygiene — adjacent web-app security findings (RLS missing
+    # on Supabase tables, etc.). Surfaced as a separate section so they
+    # don't compete with agent wrap-points for the headline `high` slot.
+    # Empty dict (the common case) → section is skipped entirely.
+    if sh.database_hygiene:
+        parts.append("## Database hygiene (separate from agent supervision)")
+        parts.append("")
+        parts.append(
+            "These aren't agent wrap-points, but they are real data-leak "
+            "vectors on Supabase / Postgres-with-PostgREST stacks. Review "
+            "before the anon key ships to the frontend:"
+        )
+        parts.append("")
+        for family in sorted(sh.database_hygiene.keys()):
+            locs = sh.database_hygiene[family]
+            label = _DATABASE_HYGIENE_LABELS.get(family, family)
+            parts.append(f"- **{label}** — {len(locs)} location"
+                         f"{'s' if len(locs) != 1 else ''}:")
+            for loc in locs:
+                parts.append(f"  - `{_short_path(loc)}`")
         parts.append("")
 
     # 4. do this now

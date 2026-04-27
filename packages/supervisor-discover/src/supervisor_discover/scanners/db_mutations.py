@@ -476,7 +476,14 @@ def _scan_sql_rls(root: Path) -> list[Finding]:
                     line=line,
                     snippet=m.group(0),
                     suggested_action_type=_suggest(table),
-                    confidence="high",
+                    # `medium`, not `high`: the rule is accurate but lives
+                    # outside the agent-supervision charter ("unsafe call-
+                    # sites your LLM can fire"). At `high` it dominated
+                    # the headline on pre-agent Supabase repos (tph
+                    # benchmark — 3 RLS findings, 0 wrap targets) and
+                    # made the report look like an agent-risk audit when
+                    # it wasn't.
+                    confidence="medium",
                     rationale=(
                         f"Table `{table}` is created without "
                         "`alter table … enable row level security`. On "
@@ -490,6 +497,11 @@ def _scan_sql_rls(root: Path) -> list[Finding]:
                         "table": table,
                         "family": "rls-missing",
                         "source_kind": "sql-file",
+                        # Routes this finding into RepoSummary.database_hygiene
+                        # instead of real_world_actions / top_risks — keeps
+                        # the agent-supervision headline focused on wrap-
+                        # points the LLM can actually fire.
+                        "scope": "non-agent-security",
                     },
                 ))
                 continue
@@ -514,6 +526,7 @@ def _scan_sql_rls(root: Path) -> list[Finding]:
                         "table": table,
                         "family": "rls-no-policy",
                         "source_kind": "sql-file",
+                        "scope": "non-agent-security",
                     },
                 ))
     return findings

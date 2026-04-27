@@ -499,10 +499,14 @@ def test_vercel_saas_emits_webhook_idempotency_combo():
 
 
 def test_vercel_saas_sql_rls_audit():
-    """SQL DDL pass: a table without `enable row level security` is high-
-    confidence (anon key has full access on Supabase). A table with RLS
-    enabled but no policy is medium (locked out by default; confirm
-    intent). Tables with both RLS and a policy emit nothing."""
+    """SQL DDL pass: a table without `enable row level security` is medium-
+    confidence and tagged `scope=non-agent-security` so it routes into the
+    `database_hygiene` bucket instead of competing with agent wrap-points
+    for the headline (was `high` historically — the tph benchmark showed
+    that letting Postgres-misconfig findings dominate the top tier mis-
+    framed pre-agent repos as agent-risk audits). A table with RLS
+    enabled but no policy is also `medium` + same scope tag. Tables with
+    both RLS and a policy emit nothing."""
     findings = scan_all(VERCEL_SAAS_FIXTURE)
     rls = [f for f in findings
            if (f.extra or {}).get("family", "").startswith("rls-")]
@@ -510,8 +514,10 @@ def test_vercel_saas_sql_rls_audit():
     assert "users" not in by_table  # RLS + 2 policies → silent
     assert by_table["customers"].confidence == "medium"
     assert by_table["customers"].extra["family"] == "rls-no-policy"
-    assert by_table["audit_events"].confidence == "high"
+    assert by_table["customers"].extra["scope"] == "non-agent-security"
+    assert by_table["audit_events"].confidence == "medium"
     assert by_table["audit_events"].extra["family"] == "rls-missing"
+    assert by_table["audit_events"].extra["scope"] == "non-agent-security"
 
 
 def test_sqlite_schema_does_not_emit_rls_findings(tmp_path):
@@ -779,3 +785,102 @@ def test_skip_dirs_still_filters_within_the_repo(tmp_path):
     assert real in files
     assert noise_a not in files
     assert noise_b not in files
+
+
+def test_rls_findings_route_to_database_hygiene_bucket(tmp_path):
+    """RLS findings populate `RepoSummary.database_hygiene` keyed by family,
+    not `real_world_actions`. This is the routing test that ties the scanner-
+    level `scope` tag (db_mutations.py) to the summary-level bucket — the gap
+    the tph benchmark exposed: 3 RLS findings showing up as headline `high`
+    instead of standalone DB-hygiene context."""
+    from supervisor_discover.scanners.db_mutations import scan as scan_db
+    from supervisor_discover.summary import build_summary
+
+    (tmp_path / "schema.sql").write_text(
+        "create table reservations (id serial primary key);\n"
+        "create table leads (id serial primary key);\n"
+        "alter table leads enable row level security;\n"
+        # leads → rls-no-policy; reservations → rls-missing
+    )
+    findings = scan_db(tmp_path)
+    summary = build_summary(findings, root=tmp_path)
+
+    assert "rls-missing" in summary.database_hygiene
+    assert "rls-no-policy" in summary.database_hygiene
+    assert any(
+        loc.endswith("schema.sql:1")
+        for loc in summary.database_hygiene["rls-missing"]
+    )
+    # Real-world actions stays empty — RLS findings did NOT leak in.
+    assert summary.real_world_actions == {}
+
+
+def test_rls_findings_do_not_appear_in_top_risks(tmp_path):
+    """Once downgraded to `medium` and tagged `non-agent-security`, RLS
+    findings cannot reach `top_risks` — the high-confidence filter in
+    `_build_top_risks` already drops them, and the new scope filter in
+    `_pick_capability_hotspot` defends the hotspot fallback. Without this
+    guard, a pre-agent Supabase repo (the tph shape) opens its
+    START_HERE.md with a "Database writes present" risk card pointing at
+    a `CREATE TABLE` line — visually identical to a real wrap-point."""
+    from supervisor_discover.scanners.db_mutations import scan as scan_db
+    from supervisor_discover.start_here import build_start_here
+    from supervisor_discover.summary import build_summary
+
+    (tmp_path / "schema.sql").write_text(
+        "create table reservations (id serial primary key);\n"
+        "create table leads (id serial primary key);\n"
+        "create table admin_users (id serial primary key);\n"
+    )
+    findings = scan_db(tmp_path)
+    summary = build_summary(findings, root=tmp_path)
+    sh = build_start_here(summary, findings)
+
+    # All three tables surface in database_hygiene under rls-missing.
+    assert "rls-missing" in sh.database_hygiene
+    assert len(sh.database_hygiene["rls-missing"]) == 3
+    # And nothing leaks into the agent-supervision tiers.
+    assert sh.top_risks == []
+    assert sh.top_wrap_targets == []
+    assert sh.capability_hotspot is None
+
+
+def test_agent_call_site_dominates_headline_over_rls(tmp_path):
+    """Cross-bucket regression: when a repo has BOTH an LLM invocation
+    (real wrap-point) and an RLS-missing schema (DB hygiene), the headline
+    surfaces the LLM call as `high`, while the RLS findings stay in their
+    own `database_hygiene` bucket. This is the path-agent-positive case
+    the tph follow-up explicitly asked us to verify."""
+    from supervisor_discover.scanners import scan_all
+    from supervisor_discover.start_here import build_start_here
+    from supervisor_discover.summary import build_summary
+
+    (tmp_path / "schema.sql").write_text(
+        "create table leads (id serial primary key, email text);\n"
+    )
+    (tmp_path / "app.py").write_text(
+        "import openai\n"
+        "client = openai.OpenAI()\n"
+        "def handle(req):\n"
+        "    return client.chat.completions.create(\n"
+        "        model='gpt-4o-mini',\n"
+        "        messages=[{'role': 'user', 'content': req}],\n"
+        "    )\n"
+    )
+    findings = scan_all(tmp_path)
+    summary = build_summary(findings, root=tmp_path)
+    sh = build_start_here(summary, findings)
+
+    # LLM provider visible — agent path is detected, headline gets the
+    # priority cards.
+    assert any(p.lower() == "openai" for p in summary.llm_providers)
+    assert summary.agent_path_present is True
+    # RLS findings stay isolated to their bucket; they do NOT cross-
+    # contaminate real_world_actions or any agent-supervision tier.
+    assert "rls-missing" in sh.database_hygiene
+    rls_locs = sh.database_hygiene["rls-missing"]
+    assert any("schema.sql" in loc for loc in rls_locs)
+    for risk in sh.top_risks:
+        assert "rls" not in risk.family.lower()
+    for cap in sh.repo_capabilities:
+        assert "rls" not in cap.lower()

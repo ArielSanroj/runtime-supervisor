@@ -198,6 +198,23 @@ _LOW_REACHABILITY_HINTS = (
     "/tests/", "/__tests__/", "/test/", "/spec/", "/specs/",
     "/fixtures/", "/fixture/", "/mocks/", "/__mocks__/",
     "/test-setup-", "/test_setup_",
+    # Added after the 10-repo benchmark — supabase, chatwoot, cal-diy,
+    # medusa, erpnext all leaked findings from these path buckets that the
+    # filter didn't recognize. The list is mechanically derived from the
+    # benchmark misclassifications documented in
+    # `.vibefixing-benchmark/ANALYSIS.md`.
+    "/.circleci/", "/.github/workflows/", "/ci/",
+    "/docs/", "/doc/", "/website/", "/site/",
+    "/storybook/", "/.storybook/",
+    "/playground/", "/playgrounds/",
+    "/integration-tests/", "/integration_tests/", "/e2e/",
+    "/template/", "/templates/", "/registry/", "/registries/",
+    "/generated/", "/.generated/", "/__generated__/", "/codegen/",
+    "/vendor/", "/third_party/", "/third-party/",
+    # Migrations: behavior is gated by --include-migrations elsewhere; the
+    # path hint here is the scaffolding fallback so a finding inside an
+    # alembic / db migration file never lands as a wrap target.
+    "/migrations/", "/migration/",
 )
 
 _LOW_REACHABILITY_FILENAME_HINTS = (
@@ -205,6 +222,18 @@ _LOW_REACHABILITY_FILENAME_HINTS = (
     "_test.py", "_test.ts", "_tests.py", "_spec.py",
     ".test.", ".spec.", ".stories.",
     "conftest.py",
+    # Benchmark additions:
+    # - cal-diy used `*.integration-test.ts` for repository-layer tests; the
+    #   wrap-target picker chose them over real handlers.
+    # - chatwoot's CI SQL setup files leaked into the priority surface.
+    # - Monaco editor bundles ship as `monaco.*.js` and aren't source.
+    # - Vercel templates use `*.template.tsx` / `*.registry.tsx`.
+    # - `.d.ts` declarations are types, not runtime code.
+    ".integration-test.", ".integration_test.",
+    ".e2e.", "_e2e.",
+    ".template.", ".registry.",
+    "monaco.", ".monaco.",
+    ".d.ts",
 )
 
 

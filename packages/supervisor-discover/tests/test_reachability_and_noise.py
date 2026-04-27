@@ -39,6 +39,24 @@ from supervisor_discover.templates import (
     "backend/setup.py",
     "src/__tests__/agent.spec.ts",
     "examples/demo_agent.py",
+    # Benchmark additions — derived from cal-diy / chatwoot / supabase /
+    # medusa / erpnext misclassifications. Each entry corresponds to a
+    # finding the original 10-repo run had in the priority surface.
+    ".circleci/config.yml",
+    ".github/workflows/ci.yml",
+    "docs/example_agent.py",
+    "website/blog/post.tsx",
+    "playground/demo.tsx",
+    "integration-tests/users.repository.test.ts",
+    "src/registry/blocks/code-block.tsx",
+    "templates/starter/page.tsx",
+    "src/__generated__/types.ts",
+    "vendor/openai/sdk.py",
+    "alembic/migrations/0001_init.py",
+    "features/users.repository.integration-test.ts",
+    "src/components/Editor/monaco.123abc.js",
+    "src/types/api.d.ts",
+    "src/blocks/login-form.template.tsx",
 ])
 def test_low_reachability_paths_classified_as_unreachable(path: str):
     assert is_low_reachability_path(path)
@@ -50,6 +68,12 @@ def test_low_reachability_paths_classified_as_unreachable(path: str):
     "backend/services/agent/electoral_intelligence_agent.py",
     "api/routes/payments.py",
     "src/index.ts",
+    # Negative cases — these LOOK like demoteable paths but aren't:
+    # `integration_with_stripe.py` is a real handler whose name happens
+    # to start with `integration`. The filename hint is `.integration-test.`
+    # (with the literal `-test` token) so the handler stays reachable.
+    "app/api/integration_with_stripe.py",
+    "src/services/document_template_renderer.py",
 ])
 def test_production_paths_classified_as_reachable(path: str):
     assert not is_low_reachability_path(path)

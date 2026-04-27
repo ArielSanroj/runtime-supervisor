@@ -157,7 +157,7 @@ def generate(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    summary = build_summary(findings, hidden_counts=hidden_counts)
+    summary = build_summary(findings, hidden_counts=hidden_counts, root=repo_root)
     start_here = build_start_here(summary, findings, repo_root=repo_root)
     # Stitch start_here back into the summary so the API + JSON dump carry it.
     summary = replace(summary, start_here=start_here)
@@ -519,10 +519,48 @@ def _render_applicable_guardrails(findings: list[Finding]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Findings that represent an actual call-site that runs at the moment the
+# agent processes a request — subprocess.run, shutil.rmtree, fs.writeFile,
+# eval, sendMail, charge(), and anything else with a runtime side effect.
+# These are the wrap targets the operator has to gate.
+_EXEC_FAMILIES = frozenset({
+    "shell-exec", "fs-delete", "fs-write", "code-eval",
+})
+
+# Findings that point at *where the agent shape lives* without themselves
+# being the call-site that runs the action: framework imports, class defs,
+# tool registrations, method-name pings. Useful context but they're not
+# what the user wraps with `@supervised`.
+_STRUCTURAL_KINDS = frozenset({
+    "framework-import", "agent-class", "agent-method", "tool-registration",
+})
+
+
+def _is_exec_finding(f: Finding) -> bool:
+    extra = f.extra or {}
+    if extra.get("family") in _EXEC_FAMILIES:
+        return True
+    return f.scanner in {"messaging", "email-sends", "voice-actions",
+                         "calendar-actions", "media-gen", "mcp-tools"}
+
+
+def _is_structural_finding(f: Finding) -> bool:
+    extra = f.extra or {}
+    return extra.get("kind") in _STRUCTURAL_KINDS
+
+
 def _tier_summary(findings: list[Finding]) -> tuple[str, str]:
     """Returns (markdown table, headline note). The table goes at the top of
     the report so the reader sees counts per tier before scrolling into
-    details."""
+    details.
+
+    The `real_world_actions` row carries a follow-up split when both shapes
+    are present: actual exec call-sites (subprocess / shutil / fs writes)
+    vs. structural references (framework imports, agent-class declarations).
+    Mixing the two inflates the headline — reading langchain's scan as "71
+    real-world actions" when only 3 are exec call-sites is the bug we're
+    correcting here.
+    """
     buckets = group_by_risk_tier(findings)
     rows: list[str] = []
     headline_high = 0
@@ -533,6 +571,13 @@ def _tier_summary(findings: list[Finding]) -> tuple[str, str]:
         low = sum(1 for f in items if f.confidence == "low")
         total = len(items)
         title = TIER_COPY[tier]["title"]
+        if tier == "real_world_actions" and total:
+            exec_n = sum(1 for f in items if _is_exec_finding(f))
+            ref_n = sum(1 for f in items if _is_structural_finding(f))
+            if exec_n and ref_n:
+                title = f"{title} (exec: {exec_n} · refs: {ref_n})"
+            elif ref_n and not exec_n:
+                title = f"{title} (refs only — no exec call-sites)"
         rows.append(f"| **{title}** | {high} | {med} | {low} | {total} |")
         if tier in ("money", "customer_data", "llm"):
             headline_high += high

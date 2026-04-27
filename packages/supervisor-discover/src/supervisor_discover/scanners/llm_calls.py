@@ -19,24 +19,42 @@ from ._utils import parse_python, python_files, safe_read, ts_js_files
 _LLM_ROOTS = {"openai", "anthropic", "langchain", "langchain_core", "langchain_community",
               "llama_index", "llama_cpp"}
 
-# Method suffixes that are STRONG signals when called on an LLM module/client.
-# We still require the root to be an LLM module — these suffixes alone aren't
-# enough (e.g. `obj.run()` in non-LLM code).
-_LLM_METHOD_SUFFIXES = (
+# Suffixes that mean "the LLM is being called RIGHT HERE" — there's a prompt
+# in the args, the model produces output, and any user-controlled text is
+# already in flight. These are real chokepoints; rate `high`.
+_LLM_INVOCATION_SUFFIXES = (
     ".chat.completions.create", ".completions.create", ".responses.create",
     ".messages.create", ".messages.stream",
     ".complete", ".generate", ".invoke", ".run", ".stream",
+)
+
+# Suffixes that mean "an LLM client object is being constructed" — no prompt
+# has been issued yet. Wrapping `openai.OpenAI(api_key=...)` does nothing for
+# prompt injection; the actual call is `client.chat.completions.create(...)`
+# elsewhere. Rate `low` so the constructor surfaces in FULL_REPORT but
+# doesn't pollute the public scan's high-confidence top.
+_LLM_CONSTRUCTOR_SUFFIXES = (
     ".Anthropic", ".OpenAI", ".AzureOpenAI",
 )
 
 
-def _is_llm_call(dotted: str) -> bool:
-    """High-confidence: call path roots at an LLM SDK AND ends with a
-    known model-invocation/client-construction suffix."""
+def _classify_llm_call(dotted: str) -> str | None:
+    """Return "invocation" / "construction" / None.
+
+    Requires the call's root to be in `_LLM_ROOTS` so generic `obj.run()` in
+    non-LLM code doesn't fire. The two suffix groups are disjoint by design:
+    `chat.completions.create` is always a method call, `.OpenAI` is always a
+    class constructor — picking one or the other tells the caller which
+    confidence tier to emit.
+    """
     root = root_module(dotted)
     if root not in _LLM_ROOTS:
-        return False
-    return any(dotted.endswith(sfx) for sfx in _LLM_METHOD_SUFFIXES)
+        return None
+    if any(dotted.endswith(sfx) for sfx in _LLM_INVOCATION_SUFFIXES):
+        return "invocation"
+    if any(dotted.endswith(sfx) for sfx in _LLM_CONSTRUCTOR_SUFFIXES):
+        return "construction"
+    return None
 
 
 # Method suffixes that are strong LLM signals even when the call root is a
@@ -68,7 +86,8 @@ def _scan_python(root: Path) -> list[Finding]:
             if not isinstance(node, ast.Call):
                 continue
             dotted = resolve_call_name(node, aliases)
-            if _is_llm_call(dotted):
+            kind = _classify_llm_call(dotted)
+            if kind == "invocation":
                 findings.append(Finding(
                     scanner="llm-calls",
                     file=str(path),
@@ -79,7 +98,21 @@ def _scan_python(root: Path) -> list[Finding]:
                     rationale=f"LLM SDK call `{dotted}`. Gate with @supervised('tool_use') so the "
                               "supervisor's threat pipeline can catch prompt-injection / PII / jailbreak "
                               "in whatever user input flows into the prompt.",
-                    extra={"method": dotted, "sdk": root_module(dotted)},
+                    extra={"method": dotted, "sdk": root_module(dotted), "kind": "invocation"},
+                ))
+            elif kind == "construction":
+                findings.append(Finding(
+                    scanner="llm-calls",
+                    file=str(path),
+                    line=node.lineno,
+                    snippet=dotted + "(...)",
+                    suggested_action_type="tool_use",
+                    confidence="low",
+                    rationale=f"LLM client constructed at `{dotted}` — no prompt has been issued yet. "
+                              "The actual chokepoint is the method that calls `.create(...)` / `.invoke(...)` "
+                              "on this client. Track this as an informational signal; gate the call-site, not "
+                              "the constructor.",
+                    extra={"method": dotted, "sdk": root_module(dotted), "kind": "construction"},
                 ))
             elif any(dotted.endswith(sfx) for sfx in _VENDOR_SPECIFIC_METHODS):
                 # e.g., `client.messages.create(...)` where `client` was assigned
@@ -189,12 +222,16 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                 line=line,
                 snippet=m.group(0).rstrip("("),
                 suggested_action_type="tool_use",
-                confidence="high",
+                # `new OpenAI(...)` carries no prompt — wrapping the
+                # constructor doesn't gate the model call. Rate `low`
+                # so it stays an informational signal; the actual
+                # chokepoint is the call-site that uses this client.
+                confidence="low",
                 rationale=(
-                    "LLM client construction. Whatever module wraps this "
-                    "client exposes the LLM to its callers — gate the "
-                    "wrapping module with supervised('tool_use') so prompts "
-                    "and args get inspected before the call goes out."
+                    "LLM client construction — no prompt has been issued yet. "
+                    "The chokepoint is the function that calls `.create(...)` / "
+                    "`generateText(...)` on this client. Treat as an "
+                    "informational signal; gate the call-site, not the constructor."
                 ),
                 extra={"kind": "construction", "client": m.group(1)},
             ))

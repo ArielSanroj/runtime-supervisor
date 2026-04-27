@@ -65,12 +65,17 @@ class Risk:
       confirmed_in_code → what the scanner saw, with file:line
       possible_chain    → "if LLM/user-controlled text reaches this..."
       do_this_now       → one concrete next step
+      example           → fenced code block showing the wrap, derived from
+                          the finding's enclosing function (empty when the
+                          file isn't .py / can't be parsed / call is at
+                          module scope)
     """
     title: str
     confirmed_in_code: str
     possible_chain: str
     do_this_now: str
     family: str         # internal key for sorting / UI tone
+    example: str = ""   # markdown fenced code block, "" when not derivable
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,11 @@ class StartHere:
     # `configure_supervisor()`. None when no manifest was detected; the
     # renderer falls back to a generic block in that case.
     bootstrap: BootstrapInfo | None = None
+    # When the scanned repo is itself a framework / SDK (langchain,
+    # llamaindex, etc.), the chokepoints are *consumer integration
+    # surfaces*, not deployed wrap points. The renderer prepends a banner
+    # to keep the user from acting on the report as if it were their app.
+    repo_kind: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -462,6 +472,58 @@ def _build_capabilities(summary: RepoSummary, findings: list[Finding],
     return seen_phrases
 
 
+def _risk_wrap_example(f: Finding) -> str:
+    """Render a copy-paste wrap example for the function enclosing `f.line`.
+
+    Walks the file's AST to find the innermost FunctionDef / AsyncFunctionDef
+    that contains the finding's line. Renders a 5-line markdown code block
+    with `@supervised(<f.suggested_action_type>)` over that function's real
+    signature. The dev can paste it on top of their existing function — the
+    body is elided as `...` so we don't pretend to rewrite their code.
+
+    Returns "" when the file isn't .py / .ipynb, can't be read or parsed,
+    or the call lives at module scope (no enclosing def). The card-renderer
+    treats empty as "skip the example row".
+    """
+    suffix = Path(f.file).suffix.lower()
+    if suffix not in (".py", ".ipynb"):
+        return ""
+    text = safe_read(Path(f.file))
+    if text is None:
+        return ""
+    tree = parse_python(text)
+    if tree is None:
+        return ""
+
+    enclosing: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        end = getattr(node, "end_lineno", node.lineno) or node.lineno
+        if not (node.lineno <= f.line <= end):
+            continue
+        # Innermost wins (e.g., a method inside a class wrapping a helper def).
+        if enclosing is None or node.lineno > enclosing.lineno:
+            enclosing = node
+
+    if enclosing is None:
+        return ""
+
+    action_type = f.suggested_action_type or "tool_use"
+    keyword = "async def" if isinstance(enclosing, ast.AsyncFunctionDef) else "def"
+    args_repr = _format_python_args(enclosing.args)
+    rel = _short_path(f.file)
+    return (
+        f"```python\n"
+        f"from supervisor_guards import supervised\n"
+        f"\n"
+        f"@supervised(\"{action_type}\")\n"
+        f"{keyword} {enclosing.name}({args_repr}):  # {rel}:{enclosing.lineno}\n"
+        f"    ...\n"
+        f"```"
+    )
+
+
 def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Risk]:
     """One Risk per high-confidence capability key, ordered by risk_severity.
 
@@ -509,6 +571,7 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
             possible_chain=card["chain"],
             do_this_now=card["do"],
             family=key,
+            example=_risk_wrap_example(f),
         ))
     return risks
 
@@ -516,10 +579,67 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
 # Method names to prefer as the "main" wrap point inside an agent class, in
 # priority order. The first match wins. Falls back to the first public method
 # if none of these are present.
+#
+# Includes langchain idioms (`plan` / `aplan`) so the picker doesn't fall
+# through to "first public method" on classes whose first def is a `@property`
+# (e.g. `XMLAgent.input_keys`) — that produced "wrap input_keys" snippets
+# that did nothing at runtime.
 _PRIMARY_METHOD_PREFERENCE = (
     "handle", "execute", "dispatch", "run",
     "process", "route", "invoke", "call", "step",
+    "plan", "aplan", "ainvoke", "arun",
+    "reason", "decide", "orchestrate",
 )
+
+
+# Method decorators that mean "do not put @supervised here" — wrapping these
+# either has no runtime effect or applies the gate to metadata, not behaviour:
+# - `@property` returns a value at attribute access; the dev expects to wrap a
+#   *method invocation*, not a getter. (`XMLAgent.input_keys` was the symptom
+#   that surfaced this.)
+# - `@classmethod` / `@staticmethod` aren't bound to instances; the gate often
+#   needs `self` to read tenant/user context. Skip and let the picker find a
+#   real instance method.
+# - `@abstractmethod` and `abc.abstractmethod` declare an interface — the body
+#   is contract-only, subclasses don't inherit decorators applied to abstracts.
+_SKIP_METHOD_DECORATOR_NAMES = frozenset({
+    "property",
+    "classmethod",
+    "staticmethod",
+    "abstractmethod", "abc.abstractmethod",
+    "abstractproperty", "abc.abstractproperty",
+    "abstractclassmethod", "abc.abstractclassmethod",
+    "abstractstaticmethod", "abc.abstractstaticmethod",
+    "cached_property", "functools.cached_property",
+})
+
+
+def _decorator_dotted(node: ast.expr) -> str | None:
+    """Render a decorator AST node as a dotted name. Handles `@foo`,
+    `@foo.bar`, and the call form `@foo("0.1.0")`."""
+    target = node.func if isinstance(node, ast.Call) else node
+    parts: list[str] = []
+    while isinstance(target, ast.Attribute):
+        parts.append(target.attr)
+        target = target.value
+    if isinstance(target, ast.Name):
+        parts.append(target.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
+
+def _method_is_skippable(method: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True when `method` carries a decorator that disqualifies it as a
+    `@supervised` target — properties, class/static methods, abstracts."""
+    for dec in method.decorator_list:
+        dotted = _decorator_dotted(dec)
+        if dotted is None:
+            continue
+        bare = dotted.rsplit(".", 1)[-1]
+        if dotted in _SKIP_METHOD_DECORATOR_NAMES or bare in _SKIP_METHOD_DECORATOR_NAMES:
+            return True
+    return False
 
 # Variable names that, when used as the LHS of a comparison or as the subject
 # of a `match` statement, indicate "this method routes by a label produced
@@ -594,6 +714,8 @@ def _pick_method_for_wrap(
     methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for child in cls.body:
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _method_is_skippable(child):
+                continue
             methods[child.name] = child
 
     if parallel_methods:
@@ -701,6 +823,7 @@ def _python_wrap_snippet(target: WrapTarget) -> str | None:
 def _build_do_this_now(
     targets: list[WrapTarget],
     framework_signals: list[FrameworkSignal] | None = None,
+    repo_kind: str = "unknown",
 ) -> str:
     """Render the single concrete next step as a markdown snippet block.
 
@@ -712,7 +835,51 @@ def _build_do_this_now(
     When `targets` is empty but a framework signal is present (e.g. the repo
     only has `from langchain.agents import …`), point at that file with a
     concrete next step instead of the generic empty-state copy.
+
+    When `repo_kind == "framework"` (the langchain shape — see
+    `repo_kind.py`), the wrap recommendation is inverted: the consumers
+    of this package — not this codebase — are the ones that need wraps.
+    The returned copy points the maintainer at the threat-model-for-
+    consumers playbook instead of suggesting they decorate a class that
+    ships to thousands of downstream apps.
     """
+    if repo_kind == "framework":
+        cap_lines: list[str] = []
+        if targets:
+            primary = targets[0]
+            cap_lines.append(
+                f"Top symbol detected: **{primary.label}** in "
+                f"`{_short_path(primary.file)}:{primary.line}`. Document "
+                f"the threat model on its public API; wrapping it here only "
+                f"protects callers that import this build of the package."
+            )
+        signals = framework_signals or []
+        if signals:
+            sig = signals[0]
+            cap_lines.append(
+                f"Framework presence: `{sig.framework}` at "
+                f"`{_short_path(sig.file)}:{sig.line}`. Surface this in your "
+                f"docs so consumers know which loop they need to gate."
+            )
+        if not cap_lines:
+            cap_lines.append(
+                "No agent-shaped class to wrap directly. Document which "
+                "public APIs run an LLM loop, and link consumers to the "
+                "runtime-supervisor wrap guide."
+            )
+        guidance = (
+            "This repo looks like a **library or framework** — a distributable "
+            "package, not a deployed agent. `@supervised` belongs in the "
+            "consumer's agent loop, not in the library code itself."
+        )
+        body = "\n\n".join([guidance, *cap_lines])
+        next_step = (
+            "**Do this now (maintainer):** ship a `THREAT_MODEL.md` listing "
+            "(a) which public APIs invoke an LLM, (b) which trigger real-world "
+            "side effects (shell, filesystem, payments), and (c) the "
+            "recommended `@supervised(...)` wrap point on the consumer side."
+        )
+        return f"{body}\n\n{next_step}"
     if not targets:
         signals = framework_signals or []
         if signals:
@@ -796,8 +963,8 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     framework_signals = _build_framework_signals(summary, findings)
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(findings, p)
-    do_now = _build_do_this_now(targets, framework_signals)
     bootstrap = _build_bootstrap(repo_root, targets) if repo_root is not None else None
+    do_now = _build_do_this_now(targets, framework_signals, summary.repo_kind)
     return StartHere(
         top_wrap_targets=targets,
         repo_capabilities=capabilities,
@@ -806,6 +973,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         hidden_counter=dict(summary.hidden_findings),
         framework_signals=framework_signals,
         bootstrap=bootstrap,
+        repo_kind=summary.repo_kind,
     )
 
 
@@ -952,6 +1120,21 @@ def render_start_here_md(sh: StartHere) -> str:
       6. Ignore this for now
     """
     parts: list[str] = ["# Start here", ""]
+
+    # Framework banner — `langchain`, `llamaindex`, `crewai` source repos hit
+    # this. Without it, the user reads the report as if their app were the
+    # one with the chokepoints, and ends up wrapping classes the framework
+    # marks `@deprecated`. The banner reframes the findings as integration
+    # surfaces consumers wrap, not call-sites the maintainer guards.
+    if sh.repo_kind == "framework":
+        parts.append(
+            "> **This is a framework / SDK, not a deployed agent.** "
+            "The chokepoints below are *consumer integration surfaces* — "
+            "where downstream apps that import this library should drop "
+            "their `@supervised` wrap. The framework itself doesn't run an "
+            "agent loop here, so don't add the wrap to this repo."
+        )
+        parts.append("")
 
     # 0. Step 0 — install the SDK (only when bootstrap was detected)
     parts.extend(_render_step0(sh))

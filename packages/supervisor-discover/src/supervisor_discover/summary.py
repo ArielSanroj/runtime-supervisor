@@ -13,7 +13,10 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pathlib import Path
+
 from .findings import Finding
+from .repo_kind import detect_repo_kind
 
 if TYPE_CHECKING:
     from .start_here import StartHere
@@ -139,6 +142,13 @@ class RepoSummary:
     #   "mcp-server+langchain" — both
     #   None                   — generic agent code
     repo_type: str | None = None
+    # Framework vs app classification. "framework" → this repo is a
+    # distributable SDK; the chokepoints below are *consumer integration
+    # surfaces*, not deployed wrap targets. The renderers in start_here.py
+    # use this to switch the lead copy from "wrap here" to "wrap when you
+    # adopt this in your app". "app" → standard runtime, normal copy.
+    # "unknown" → heuristic was inconclusive; default to standard copy.
+    repo_kind: str = "unknown"
     # Counts of findings hidden from START_HERE / public output, by category:
     #   "tests"           — files in tests/, __tests__/, etc.
     #   "legacy"          — files in legacy/, archive/, deprecated/
@@ -285,7 +295,11 @@ def finding_wrap_rank(f: Finding) -> tuple[int, int, str]:
     return (tier, f.line, f.file)
 
 
-def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None = None) -> RepoSummary:
+def build_summary(
+    findings: list[Finding],
+    hidden_counts: dict[str, int] | None = None,
+    root: Path | None = None,
+) -> RepoSummary:
     frameworks_seen: Counter[str] = Counter()
     http_count = 0
     payments: dict[str, set[str]] = {}
@@ -350,8 +364,19 @@ def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None 
                 if name and name not in tools_seen:
                     tools.append(name)
                     tools_seen.add(name)
-            # Every HIGH-confidence orchestrator finding is a candidate chokepoint.
-            if f.confidence == "high" and kind in ("agent-class", "framework-import"):
+            # Every HIGH-confidence agent-class finding is a candidate
+            # chokepoint. Framework-import findings flow through at any
+            # confidence — they're informational signals consumed by the
+            # FrameworkSignal panel, not wrap targets. They were rated
+            # `high` historically, which inflated the "real-world actions"
+            # count and pushed pure-import lines onto the public landing.
+            # The agent-class branch keeps the high-confidence-only filter
+            # so generic shim/test classes don't sneak into wrap targets.
+            is_chokepoint_candidate = (
+                (f.confidence == "high" and kind == "agent-class")
+                or kind == "framework-import"
+            )
+            if is_chokepoint_candidate:
                 label = (
                     extra.get("class_name")
                     or extra.get("framework")
@@ -458,6 +483,24 @@ def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None 
     else:
         repo_type = None
 
+    # Framework-vs-app — only computed when caller passed a root path.
+    # Pure-findings callers (tests, in-memory pipelines) get "unknown".
+    if root is not None:
+        # Count chokepoints whose file path lives in /agents/ or similar —
+        # langchain has 60+ of these and zero deployed runtime, the
+        # ratio that flips the heuristic to framework.
+        chokepoints_in_agent_path = sum(
+            1 for cp in unique_chokepoints
+            if any(h in cp.file.lower() for h in ("/agents/", "/agent/", "/orchestrator/"))
+        )
+        repo_kind = detect_repo_kind(
+            root,
+            http_routes=http_count,
+            chokepoints_in_agent_path=chokepoints_in_agent_path,
+        )
+    else:
+        repo_kind = "unknown"
+
     return RepoSummary(
         frameworks=primary_fw,
         http_routes=http_count,
@@ -480,6 +523,7 @@ def build_summary(findings: list[Finding], hidden_counts: dict[str, int] | None 
             has_claude_md=has_claude_md,
         ),
         repo_type=repo_type,
+        repo_kind=repo_kind,
         hidden_findings=dict(hidden_counts or {}),
     )
 

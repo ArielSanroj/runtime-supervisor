@@ -15,6 +15,23 @@ _TS_NODE_CRON = re.compile(r"""\b(?:cron|node-cron)\b|cron\.schedule\s*\(""")
 _CRONTAB_LINE = re.compile(r"^\s*[*\d/,\-]+\s+[*\d/,\-]+\s+[*\d/,\-]+\s+[*\d/,\-]+\s+[*\d/,\-]+\s+\S+")
 _GHA_SCHEDULE = re.compile(r"^\s*-?\s*cron:\s*['\"]")
 
+# Path fragments that indicate a CI/CD pipeline definition rather than a
+# production-deployed scheduler. A `cron:` entry under `.github/workflows/`
+# fires on GitHub Actions runners, not on the repo's deployed agent — the
+# operator can't wrap a `@supervised` decorator around a YAML step. Keep the
+# finding (still useful for inventory) but downgrade confidence so it doesn't
+# headline as a wrap target. The `config_files` walker only yields paths
+# under `.github/workflows/` plus root-level `crontab*` and
+# `docker-compose*`, so the prod regression case is the root crontab.
+_CI_PATH_FRAGMENTS = (
+    "/.github/workflows/", "/.github/actions/",
+)
+
+
+def _is_ci_path(file: str) -> bool:
+    lower = "/" + file.lower().replace("\\", "/").lstrip("/")
+    return any(frag in lower for frag in _CI_PATH_FRAGMENTS)
+
 
 def scan(root: Path) -> list[Finding]:
     findings: list[Finding] = []
@@ -56,16 +73,32 @@ def scan(root: Path) -> list[Finding]:
         text = safe_read(path)
         if text is None:
             continue
+        is_ci = _is_ci_path(str(path))
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _CRONTAB_LINE.match(line) or _GHA_SCHEDULE.match(line):
+                if is_ci:
+                    rationale = (
+                        "CI cron — runs on GitHub Actions / CircleCI / GitLab "
+                        "runners, not on the deployed agent. No wrap needed; "
+                        "kept here for inventory."
+                    )
+                    extra = {"kind": "crontab-or-gha", "is_ci": True}
+                    confidence = "low"
+                else:
+                    rationale = (
+                        "Scheduled job in config — supervise the target "
+                        "script/handler manually."
+                    )
+                    extra = {"kind": "crontab-or-gha"}
+                    confidence = "high"
                 findings.append(Finding(
                     scanner="cron-schedules",
                     file=str(path),
                     line=lineno,
                     snippet=line.strip()[:120],
                     suggested_action_type="other",
-                    confidence="high",
-                    rationale="Scheduled job in config — supervise the target script/handler manually.",
-                    extra={"kind": "crontab-or-gha"},
+                    confidence=confidence,
+                    rationale=rationale,
+                    extra=extra,
                 ))
     return findings

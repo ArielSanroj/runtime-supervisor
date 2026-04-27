@@ -131,6 +131,129 @@ def _is_shim_class(name: str) -> bool:
     return any(tok in lower for tok in _CLASS_NAME_BLOCKLIST)
 
 
+# Decorator names that mark a class or method as not a real wrap target:
+# - `@deprecated(...)` — class is slated for removal; wrapping it adds nothing
+#   for users on the supported path. langchain's deprecated agents (XMLAgent,
+#   SelfAskWithSearchAgent, ConversationalAgent) all sit here.
+# - `@abstractmethod` — body is contract-only; subclasses don't inherit a
+#   wrap applied to the abstract def. The chokepoint is the concrete override.
+_DEPRECATED_DECORATOR_NAMES = frozenset({
+    "deprecated", "typing.deprecated", "warnings.deprecated",
+    "langchain_core._api.deprecated", "langchain._api.deprecated",
+})
+_ABSTRACT_DECORATOR_NAMES = frozenset({
+    "abstractmethod", "abc.abstractmethod",
+    "abstractclassmethod", "abc.abstractclassmethod",
+    "abstractstaticmethod", "abc.abstractstaticmethod",
+    "abstractproperty", "abc.abstractproperty",
+})
+
+
+def _dotted_decorator_name(node: ast.expr) -> str | None:
+    """Render a decorator AST node as a dotted name.
+
+    Handles `@foo`, `@foo.bar`, `@foo.bar.baz`, and the call form
+    `@foo("0.1.0")`. Returns None for shapes we don't understand
+    (e.g. `@functools.partial(...)`).
+    """
+    target = node.func if isinstance(node, ast.Call) else node
+    parts: list[str] = []
+    while isinstance(target, ast.Attribute):
+        parts.append(target.attr)
+        target = target.value
+    if isinstance(target, ast.Name):
+        parts.append(target.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
+
+def _decorator_names(decorator_list: list[ast.expr]) -> set[str]:
+    """Return the dotted name AND bare last segment for every decorator,
+    so a check against the bare name (`abstractmethod`) hits whether the
+    user wrote `@abstractmethod` or `@abc.abstractmethod`."""
+    out: set[str] = set()
+    for dec in decorator_list:
+        dotted = _dotted_decorator_name(dec)
+        if dotted is None:
+            continue
+        out.add(dotted)
+        out.add(dotted.rsplit(".", 1)[-1])
+    return out
+
+
+def _deprecated_class_names(text: str) -> set[str]:
+    """Names of every class in this Python source decorated with `@deprecated`.
+
+    Uses `ast.walk` so decorated classes nested in `if TYPE_CHECKING:` blocks
+    or inside conditional branches are still seen. AST-first because the
+    scanner has to be immune to `# @deprecated` showing up in a comment or
+    a regex-searched docstring.
+    """
+    tree = parse_python(text)
+    if tree is None:
+        return set()
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if _decorator_names(node.decorator_list) & _DEPRECATED_DECORATOR_NAMES:
+            out.add(node.name)
+    return out
+
+
+def _is_abstract_or_stub_method(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """True when wrapping this method would do nothing useful at runtime:
+    `@abstractmethod`, body that's only a docstring, only `pass`, or only
+    `raise NotImplementedError`. Subclasses don't inherit decorators applied
+    to abstracts, and pure-stub methods have no behavior to gate.
+    """
+    if _decorator_names(node.decorator_list) & _ABSTRACT_DECORATOR_NAMES:
+        return True
+    body = node.body
+    if not body:
+        return True
+
+    def _is_docstring(stmt: ast.stmt) -> bool:
+        return (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+
+    def _is_not_implemented(stmt: ast.stmt) -> bool:
+        if not isinstance(stmt, ast.Raise) or stmt.exc is None:
+            return False
+        exc = stmt.exc
+        if isinstance(exc, ast.Call):
+            exc = exc.func
+        if isinstance(exc, ast.Name):
+            return exc.id == "NotImplementedError"
+        if isinstance(exc, ast.Attribute):
+            return exc.attr == "NotImplementedError"
+        return False
+
+    rest = body[1:] if _is_docstring(body[0]) else body
+    if not rest:
+        return True
+    if len(rest) == 1:
+        only = rest[0]
+        if isinstance(only, ast.Pass):
+            return True
+        if _is_not_implemented(only):
+            return True
+        # `... ` (Ellipsis literal as body) — Protocol / interface stub.
+        if (
+            isinstance(only, ast.Expr)
+            and isinstance(only.value, ast.Constant)
+            and only.value.value is Ellipsis
+        ):
+            return True
+    return False
+
+
 # Modules whose import implies "this code makes decisions from LLM output".
 # An agent-shaped class in a file that imports any of these is a real agent;
 # one that doesn't is more likely a pipeline/worker that just inherited the
@@ -448,7 +571,13 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 extra={"kind": "tool-registration", "tool_name": tool_name, "pattern": label},
             ))
 
-    # 2. Framework imports — HIGH
+    # 2. Framework imports — LOW (informational signal, not a wrap point).
+    # An import line is not a call-site; wrapping it does nothing. We keep the
+    # finding so the FrameworkSignal panel can show "this repo uses langchain",
+    # but rated `low` so it stays hidden behind the high-confidence gate in
+    # the public scan output. The chokepoint builder in `summary.py` special-
+    # cases framework-import to still flow into `framework_signals` regardless
+    # of confidence — see the carve-out at the agent-orchestrators branch.
     for pattern, framework in _FRAMEWORK_IMPORTS:
         for m in pattern.finditer(text):
             line = text[: m.start()].count("\n") + 1
@@ -458,7 +587,7 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 line=line,
                 snippet=m.group(0)[:80].replace("\n", " "),
                 suggested_action_type="tool_use",
-                confidence="high",
+                confidence="low",
                 rationale=_RATIONALE_FRAMEWORK,
                 extra={"kind": "framework-import", "framework": framework},
             ))
@@ -470,6 +599,12 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
     # helper). Empty for non-Python files.
     multi_method_classes = (
         _multi_method_dispatchers(text) if path.suffix == ".py" else {}
+    )
+
+    # Classes marked `@deprecated(...)` — slated for removal. Skip them so we
+    # don't recommend wrapping APIs that the framework has already retired.
+    deprecated_classes = (
+        _deprecated_class_names(text) if path.suffix == ".py" else set()
     )
 
     # Pipeline-vs-agent classification: a class with an agent-shaped name in
@@ -488,6 +623,8 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
             line = text[: m.start()].count("\n") + 1
             class_name = m.group(1) if m.groups() else "?"
             if _is_shim_class(class_name):
+                continue
+            if class_name in deprecated_classes:
                 continue
             if is_pipeline:
                 # Pipeline orchestrators stay in FULL_REPORT for completeness
@@ -525,7 +662,9 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
     # or strings). JS/TS falls back to regex with required `function` keyword.
     if in_agent_path:
         if path.suffix == ".py":
-            findings.extend(_py_method_defs(path, text, findings))
+            findings.extend(
+                _py_method_defs(path, text, findings, deprecated_classes)
+            )
         else:
             findings.extend(_js_method_defs(path, text, findings))
 
@@ -618,22 +757,34 @@ def _multi_method_dispatchers(text: str) -> dict[str, list[str]]:
     return out
 
 
-def _py_method_defs(path: Path, text: str, existing: list[Finding]) -> list[Finding]:
+def _py_method_defs(
+    path: Path,
+    text: str,
+    existing: list[Finding],
+    deprecated_classes: set[str] | None = None,
+) -> list[Finding]:
     """AST-based Python method detection. Immune to word matches in comments,
-    docstrings, f-strings, and call sites — the AST only parses real defs."""
+    docstrings, f-strings, and call sites — the AST only parses real defs.
+
+    Walks classes explicitly so we can skip methods whose enclosing class is
+    `@deprecated` — wrapping a method on a class slated for removal is the
+    same false positive as wrapping the class itself.
+    """
     tree = parse_python(text)
     if tree is None:
         return []
+    deprecated_classes = deprecated_classes or set()
     source_lines = text.splitlines()
     out: list[Finding] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+
+    def _emit_method(node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.name not in _AGENT_METHOD_NAMES_SET:
-            continue
+            return
+        if _is_abstract_or_stub_method(node):
+            return
         line = node.lineno
         if _near_class_hit(existing, str(path), line):
-            continue
+            return
         snippet = source_lines[line - 1].strip()[:80] if line - 1 < len(source_lines) else f"def {node.name}("
         out.append(Finding(
             scanner="agent-orchestrators",
@@ -649,6 +800,24 @@ def _py_method_defs(path: Path, text: str, existing: list[Finding]) -> list[Find
             rationale=_RATIONALE_CHOKEPOINT,
             extra={"kind": "agent-method", "method_name": node.name},
         ))
+
+    # Walk classes first; their bodies host most agent methods, and we have to
+    # skip the ones nested inside `@deprecated` classes. Anything emitted at
+    # module scope falls through to the second pass below.
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        if cls.name in deprecated_classes:
+            continue
+        for child in cls.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _emit_method(child)
+
+    # Top-level functions (rare for agent methods, but cheap to cover).
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _emit_method(node)
+
     return out
 
 

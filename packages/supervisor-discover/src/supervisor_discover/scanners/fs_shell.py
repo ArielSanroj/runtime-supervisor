@@ -253,11 +253,79 @@ def _extract_argv(node: ast.Call) -> list[str] | None:
     return None
 
 
+# Function names that look like the user has *already* validated the input
+# before passing it to a destructive call (`_validate_and_resolve_path`,
+# `check_path`, `sanitize_args`, ...). Match the bare last-segment so
+# `self._validate_path(...)` and `module.validate_path(...)` both count.
+# Conservative shape: leading verb + underscore + (anything) + noun suffix.
+# Requires the verb-noun structure end-to-end so:
+#   _validate_path                  ✓
+#   _validate_and_resolve_path      ✓ (compound, common in real code)
+#   _check_args                     ✓
+#   validate                        ✗ (verb-only, too generic — form libs)
+#   _validator_name                 ✗ (validator + name, no `_` after verb)
+_VALIDATION_NAME_RE = re.compile(
+    r"^_?(validate|check|sanitize|resolve|verify|assert)_\w*"
+    r"(path|input|args|cmd|name|file|dir|target|argv|command)$"
+)
+
+
+def _build_parent_map(tree: ast.Module) -> dict[int, ast.AST]:
+    """id(child) → parent. Single pass over the tree. Used to walk up from a
+    Call node to its enclosing FunctionDef without recursing each time."""
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _enclosing_function(
+    node: ast.AST, parents: dict[int, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    cur = parents.get(id(node))
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur
+        cur = parents.get(id(cur))
+    return None
+
+
+def _upstream_validation_name(
+    call: ast.Call, parents: dict[int, ast.AST]
+) -> str | None:
+    """Return the name of a validation-shaped function call that runs
+    before `call` in the same enclosing function. None when no enclosing
+    function exists or no matching call appears earlier.
+
+    Heuristic by design — not taint tracking. It catches the common shape
+    "the file already validates the path on the line before the destructive
+    call" without trying to prove the validated value reaches the call.
+    Reviewers see the validation hint and decide.
+    """
+    func = _enclosing_function(call, parents)
+    if func is None:
+        return None
+    for sibling in ast.walk(func):
+        if not isinstance(sibling, ast.Call) or sibling is call:
+            continue
+        if sibling.lineno >= call.lineno:
+            continue
+        name = _dotted_name(sibling.func)
+        if not name:
+            continue
+        bare = name.rsplit(".", 1)[-1]
+        if _VALIDATION_NAME_RE.match(bare):
+            return bare
+    return None
+
+
 def _scan_python(path: Path, text: str) -> list[Finding]:
     tree = parse_python(text)
     if tree is None:
         return []
     source_lines = text.splitlines()
+    parents = _build_parent_map(tree)
     out: list[Finding] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -304,6 +372,18 @@ def _scan_python(path: Path, text: str) -> list[Finding]:
         }
         if argv is not None:
             extra["argv"] = argv
+
+        # Local-validation hint — same function had a `_validate_path` /
+        # `check_args` / similar call before this one. Drop high → medium so
+        # the report flags it as "review for coverage" rather than top wrap.
+        # Only applies to fs/shell families; eval and unsafe-deserialize are
+        # not addressable by argument validation in the same way.
+        if family in {"fs-delete", "shell-exec", "fs-write"} and severity == "high":
+            validator = _upstream_validation_name(node, parents)
+            if validator:
+                extra["has_local_validation"] = validator
+                severity = "medium"
+
         out.append(Finding(
             scanner="fs-shell",
             file=str(path),

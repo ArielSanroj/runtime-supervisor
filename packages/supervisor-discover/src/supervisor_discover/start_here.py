@@ -97,9 +97,61 @@ class StartHere:
     # surfaces*, not deployed wrap points. The renderer prepends a banner
     # to keep the user from acting on the report as if it were their app.
     repo_kind: str = "unknown"
+    # When `top_wrap_targets` and `framework_signals` are both empty but the
+    # repo still has supervised-worthy calls (Stripe, DB mutations, route
+    # handlers, etc.), point at the file where those calls concentrate.
+    # Lets the scanner stay useful on plain-SaaS repos where "agent loop" is
+    # the wrong mental model.
+    capability_hotspot: WrapTarget | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# Scanners whose high-confidence findings count as "supervised-worthy" for
+# the hotspot fallback. Excludes `agent-orchestrators` (already covered by
+# `top_wrap_targets`) and informational tiers.
+_HOTSPOT_SCANNERS = frozenset({
+    "payment-calls", "db-mutations", "http-routes",
+    "llm-calls", "fs-shell", "email-sends", "messaging",
+    "voice-actions", "calendar-actions", "media-gen",
+    "auth-bypass", "mcp-tools",
+})
+
+
+def _pick_capability_hotspot(findings: list[Finding]) -> WrapTarget | None:
+    """File with the highest concentration of high-confidence calls a
+    supervisor would gate. Used as the wrap-target fallback when the repo
+    has no agent class and no framework signal — the typical SaaS repo
+    (Stripe checkout + a webhook + Supabase) lives in this branch."""
+    by_file: dict[str, list[Finding]] = {}
+    for f in findings:
+        if f.confidence != "high":
+            continue
+        if f.scanner not in _HOTSPOT_SCANNERS:
+            continue
+        if (f.extra or {}).get("suppressed"):
+            continue
+        by_file.setdefault(f.file, []).append(f)
+    if not by_file:
+        return None
+    file, items = max(
+        by_file.items(),
+        key=lambda kv: (len(kv[1]), -min(f.line for f in kv[1])),
+    )
+    items.sort(key=lambda f: f.line)
+    primary = items[0]
+    scanners = sorted({f.scanner for f in items})
+    return WrapTarget(
+        label="capability hotspot",
+        file=file,
+        line=primary.line,
+        why=(
+            f"{len(items)} high-confidence calls concentrate in this file "
+            f"({', '.join(scanners)}). One wrapper at this entrypoint covers "
+            "most of the repo's supervised-worthy surface."
+        ),
+    )
 
 
 # ─── builder ──────────────────────────────────────────────────────────
@@ -824,6 +876,8 @@ def _build_do_this_now(
     targets: list[WrapTarget],
     framework_signals: list[FrameworkSignal] | None = None,
     repo_kind: str = "unknown",
+    *,
+    hotspot: WrapTarget | None = None,
 ) -> str:
     """Render the single concrete next step as a markdown snippet block.
 
@@ -894,9 +948,22 @@ def _build_do_this_now(
                 f"Open `runtime-supervisor/FULL_REPORT.md` for the full list "
                 f"of detected callables."
             )
+        if hotspot is not None:
+            rel = _short_path(hotspot.file)
+            return (
+                f"No agent class detected, but supervised-worthy calls "
+                f"concentrate in `{rel}:{hotspot.line}`. {hotspot.why} "
+                f"Open that file and wrap the exported handler with "
+                f"`@supervised(...)` matching what it actually does "
+                f"(`payment` for Stripe calls, `account_change` for "
+                f"profile mutations, `data_access` for general DB writes)."
+            )
         return (
-            "No obvious wrap target in this repo. Start with the entry-point "
-            "of your agent loop (the function that decides which tool to call)."
+            "No agent class and no high-confidence supervised-worthy calls "
+            "in this scan. If this repo is meant to drive an agent, the "
+            "loop entry-point is the wrap point. If it's a plain SaaS "
+            "today and the agent comes later, re-scan once you add the "
+            "first SDK call (Stripe, OpenAI, sgMail, …)."
         )
     primary = targets[0]
     # Try to render a snippet from the real method signature first.
@@ -964,7 +1031,17 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(findings, p)
     bootstrap = _build_bootstrap(repo_root, targets) if repo_root is not None else None
-    do_now = _build_do_this_now(targets, framework_signals, summary.repo_kind)
+    # Hotspot fallback only matters when neither an agent class nor a
+    # framework loop is detected. Computing it always would be cheap, but
+    # gating it here keeps the renderers deterministic.
+    hotspot = (
+        _pick_capability_hotspot(findings)
+        if not targets and not framework_signals
+        else None
+    )
+    do_now = _build_do_this_now(
+        targets, framework_signals, summary.repo_kind, hotspot=hotspot,
+    )
     return StartHere(
         top_wrap_targets=targets,
         repo_capabilities=capabilities,
@@ -974,6 +1051,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         framework_signals=framework_signals,
         bootstrap=bootstrap,
         repo_kind=summary.repo_kind,
+        capability_hotspot=hotspot,
     )
 
 
@@ -1020,11 +1098,35 @@ _FRAMEWORK_LABEL = {
 }
 
 
+def _has_anything_to_wrap(sh: StartHere) -> bool:
+    """True when at least one user-actionable signal is present.
+
+    Step 0 (`poetry add supervisor-guards`) only earns its place at the top
+    of the report when the reader is going to paste a `@supervised(...)`
+    wrap somewhere — otherwise the install command reads as marketing
+    (the vibefixing scan on `nsidnev/fastapi-realworld-example-app`
+    surfaced this: 0 risks, 0 wrap targets, but Step 0 still bannered the
+    SDK before any findings). The signal we use:
+
+    - `top_wrap_targets`: a concrete agent class / tool registration
+      survived the framework / suppression filters.
+    - `top_risks`: a high-confidence finding made it to the priority cards.
+    - `framework_signals`: an agent framework import is present, so the
+      consumer wraps the tool callable they pass in.
+
+    Empty on all three → no wrap to do here → skip Step 0 entirely.
+    """
+    return bool(sh.top_wrap_targets or sh.top_risks or sh.framework_signals)
+
+
 def _render_step0(sh: StartHere) -> list[str]:
-    """Markdown lines for the Step 0 section. Returns [] when bootstrap is
-    `None` (preserves the previous output exactly when the caller doesn't
-    pass `repo_root`)."""
+    """Markdown lines for the Step 0 section. Returns [] when:
+      - bootstrap is `None` (caller didn't pass `repo_root`), OR
+      - the report has nothing to wrap (no targets, risks, or framework
+        signals) — see `_has_anything_to_wrap` for the rationale."""
     if sh.bootstrap is None:
+        return []
+    if not _has_anything_to_wrap(sh):
         return []
     bs = sh.bootstrap
     out: list[str] = ["## Step 0 — install the SDK", ""]
@@ -1166,10 +1268,29 @@ def render_start_here_md(sh: StartHere) -> str:
             "`AgentExecutor.invoke(...)` — not the import line itself. See "
             "_Agent frameworks detected_ below for every framework hit."
         )
+    elif sh.capability_hotspot is not None:
+        h = sh.capability_hotspot
+        rel = _short_path(h.file)
+        parts.append(
+            f"No agent class detected. The supervised-worthy calls cluster "
+            f"in `{rel}:{h.line}`."
+        )
+        parts.append("")
+        parts.append(f"_{h.why}_")
+        parts.append("")
+        parts.append(
+            "Open that file and wrap the exported handler with "
+            "`@supervised(...)` matching what it does — `payment` for Stripe "
+            "calls, `account_change` for profile mutations, `data_access` for "
+            "general DB writes."
+        )
     else:
         parts.append(
-            "No obvious wrap target. Start with the entry-point of your agent "
-            "loop (the function that decides which tool to call)."
+            "No agent class and no high-confidence supervised-worthy calls "
+            "in this scan. If this repo is meant to drive an agent, the loop "
+            "entry-point is the wrap point. If it's a plain SaaS today and "
+            "the agent comes later, re-scan once you add the first SDK call "
+            "(Stripe, OpenAI, sgMail, …)."
         )
     parts.append("")
 
@@ -1218,9 +1339,17 @@ def render_start_here_md(sh: StartHere) -> str:
             parts.append(f"- Do this now: {r.do_this_now}")
             parts.append("")
     else:
+        # Reasons we land here vary: a plain SaaS repo today, an LLM
+        # framework whose risk lives in consumer code, or a library that
+        # ships side-effecting helpers without an agent loop. The honest
+        # phrasing tells the dev which case applies — and what would change
+        # the result on the next scan — instead of implying the repo is
+        # incomplete.
         parts.append(
-            "No high-confidence risk patterns surfaced — the repo may not "
-            "expose agent-grade integrations yet."
+            "No high-confidence risk patterns matched the current detectors "
+            "in this scan. Re-scan after adding a new SDK call (Stripe, "
+            "OpenAI, sgMail, …) or a new mutation surface — and check the "
+            "release notes if you expected a specific category to fire."
         )
         parts.append("")
 
@@ -1282,8 +1411,14 @@ def render_cli_start_here(sh: StartHere, *, elapsed_s: float | None = None,
         out.append("")
 
     # Step 0 — surface the install command in one line so the CLI reader
-    # knows the wrap snippet won't ImportError on first paste.
-    if sh.bootstrap is not None and sh.bootstrap.manager is not None:
+    # knows the wrap snippet won't ImportError on first paste. Skip when
+    # there's nothing to wrap (see `_has_anything_to_wrap`); the install
+    # command isn't actionable on an empty report.
+    if (
+        sh.bootstrap is not None
+        and sh.bootstrap.manager is not None
+        and _has_anything_to_wrap(sh)
+    ):
         bs = sh.bootstrap
         if bs.configure_already_called:
             out.append(f"Step 0: {bs.manager.install_cmd}  (configure_supervisor() already wired)")
@@ -1305,8 +1440,13 @@ def render_cli_start_here(sh: StartHere, *, elapsed_s: float | None = None,
         out.append(
             "   wrap the tool callable or the dispatch method, not the import)"
         )
+    elif sh.capability_hotspot is not None:
+        h = sh.capability_hotspot
+        rel = _short_path(h.file)
+        out.append(f"  (no agent class — calls cluster in {rel}:{h.line};")
+        out.append("   open that file and wrap the exported handler)")
     else:
-        out.append("  (no obvious wrap target — start at your agent loop's entry-point)")
+        out.append("  (no agent class and no supervised-worthy calls — re-scan after first SDK use)")
     out.append("")
 
     out.append("This repo can already:")

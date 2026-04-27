@@ -74,7 +74,32 @@ _SYSTEM_ATTRIBUTE_PREFIXES = (
 # `extra` payload and for tests reading findings.json.
 TAINT_SYSTEM = "system"
 TAINT_CONSTANT = "constant"
+TAINT_LLM = "llm"
 TAINT_UNKNOWN = "unknown"
+
+
+# Dotted-suffix matches that indicate the value came back from an LLM SDK
+# call. These are SDK-specific enough that false positives are rare — a
+# random class named `messages` with a `create()` would have to also
+# resolve through the alias chain, which we don't trace, so the suffix
+# match is the right granularity for an intra-procedural pass.
+#
+# Why surface this at all: today the report copy says *"If the string
+# passed to eval flows from an LLM..."* — a conditional that puts the
+# burden of proof on the reader. When the taint pass actually traces
+# the assignment back to an LLM call, the renderer can flip to
+# *"Confirmed LLM → sink:"* and stop hedging. The vibefixing scan on
+# AutoGPT was the canonical case where every finding was conditional
+# even when the flow was obvious.
+_LLM_INVOCATION_SUFFIXES = (
+    "chat.completions.create",
+    "completions.create",
+    "responses.create",
+    "messages.create",
+    "messages.stream",
+    "ChatCompletion.create",
+    "Completion.create",
+)
 
 
 def _arg_for_taint(call: ast.Call) -> ast.expr | None:
@@ -171,12 +196,24 @@ def _dotted_attribute_chain(node: ast.expr) -> str | None:
             return None
 
 
-def _classify_rhs(rhs: ast.expr) -> str:
-    """Return one of TAINT_SYSTEM / TAINT_CONSTANT / TAINT_UNKNOWN.
+def _is_llm_dotted_call(callee: str) -> bool:
+    """True when the dotted-name suffix matches a known LLM SDK invocation
+    (e.g. `client.chat.completions.create`, `messages.create`). Suffix
+    match is intentional: variable names hold the SDK client, so we
+    don't get a clean root, but the trailing path is stable across
+    aliases."""
+    return any(callee.endswith(suffix) for suffix in _LLM_INVOCATION_SUFFIXES)
 
-    Conservative: only return SYSTEM/CONSTANT when we're sure. Anything
-    else (function results from unknown sources, attribute chains we
-    don't recognize, comprehensions) returns UNKNOWN.
+
+def _classify_rhs(rhs: ast.expr) -> str:
+    """Return one of TAINT_SYSTEM / TAINT_CONSTANT / TAINT_LLM /
+    TAINT_UNKNOWN.
+
+    Conservative on SYSTEM/CONSTANT — only return them when we're sure.
+    LLM detection is a positive signal (the value came from an LLM SDK
+    invocation), surfaced so the renderer can flip conditional copy
+    ("If the string flows from an LLM…") into confirmed copy
+    ("Confirmed LLM → sink:"). Anything else returns UNKNOWN.
     """
     if isinstance(rhs, ast.Constant):
         return TAINT_CONSTANT
@@ -188,6 +225,8 @@ def _classify_rhs(rhs: ast.expr) -> str:
         # which dotted_name handles, but be defensive.
         if callee and callee.startswith("os.environ"):
             return TAINT_SYSTEM
+        if callee and _is_llm_dotted_call(callee):
+            return TAINT_LLM
         return TAINT_UNKNOWN
     if isinstance(rhs, ast.Subscript):
         # `os.environ["KEY"]` — the value here is the Subscript.
@@ -277,6 +316,20 @@ def _is_demotable_finding(f: Finding) -> bool:
     return family in {"fs-delete", "fs-write", "shell-exec", "code-eval"}
 
 
+def _is_llm_markable_finding(f: Finding) -> bool:
+    """LLM-source detection runs on the same fs-shell families as demotion
+    but accepts low-confidence findings too — when an `eval('2+2')` was
+    refined down because the literal arg looks safe, but the surrounding
+    code mutates that variable from an LLM call, the renderer still
+    benefits from knowing the LLM source for combo logic."""
+    if f.scanner != "fs-shell":
+        return False
+    if not f.file.endswith((".py", ".ipynb")):
+        return False
+    family = (f.extra or {}).get("family")
+    return family in {"fs-delete", "fs-write", "shell-exec", "code-eval"}
+
+
 def _find_call_at_line(tree: ast.Module, line: int) -> ast.Call | None:
     """Return the first Call node whose lineno equals `line`. There can
     be multiple calls on one line (`f(g(x))`); we pick the outermost,
@@ -294,24 +347,33 @@ def _find_call_at_line(tree: ast.Module, line: int) -> ast.Call | None:
 
 
 def annotate_findings(findings: list[Finding]) -> list[Finding]:
-    """Mutate `findings` to demote system/constant-derived ones to low.
+    """Mutate `findings` to mark each fs-shell finding with the source of
+    its sensitive arg, when traceable in the same function.
 
-    Each demoted finding gets:
-      - `confidence = "low"`
-      - `extra["taint_source"]` = "system" or "constant"
-      - `extra["taint_demoted"] = True`
+    Outcomes per finding (mutually exclusive):
+      - SYSTEM / CONSTANT → demote `confidence` to "low" and set
+        `extra["taint_source"]` + `extra["taint_demoted"]`.
+      - LLM → keep `confidence`, set `extra["taint_source"] = "llm"` and
+        `extra["llm_tainted"] = True`. Renderers can flip conditional
+        copy ("if the string flows from an LLM") to confirmed copy
+        ("confirmed LLM → sink").
+      - UNKNOWN → leave alone. Better to keep a real risk visible than
+        to silently demote what we can't trace.
 
-    Findings with UNKNOWN classification are left alone — better to keep
-    a real risk visible than to silently demote it. Non-Python files and
-    non-fs-shell scanners are skipped entirely.
+    Non-Python files and non-fs-shell scanners are skipped entirely.
 
-    Idempotent — re-runs leave already-demoted findings as-is.
+    Idempotent — re-runs are no-ops on already-annotated findings.
     """
     file_cache: dict[str, ast.Module | None] = {}
     for f in findings:
-        if not _is_demotable_finding(f):
+        already_demoted = (f.extra or {}).get("taint_demoted")
+        already_llm = (f.extra or {}).get("llm_tainted")
+        if already_demoted or already_llm:
             continue
-        if (f.extra or {}).get("taint_demoted"):
+
+        markable = _is_llm_markable_finding(f)
+        demotable = _is_demotable_finding(f)
+        if not (markable or demotable):
             continue
 
         if f.file not in file_cache:
@@ -333,7 +395,13 @@ def annotate_findings(findings: list[Finding]) -> list[Finding]:
             continue
         classification = _classify_arg(arg, scope, f.line)
 
-        if classification in (TAINT_SYSTEM, TAINT_CONSTANT):
+        if classification == TAINT_LLM and markable:
+            f.extra = {
+                **(f.extra or {}),
+                "taint_source": classification,
+                "llm_tainted": True,
+            }
+        elif classification in (TAINT_SYSTEM, TAINT_CONSTANT) and demotable:
             f.confidence = "low"  # type: ignore[assignment]
             f.extra = {
                 **(f.extra or {}),

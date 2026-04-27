@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterator
 
 from ..findings import Finding
-from ._utils import parse_python, python_files, safe_read, ts_js_files
+from ._utils import parse_python, python_files, safe_read, sql_files, ts_js_files
 
 _ACCOUNT_HINTS = re.compile(r"\b(users?|accounts?|customers?|profiles?|identities)\b", re.IGNORECASE)
 _PII_HINTS = re.compile(r"\b(emails?|phones?|ssn|addresses?|payments?|cards?)\b", re.IGNORECASE)
@@ -40,6 +40,22 @@ _TS_TYPEORM = re.compile(r"\.(remove|save|delete|update)\s*\(", re.IGNORECASE)
 _TS_SQL_UPDATE = re.compile(r"\bUPDATE\s+(\w+)\s+SET\b", re.IGNORECASE)
 _TS_SQL_DELETE = re.compile(r"\bDELETE\s+FROM\s+(\w+)", re.IGNORECASE)
 _TS_SQL_INSERT = re.compile(r"\bINSERT\s+INTO\s+(\w+)", re.IGNORECASE)
+
+# Supabase JS pattern: `<client>.from('table').{upsert,update,delete,insert}(`.
+# The chain shape is unique enough to not collide with array.from / drizzle's
+# `.from()` (which doesn't terminate in upsert/update/delete/insert calls).
+_TS_SUPABASE_MUTATION = re.compile(
+    r"""\.from\(\s*['"](\w+)['"]\s*\)\s*\.(upsert|update|delete|insert)\s*\(""",
+)
+_TS_SUPABASE_IMPORT = re.compile(r"""['"]@supabase/supabase-js['"]""")
+# Service-role hint: when the same module references `SERVICE_ROLE_KEY` (or
+# any casing variant) the dev knowingly chose admin privileges over RLS. The
+# write itself isn't a bug — the chokepoint is that every write from this
+# module bypasses row-level policies, so a mis-routed table or `id` argument
+# rewrites the whole table without the per-row guard.
+_TS_SERVICE_ROLE_HINT = re.compile(
+    r"""SERVICE_ROLE_KEY|service_role_key|serviceRoleKey""",
+)
 
 # Redis cache wipes — `flushall` clears every database, `flushdb` clears the
 # current one. Both are nearly always operational scripts in production code
@@ -209,6 +225,53 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                     rationale=f"Raw SQL {verb} on `{table}`.",
                     extra={"verb": verb, "table": table},
                 ))
+        # Supabase JS writes. Only emit when the file imports the SDK or the
+        # call shape unambiguously matches — otherwise we'd flag any drizzle
+        # / kysely / array `.from()` chain. Service-role presence promotes
+        # the finding to high confidence with an RLS-bypass rationale.
+        is_supabase_module = bool(
+            _TS_SUPABASE_IMPORT.search(text) or _TS_SUPABASE_MUTATION.search(text)
+        )
+        if is_supabase_module:
+            service_role = bool(_TS_SERVICE_ROLE_HINT.search(text))
+            for m in _TS_SUPABASE_MUTATION.finditer(text):
+                line = text[: m.start()].count("\n") + 1
+                table = m.group(1)
+                op = m.group(2).lower()
+                if service_role:
+                    rationale = (
+                        f"Supabase `{op}` on `{table}` from a module that "
+                        "uses the service-role key — RLS is bypassed by "
+                        "design. If the table or row id ever comes from "
+                        "user / agent input, every row in `"
+                        f"{table}` is writable. Wrap and pin the table "
+                        "name plus the predicate to a fixed allowlist."
+                    )
+                    confidence = "high"
+                else:
+                    rationale = (
+                        f"Supabase `{op}` on `{table}`. RLS still enforces "
+                        "per-row policies, but confirm the calling code "
+                        "isn't running with the service-role key in "
+                        "another path."
+                    )
+                    confidence = "medium"
+                findings.append(Finding(
+                    scanner="db-mutations",
+                    file=str(path),
+                    line=line,
+                    snippet=m.group(0).rstrip("("),
+                    suggested_action_type=_suggest(table),
+                    confidence=confidence,
+                    rationale=rationale,
+                    extra={
+                        "orm": "supabase-js",
+                        "table": table,
+                        "op": op,
+                        "service_role": service_role,
+                    },
+                ))
+
         # Redis cache wipes — same method name across redis-py and ioredis.
         for m in _TS_REDIS_FLUSH.finditer(text):
             line = text[: m.start()].count("\n") + 1
@@ -230,5 +293,189 @@ def _scan_ts_js(root: Path) -> list[Finding]:
     return findings
 
 
+# SQL line-comment / block-comment strippers. We discard comment text
+# before regex matching so prose like `-- UPDATE the ad campaign` doesn't
+# fire the UPDATE detector. Block-comment stripper is non-greedy across
+# newlines.
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+# Postgres / Supabase RLS markers. The detector cares about three statements:
+#   - CREATE TABLE x (...)                      — declares a table.
+#   - ALTER TABLE x ENABLE ROW LEVEL SECURITY   — turns on per-row policies.
+#   - CREATE POLICY name ON x FOR ...           — adds an actual rule.
+# A table created without an `enable row level security` is open to the
+# anon key (Supabase) — usually wrong. A table with RLS but no policy
+# blocks every non-service-role caller — usually intentional but worth
+# flagging so the dev confirms.
+_SQL_CREATE_TABLE = re.compile(
+    r"\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)",
+    re.IGNORECASE,
+)
+_SQL_ENABLE_RLS = re.compile(
+    r"\balter\s+table\s+(?:public\.)?(\w+)\s+enable\s+row\s+level\s+security",
+    re.IGNORECASE,
+)
+# Policy names are arbitrary text — quoted (with dashes, dots, spaces) or
+# bare identifiers. Match any chars on the same statement line until ` ON
+# <table>`. The non-greedy `[^\n]*?` keeps us inside one statement.
+_SQL_CREATE_POLICY = re.compile(
+    r"""\bcreate\s+policy\b[^\n]*?\son\s+(?:public\.)?(\w+)""",
+    re.IGNORECASE,
+)
+
+
+def _strip_sql_comments(text: str) -> str:
+    """Replace SQL comments with same-length whitespace so byte offsets
+    stay valid. Keeps line numbers correct for the regex match below."""
+    def _blank(match: "re.Match[str]") -> str:
+        # Preserve newlines so `text[:start].count("\n")` still gives the
+        # correct line number for non-comment matches that follow.
+        return "".join(c if c == "\n" else " " for c in match.group(0))
+    cleaned = _SQL_BLOCK_COMMENT.sub(_blank, text)
+    cleaned = _SQL_LINE_COMMENT.sub(_blank, cleaned)
+    return cleaned
+
+
+def _scan_sql_files(root: Path) -> list[Finding]:
+    """Detect raw INSERT / UPDATE / DELETE statements in `*.sql` files.
+
+    Why we need this: `aiosql.from_path(...)` and equivalent loaders pull
+    SQL bodies from disk, so the Python scanner only sees the loader call
+    and never reaches the mutations themselves. fastapi-realworld is the
+    canonical case — `app/db/queries/sql/articles.sql` runs `UPDATE
+    articles SET …` and the scan reported zero `db-mutations`.
+
+    Confidence is `medium` because we don't have caller context (same as
+    raw SQL strings inside Python source). Severity (`account_change` /
+    `data_access` / `other`) comes from the table name via `_suggest()`,
+    matching the Python and TS code paths.
+
+    Comments (`--` and `/* … */`) are stripped before matching so prose
+    like `-- TODO: UPDATE the schema` doesn't fire."""
+    findings: list[Finding] = []
+    for path in sql_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
+        cleaned = _strip_sql_comments(text)
+        for pattern, verb in (
+            (_PY_SQL_UPDATE, "UPDATE"),
+            (_PY_SQL_DELETE, "DELETE"),
+            (_PY_SQL_INSERT, "INSERT"),
+        ):
+            for m in pattern.finditer(cleaned):
+                line = cleaned[: m.start()].count("\n") + 1
+                table = m.group(1)
+                findings.append(Finding(
+                    scanner="db-mutations",
+                    file=str(path),
+                    line=line,
+                    snippet=m.group(0),
+                    suggested_action_type=_suggest(table),
+                    confidence="medium",
+                    rationale=(
+                        f"Raw SQL {verb} on `{table}` in a .sql file "
+                        "loaded at runtime (e.g. via aiosql / asyncpg "
+                        "from_path). Gate the loader's caller with the "
+                        f"{_suggest(table)} policy if state-changing."
+                    ),
+                    extra={
+                        "verb": verb,
+                        "table": table,
+                        "source_kind": "sql-file",
+                    },
+                ))
+    return findings
+
+
+def _scan_sql_rls(root: Path) -> list[Finding]:
+    """Per-table RLS audit on `*.sql` migration files.
+
+    Emits one finding per table that the file creates without an
+    accompanying `alter table … enable row level security`. With the
+    `--include-migrations` flag this turns the otherwise-mute SQL DDL
+    into actionable signal — Supabase apps that forget RLS leak data
+    by default the moment the anon key is shared in the frontend.
+
+    The check is per-file: if a table is declared in `init.sql` and a
+    later migration enables RLS on it, the later file shows the table
+    as RLS-enabled. The same table reported as missing-RLS in the
+    earlier file remains visible — that history is real signal, not a
+    bug — and the dev decides whether to suppress it via
+    `.supervisor-ignore`.
+    """
+    findings: list[Finding] = []
+    for path in sql_files(root):
+        text = safe_read(path)
+        if text is None:
+            continue
+        cleaned = _strip_sql_comments(text)
+
+        rls_tables = {m.group(1).lower() for m in _SQL_ENABLE_RLS.finditer(cleaned)}
+        policy_tables = {
+            m.group(1).lower() for m in _SQL_CREATE_POLICY.finditer(cleaned)
+        }
+
+        for m in _SQL_CREATE_TABLE.finditer(cleaned):
+            table = m.group(1)
+            line = cleaned[: m.start()].count("\n") + 1
+            table_lower = table.lower()
+
+            if table_lower not in rls_tables:
+                findings.append(Finding(
+                    scanner="db-mutations",
+                    file=str(path),
+                    line=line,
+                    snippet=m.group(0),
+                    suggested_action_type=_suggest(table),
+                    confidence="high",
+                    rationale=(
+                        f"Table `{table}` is created without "
+                        "`alter table … enable row level security`. On "
+                        "Supabase / Postgres-with-PostgREST stacks, the "
+                        "anon key gets full access to every column the "
+                        "moment that key ships to the frontend. Add the "
+                        "RLS toggle and at least one policy."
+                    ),
+                    extra={
+                        "verb": "RLS_MISSING",
+                        "table": table,
+                        "family": "rls-missing",
+                        "source_kind": "sql-file",
+                    },
+                ))
+                continue
+
+            if table_lower not in policy_tables:
+                findings.append(Finding(
+                    scanner="db-mutations",
+                    file=str(path),
+                    line=line,
+                    snippet=m.group(0),
+                    suggested_action_type=_suggest(table),
+                    confidence="medium",
+                    rationale=(
+                        f"Table `{table}` has RLS enabled but no "
+                        "`create policy` is declared in this file. The "
+                        "anon key is locked out by default — confirm "
+                        "that's intentional and not a forgotten rule. "
+                        "Service-role calls still bypass RLS."
+                    ),
+                    extra={
+                        "verb": "RLS_NO_POLICY",
+                        "table": table,
+                        "family": "rls-no-policy",
+                        "source_kind": "sql-file",
+                    },
+                ))
+    return findings
+
+
 def scan(root: Path) -> list[Finding]:
-    return _scan_python(root) + _scan_ts_js(root)
+    return (
+        _scan_python(root)
+        + _scan_ts_js(root)
+        + _scan_sql_files(root)
+        + _scan_sql_rls(root)
+    )

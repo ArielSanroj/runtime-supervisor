@@ -33,12 +33,25 @@ RepoKind = Literal["framework", "app", "unknown"]
 _PYPROJECT_NAME_RE = re.compile(
     r'^\s*name\s*=\s*["\']([^"\']+)["\']', re.MULTILINE
 )
-_DOCKER_CMD_PROCESS_RE = re.compile(
-    r'CMD\s*\[?\s*["\']?'
-    r"(uvicorn|gunicorn|hypercorn|granian|fastapi|flask|django|"
+# Long-lived process markers — match anywhere inside a CMD/ENTRYPOINT body.
+# Wrapped invocations (`CMD poetry run uvicorn …`, `CMD npm start`,
+# `CMD pipenv run gunicorn …`) used to slip through because the previous
+# regex anchored the process name immediately after `CMD`. fastapi-realworld
+# was the canonical miss: `CMD poetry run alembic upgrade head && poetry run
+# uvicorn …` reads `poetry` first and never matched.
+_LONG_LIVED_PROCESS_RE = re.compile(
+    r"\b(uvicorn|gunicorn|hypercorn|granian|fastapi|flask|django|"
+    r"streamlit|celery|"
     r"node|deno|bun|next|nest|nuxt|astro|remix|sveltekit|"
-    r"python\s+-m|python3\s+-m)",
+    r"npm\s+(?:run\s+)?(?:start|dev|serve)|"
+    r"yarn\s+(?:run\s+)?(?:start|dev|serve)|"
+    r"pnpm\s+(?:run\s+)?(?:start|dev|serve)|"
+    r"python\d?\s+-m|"
+    r"rq\s+worker)\b",
     re.IGNORECASE,
+)
+_DOCKER_DIRECTIVE_RE = re.compile(
+    r"^\s*(CMD|ENTRYPOINT)\b(.*)", re.IGNORECASE
 )
 
 
@@ -77,8 +90,15 @@ def _is_monorepo_of_packages(root: Path) -> bool:
 
 def _has_long_lived_dockerfile(root: Path) -> bool:
     """True when a Dockerfile in the tree runs a long-lived process via
-    CMD. Walks up to one level deep so a `services/api/Dockerfile`
-    counts."""
+    CMD or ENTRYPOINT. Walks up to one level deep so a
+    `services/api/Dockerfile` counts.
+
+    Recognises shapes:
+      - direct array: `CMD ["uvicorn", "main:app"]`
+      - direct shell: `CMD uvicorn main:app`
+      - wrapped:      `CMD poetry run uvicorn …` / `CMD npm start`
+      - line-continuations: `CMD foo \\\n    && uvicorn …`
+    """
     candidates = [root / "Dockerfile"]
     for sub in ("services", "apps", "deploy", "infra"):
         d = root / sub
@@ -96,7 +116,34 @@ def _has_long_lived_dockerfile(root: Path) -> bool:
             text = path.read_text(errors="ignore")
         except OSError:
             continue
-        if _DOCKER_CMD_PROCESS_RE.search(text):
+        if _dockerfile_has_long_lived_directive(text):
+            return True
+    return False
+
+
+def _dockerfile_has_long_lived_directive(text: str) -> bool:
+    """Coalesce backslash-continuations, find each CMD/ENTRYPOINT directive
+    body, and return True when any of them contains a long-lived process
+    name. Run as a separate function so it's testable in isolation."""
+    # Join `\` line continuations into a single logical line.
+    logical_lines: list[str] = []
+    buf = ""
+    for raw in text.splitlines():
+        stripped = raw.rstrip()
+        if stripped.endswith("\\"):
+            buf += stripped[:-1] + " "
+            continue
+        buf += stripped
+        logical_lines.append(buf)
+        buf = ""
+    if buf:
+        logical_lines.append(buf)
+    for line in logical_lines:
+        m = _DOCKER_DIRECTIVE_RE.match(line)
+        if not m:
+            continue
+        body = m.group(2)
+        if _LONG_LIVED_PROCESS_RE.search(body):
             return True
     return False
 

@@ -174,7 +174,11 @@ def test_render_cli_start_here_under_20_lines():
 def test_empty_findings_shows_no_obvious_wrap_target():
     sh = build_start_here(RepoSummary(), [])
     md = render_start_here_md(sh)
-    assert "No obvious wrap target" in md
+    # Empty scan: no agent class, no framework signal, no high-confidence
+    # findings. The fallback no longer assumes "agent loop" — it tells the
+    # dev to re-scan once they wire in the first SDK call.
+    assert "No agent class" in md
+    assert "re-scan once you add the first SDK call" in md
     # Capabilities section also shows the empty-state copy.
     assert "No high-stakes capabilities" in md
 
@@ -284,9 +288,12 @@ def test_wrap_first_falls_back_with_framework_signals_no_contradiction():
 
 
 def test_no_wrap_no_signals_keeps_existing_empty_copy():
-    """Empty summary keeps the original empty-state copy verbatim."""
+    """No agent class, no framework signals, no findings: render the explicit
+    'no high-confidence supervised-worthy calls' copy instead of telling the
+    dev to look for an 'agent loop' that doesn't exist."""
     md = render_start_here_md(build_start_here(RepoSummary(), []))
-    assert "No obvious wrap target" in md
+    assert "No agent class" in md
+    assert "re-scan once you add the first SDK call" in md
     assert "## Agent frameworks detected" not in md
 
 
@@ -433,11 +440,30 @@ def _write(tmp: Path, name: str, body: str) -> Path:
 def test_step_0_section_rendered_when_bootstrap_detected(tmp_path: Path):
     _write(tmp_path, "requirements.txt", "fastapi\n")
     _write(tmp_path, "src/api/app.py", "from fastapi import FastAPI\napp = FastAPI()\n")
-    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    cp = AgentChokepoint(
+        file=str(tmp_path / "src/api/app.py"),
+        line=1, kind="agent-class", label="App",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
     md = render_start_here_md(sh)
     assert "## Step 0 — install the SDK" in md
     assert "pip install" in md
     assert "supervisor-guards" in md
+
+
+def test_step_0_omitted_when_nothing_to_wrap(tmp_path: Path):
+    """Empty findings + empty summary → Step 0 must NOT render. Anchors the
+    `_has_anything_to_wrap` guard added so a clean repo (e.g. fastapi-
+    realworld) doesn't lead with a `poetry add supervisor-guards` banner
+    before any actionable finding."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    md = render_start_here_md(sh)
+    assert "## Step 0" not in md
+    # Bootstrap data is still computed (the schema doesn't change) — the
+    # renderer just chose not to surface it here.
+    assert sh.bootstrap is not None
 
 
 def test_step_0_section_omitted_when_repo_root_not_passed():
@@ -450,10 +476,14 @@ def test_step_0_section_omitted_when_repo_root_not_passed():
 
 
 def test_step_0_section_omitted_when_no_manifest(tmp_path: Path):
-    """Empty repo → BootstrapInfo with manager=None → renderer emits a
-    softer block. Specifically must not crash and must mention how to
-    proceed."""
-    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    """Empty repo (no manifest) but with a wrap target → BootstrapInfo with
+    manager=None → renderer emits a softer block. Specifically must not
+    crash and must mention how to proceed."""
+    cp = AgentChokepoint(
+        file=str(tmp_path / "agent.py"), line=1, kind="agent-class", label="A",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
     md = render_start_here_md(sh)
     assert "## Step 0 — install the SDK" in md
     # Generic copy when no manager is detected.
@@ -472,7 +502,12 @@ from supervisor_guards import configure_supervisor
 configure_supervisor()
 app = FastAPI()
 """)
-    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    cp = AgentChokepoint(
+        file=str(tmp_path / "src/api/app.py"),
+        line=1, kind="agent-class", label="App",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
     md = render_start_here_md(sh)
     assert "already called near the FastAPI" in md
     # Must NOT emit the configure_supervisor() paste (with the import line).
@@ -499,7 +534,11 @@ def test_step_0_picks_ts_when_top_wrap_target_is_typescript(tmp_path: Path):
 def test_render_md_section_order_with_bootstrap(tmp_path: Path):
     """Step 0 must come BEFORE 'Best place to wrap first'."""
     _write(tmp_path, "requirements.txt", "fastapi\n")
-    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    cp = AgentChokepoint(
+        file=str(tmp_path / "agent.py"), line=1, kind="agent-class", label="A",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
     md = render_start_here_md(sh)
     expected_order = [
         "## Step 0 — install the SDK",
@@ -518,7 +557,11 @@ def test_render_md_section_order_with_bootstrap(tmp_path: Path):
 
 def test_cli_render_includes_step_0_line(tmp_path: Path):
     _write(tmp_path, "requirements.txt", "fastapi\n")
-    sh = build_start_here(RepoSummary(), [], repo_root=tmp_path)
+    cp = AgentChokepoint(
+        file=str(tmp_path / "agent.py"), line=1, kind="agent-class", label="A",
+    )
+    summary = RepoSummary(agent_chokepoints=[cp])
+    sh = build_start_here(summary, [], repo_root=tmp_path)
     lines = render_cli_start_here(sh, elapsed_s=1.0, root="x")
     joined = "\n".join(lines)
     assert "Step 0:" in joined

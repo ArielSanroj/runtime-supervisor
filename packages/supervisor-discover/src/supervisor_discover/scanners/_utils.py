@@ -77,6 +77,7 @@ def _extract_notebook_python(path: Path) -> str:
 
 _PY_GLOBS = ("**/*.py", "**/*.ipynb")
 _TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs")
+_SQL_GLOBS = ("**/*.sql",)
 
 # Filename patterns that mean "compiled / bundled output, not source". Real
 # call-sites never live in these — they're webpack chunks, minified bundles,
@@ -180,6 +181,17 @@ def python_files(root: Path) -> Iterator[Path]:
 
 def ts_js_files(root: Path) -> Iterator[Path]:
     yield from _walk(root, _TS_GLOBS)
+
+
+def sql_files(root: Path) -> Iterator[Path]:
+    """Yield `.sql` files for raw-SQL scanners.
+
+    fastapi-realworld and similar projects load queries from `*.sql` via
+    `aiosql.from_path(...)` — the Python scanner sees the loader call but
+    can't reach the SQL bodies. Scanning the files directly closes that
+    blind spot. Skips the same build / cache / venv directories as the
+    Python and JS walks."""
+    yield from _walk(root, _SQL_GLOBS)
 
 
 def dotted_name(node: ast.AST) -> str | None:

@@ -73,6 +73,56 @@ def test_empty_repo_classifies_as_unknown(tmp_path: Path):
     assert kind == "unknown"
 
 
+def test_wrapped_cmd_classifies_as_app(tmp_path: Path):
+    """`CMD poetry run uvicorn …` (the fastapi-realworld shape) is a
+    long-lived deployable process even though the literal first token
+    after CMD is `poetry`. The classifier must recognise the wrapper —
+    score must NOT add the +0.2 "no long-lived dockerfile" bonus, so
+    the result lands in app/unknown territory, never framework."""
+    _write(tmp_path, "pyproject.toml", '[project]\nname = "fastapi-realworld"\n')
+    _write(
+        tmp_path,
+        "Dockerfile",
+        "FROM python:3.9\n"
+        "CMD poetry run alembic upgrade head && \\\n"
+        "    poetry run uvicorn --host=0.0.0.0 app.main:app\n",
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=19, chokepoints_in_agent_path=0
+    )
+    assert kind in ("app", "unknown")
+    assert kind != "framework"
+
+
+def test_npm_start_cmd_classifies_as_app(tmp_path: Path):
+    """`CMD npm start` is the canonical Node deployment shape — wrapper
+    invocation that the old regex missed entirely."""
+    _write(tmp_path, "package.json", '{"name": "node-app"}\n')
+    _write(tmp_path, "Dockerfile", 'FROM node:20\nCMD npm start\n')
+    kind = detect_repo_kind(
+        tmp_path, http_routes=4, chokepoints_in_agent_path=0
+    )
+    # No pyproject (-0.4) + no monorepo (-0.3) + long-lived Dockerfile
+    # detected (-0.2) + http_routes>0 (-0.2) = 0 → app.
+    assert kind == "app"
+
+
+def test_entrypoint_directive_recognised(tmp_path: Path):
+    """ENTRYPOINT-only Dockerfiles (gunicorn entrypoints) are also
+    long-lived. Previously the regex only checked CMD."""
+    _write(tmp_path, "pyproject.toml", '[project]\nname = "service"\n')
+    _write(
+        tmp_path,
+        "Dockerfile",
+        'FROM python:3.12\nENTRYPOINT ["gunicorn", "main:app"]\n',
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=3, chokepoints_in_agent_path=0
+    )
+    assert kind in ("app", "unknown")
+    assert kind != "framework"
+
+
 def test_monorepo_of_packages_recognised(tmp_path: Path):
     """`packages/` with two sub-packages, each carrying a manifest. Frame
     as monorepo even when the root pyproject is absent."""

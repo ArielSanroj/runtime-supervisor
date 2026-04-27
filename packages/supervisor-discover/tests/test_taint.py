@@ -206,6 +206,62 @@ def constant_compute():
     # touched it. Either way, current state is low.
 
 
+# ─── LLM source detection (mark, don't demote) ────────────────────
+
+
+def test_eval_with_openai_chat_completion_marked_llm(tmp_path: Path):
+    """The AutoGPT shape: `result = client.chat.completions.create(...)` →
+    `eval(result)`. The arg flows back to an LLM SDK call, so the renderer
+    should flip from conditional 'if it flows from an LLM' to confirmed
+    'LLM → sink'."""
+    _write(tmp_path, "agent.py", """
+def run(prompt, client):
+    result = client.chat.completions.create(model="gpt-4", messages=[])
+    return eval(result)
+""")
+    findings = _scan_and_taint(tmp_path)
+    f = _by_line(findings, 3)
+    assert f.extra.get("taint_source") == "llm"
+    assert f.extra.get("llm_tainted") is True
+    # Confidence is NOT demoted — it stays at whatever the scanner emitted.
+    assert f.confidence in ("medium", "high")
+    # And NOT marked as taint_demoted.
+    assert f.extra.get("taint_demoted") is not True
+
+
+def test_subprocess_with_anthropic_messages_marked_llm(tmp_path: Path):
+    """Anthropic SDK shape: `r = client.messages.create(...)` →
+    `subprocess.run(r, shell=True)`. The variable `r` traces back to a
+    `messages.create` invocation."""
+    _write(tmp_path, "shell.py", """
+import subprocess
+def go(client):
+    r = client.messages.create(model="claude-3", messages=[])
+    subprocess.run(r, shell=True)
+""")
+    findings = _scan_and_taint(tmp_path)
+    f = _by_line(findings, 4)
+    assert f.extra.get("taint_source") == "llm"
+    assert f.extra.get("llm_tainted") is True
+
+
+def test_llm_mark_is_idempotent(tmp_path: Path):
+    """Re-running annotate_findings on an already-marked finding is a
+    no-op; the flag stays True and confidence stays unchanged."""
+    _write(tmp_path, "x.py", """
+def run(client):
+    out = client.chat.completions.create()
+    eval(out)
+""")
+    findings = _scan_and_taint(tmp_path)
+    f = _by_line(findings, 3)
+    assert f.extra.get("llm_tainted") is True
+    initial_conf = f.confidence
+    annotate_findings(findings)
+    assert f.confidence == initial_conf
+    assert f.extra.get("llm_tainted") is True
+
+
 # ─── Idempotency ────────────────────────────────────────────────────
 
 

@@ -7,6 +7,7 @@ from supervisor_discover.scanners._utils import python_files
 
 FLASK_FIXTURE = Path(__file__).parent / "fixtures/fake_flask_app"
 NEXT_FIXTURE = Path(__file__).parent / "fixtures/fake_next_app"
+VERCEL_SAAS_FIXTURE = Path(__file__).parent / "fixtures/fake_vercel_saas"
 TRAP_FIXTURE = Path(__file__).parent / "fixtures/adversarial_trap"
 
 
@@ -319,7 +320,14 @@ def test_training_paths_get_downgraded(tmp_path: Path):
 
 def test_ts_construction_fires_without_method_call(tmp_path: Path):
     """`new OpenAI()` alone is an LLM signal even if no .create method is
-    called in the same file. The wrapping module is the call-site to gate."""
+    called in the same file. The wrapping module is the call-site to gate.
+
+    Construction findings are rated `low` — there's no prompt at the
+    constructor, so wrapping it gates nothing. The actual chokepoint is the
+    `.create()` / `generateText()` call elsewhere. Keeping the construction
+    finding visible in FULL_REPORT but out of the public scan's
+    high-confidence top is the point of the downgrade.
+    """
     (tmp_path / "client.ts").write_text(
         'import OpenAI from "openai";\n'
         "const c = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });\n"
@@ -328,7 +336,35 @@ def test_ts_construction_fires_without_method_call(tmp_path: Path):
     findings = scan_all(tmp_path)
     llm = [f for f in findings if f.scanner == "llm-calls"]
     assert llm, "expected llm-calls to fire on `new OpenAI()`"
-    assert any(f.extra.get("kind") == "construction" for f in llm)
+    construction = [f for f in llm if f.extra.get("kind") == "construction"]
+    assert construction
+    assert all(f.confidence == "low" for f in construction), (
+        f"constructor without prompt must be rated low, got "
+        f"{[f.confidence for f in construction]}"
+    )
+
+
+def test_python_constructor_low_confidence_invocation_high(tmp_path: Path):
+    """`openai.OpenAI(api_key=...)` constructs a client (no prompt yet) and
+    must be rated `low`. The follow-up `client.chat.completions.create(...)`
+    has the prompt and stays `high`. Mixing both in one finding tier inflates
+    the high-confidence count and was the user-visible bug on the langchain
+    free scan output."""
+    (tmp_path / "moderation.py").write_text(
+        "import openai\n"
+        "\n"
+        "client = openai.OpenAI(api_key='sk-x')\n"
+        "\n"
+        "def moderate(prompt):\n"
+        "    return openai.chat.completions.create(model='gpt-4o', messages=[{'role':'user','content':prompt}])\n"
+    )
+    findings = scan_all(tmp_path)
+    llm = [f for f in findings if f.scanner == "llm-calls"]
+    by_kind = {f.extra.get("kind"): f for f in llm}
+    assert "construction" in by_kind, f"expected construction finding, got {[(f.snippet, f.extra) for f in llm]}"
+    assert "invocation" in by_kind, f"expected invocation finding, got {[(f.snippet, f.extra) for f in llm]}"
+    assert by_kind["construction"].confidence == "low"
+    assert by_kind["invocation"].confidence == "high"
 
 
 def test_ts_vercel_ai_sdk_generate_text_fires(tmp_path: Path):
@@ -404,6 +440,49 @@ def test_next_fixture_finds_api_route():
     assert any("POST" in f.extra.get("method", "") for f in routes)
 
 
+# ─── fake_vercel_saas: Stripe Checkout + Supabase service-role + server actions ─
+#
+# This fixture mirrors the surfaces in `vercel/nextjs-subscription-payments` —
+# the canonical "SaaS without an LLM" template. Every assertion below is a
+# pattern the scanner used to miss against the real repo (3 informational
+# findings, "no payment SDKs detected") and now catches.
+
+
+def test_vercel_saas_finds_stripe_checkout_session_create():
+    findings = scan_all(VERCEL_SAAS_FIXTURE)
+    payments = [f for f in findings if f.scanner == "payment-calls"]
+    methods = {f.extra.get("method", f.snippet) for f in payments}
+    assert any("checkout.sessions.create" in m for m in methods)
+    assert any("billingPortal.sessions.create" in m for m in methods)
+    assert any("subscriptions.cancel" in m for m in methods)
+    assert all(p.confidence == "high" for p in payments)
+    assert all(p.suggested_action_type == "payment" for p in payments)
+
+
+def test_vercel_saas_supabase_service_role_is_high_confidence():
+    findings = scan_all(VERCEL_SAAS_FIXTURE)
+    sb = [f for f in findings
+          if f.scanner == "db-mutations"
+          and f.extra.get("orm") == "supabase-js"]
+    assert len(sb) >= 3
+    assert all(f.confidence == "high" for f in sb), (
+        "service-role + Supabase mutation must be high confidence"
+    )
+    assert all(f.extra.get("service_role") is True for f in sb)
+    tables = {f.extra.get("table") for f in sb}
+    assert {"customers", "users", "subscriptions"} <= tables
+
+
+def test_vercel_saas_server_action_directive_emits_handlers():
+    findings = scan_all(VERCEL_SAAS_FIXTURE)
+    actions = [f for f in findings
+               if f.scanner == "http-routes"
+               and f.extra.get("framework") == "next-server-action"]
+    fn_names = {f.extra.get("function") for f in actions}
+    assert {"checkoutWithStripe", "createPortalSession", "cancelSubscription"} <= fn_names
+    assert all(f.confidence == "high" for f in actions)
+
+
 def test_skip_dirs_check_is_relative_to_scan_root(tmp_path):
     """Regression: repos inside ~/Library/CloudStorage/Dropbox (or any path
     whose absolute parts contain a _SKIP_DIRS entry like 'Library') must
@@ -435,6 +514,54 @@ def test_db_mutations_on_customer_table_go_to_customer_data(tmp_path):
         extra={"table": "users", "verb": "INSERT"},
     )
     assert tier_of(f) == "customer_data"
+
+
+def test_db_mutations_finds_raw_sql_in_sql_files(tmp_path):
+    """`*.sql` files loaded via `aiosql.from_path(...)` are invisible to
+    the Python scanner — fastapi-realworld was the canonical miss. The
+    .sql walker must catch INSERT/UPDATE/DELETE in those files and tag
+    the finding with `source_kind=sql-file` so the renderer can pivot
+    its copy."""
+    from supervisor_discover.scanners.db_mutations import scan as scan_db
+
+    sql_dir = tmp_path / "app" / "db" / "queries" / "sql"
+    sql_dir.mkdir(parents=True)
+    (sql_dir / "users.sql").write_text(
+        "-- name: create-user\n"
+        "INSERT INTO users (username, email, salt, hashed_password)\n"
+        "VALUES (:username, :email, :salt, :hashed_password)\n"
+        "RETURNING id;\n"
+        "\n"
+        "-- name: update-user\n"
+        "UPDATE users SET email = :email WHERE id = :id;\n"
+    )
+    findings = scan_db(tmp_path)
+    by_verb = {f.extra["verb"]: f for f in findings if f.scanner == "db-mutations"}
+    assert "INSERT" in by_verb
+    assert "UPDATE" in by_verb
+    assert by_verb["INSERT"].extra["table"] == "users"
+    assert by_verb["INSERT"].suggested_action_type == "account_change"
+    assert by_verb["INSERT"].extra["source_kind"] == "sql-file"
+
+
+def test_db_mutations_sql_files_ignore_commented_verbs(tmp_path):
+    """Trap fixture: `-- TODO: UPDATE the schema later` (a comment) and
+    `/* DELETE FROM old_users */` must NOT fire. The verb is real text in
+    the file; only the regex on stripped content should match."""
+    from supervisor_discover.scanners.db_mutations import scan as scan_db
+
+    sql_dir = tmp_path / "queries"
+    sql_dir.mkdir(parents=True)
+    (sql_dir / "trap.sql").write_text(
+        "-- TODO: UPDATE the schema later, once we migrate.\n"
+        "/* DELETE FROM old_users — held for review */\n"
+        "SELECT 1;\n"
+    )
+    findings = [
+        f for f in scan_db(tmp_path)
+        if f.scanner == "db-mutations" and (f.extra or {}).get("source_kind") == "sql-file"
+    ]
+    assert findings == [], f"comments leaked into findings: {findings}"
 
 
 def test_db_mutations_on_business_table_go_to_business_data(tmp_path):

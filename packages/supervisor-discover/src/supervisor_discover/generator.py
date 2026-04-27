@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_tier
+from .classifier import TIER_ORDER, Tier, group_by_action_type, group_by_risk_tier, tier_of
 from .combo_playbooks import render_index as render_combos_index, render_playbook
 from .combo_state import (
     filter_reported as filter_resolved_combos,
@@ -166,15 +166,22 @@ def generate(
     # findings.json — wrapped now: top-level "findings" + "repo_summary".
     # CI consumers that diff findings[] keep working; new consumers can read
     # repo_summary for the briefing data.
+    #
+    # Each serialized finding gets a `tier` field derived via classifier.tier_of,
+    # so direct artifact consumers (UI, exports, tooling) don't have to recompute
+    # it from `scanner` + `extra.table` themselves. Without this, the 10-repo
+    # benchmark surfaced consumers reading `findings.json` and reporting
+    # `priority=0` because the tier was never embedded.
     sorted_findings = sorted(
-        [f.to_dict() for f in findings],
+        [{**f.to_dict(), "tier": tier_of(f)} for f in findings],
         key=lambda d: (d["file"], d["line"], d["scanner"]),
     )
     payload: dict[str, Any] = {
         # Schema version: increment when the on-disk shape changes. CI
         # consumers (the future `supervisor-discover diff` command) read it
-        # to know whether their parser still applies.
-        "schema_version": "1.0",
+        # to know whether their parser still applies. 1.1 adds `tier` per
+        # finding (was 1.0, computed post-hoc by the API).
+        "schema_version": "1.1",
         "repo_summary": summary.to_dict(),
         "findings": sorted_findings,
     }
@@ -188,7 +195,11 @@ def generate(
     tier_summary_table, headline_note = _tier_summary(findings)
     # Nivel 3: si hay state file con combos resueltos, se suprimen del output
     # a menos que el caller pase include_resolved=True (flag --show-resolved).
-    raw_combos = detect_combos(findings)
+    # Pass `repo_root` so combos get refined with import-graph
+    # reachability — combos whose two findings live in modules without
+    # any import path between them get downgraded to `low`. Without
+    # `repo_root` (legacy callers) the behaviour is unchanged.
+    raw_combos = detect_combos(findings, root=repo_root)
     combo_states = load_combo_state(state_path_for(out_dir))
     combos = filter_resolved_combos(
         raw_combos, combo_states, include_resolved=include_resolved

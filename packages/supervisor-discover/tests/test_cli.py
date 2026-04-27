@@ -15,10 +15,14 @@ def test_cli_dry_run_prints_findings_json(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr().out
     data = json.loads(captured)
-    # New shape: { "repo_summary": {...}, "findings": [...] }
-    assert set(data.keys()) == {"repo_summary", "findings"}
+    # Schema 1.1: schema_version + repo_summary + findings (each with `tier`).
+    assert set(data.keys()) == {"schema_version", "repo_summary", "findings"}
+    assert data["schema_version"] == "1.1"
     assert isinstance(data["findings"], list)
     assert any(f["scanner"] == "payment-calls" for f in data["findings"])
+    assert all("tier" in f for f in data["findings"]), (
+        "schema 1.1 embeds tier per finding so direct consumers don't recompute"
+    )
     assert "frameworks" in data["repo_summary"]
     assert not (tmp_path / "rs").exists()  # dry-run didn't write
 

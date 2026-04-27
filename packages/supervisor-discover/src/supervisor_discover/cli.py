@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .classifier import TIER_ORDER, group_by_risk_tier, validate
+from .classifier import TIER_ORDER, group_by_risk_tier, tier_of, validate
 from .generator import generate
 from .scanners import apply_default_hidden, scan_all
 from .start_here import build_start_here, render_cli_start_here
@@ -251,19 +251,23 @@ def main(argv: list[str] | None = None) -> int:
         from .combos import detect_combos
         from .refine import refine_findings
         print("  refining narratives via Claude…", file=sys.stderr)
-        findings = refine_findings(findings, build_summary(findings, hidden_counts=hidden_counts), detect_combos(findings))
+        findings = refine_findings(findings, build_summary(findings, hidden_counts=hidden_counts, root=root), detect_combos(findings, root=root))
 
     if dry_run:
         # Mirror the on-disk findings.json shape so CI diffs line up.
-        summary = build_summary(findings, hidden_counts=hidden_counts)
+        # Pass root so summary.repo_kind classifies framework vs app.
+        summary = build_summary(findings, hidden_counts=hidden_counts, root=root)
         sh = build_start_here(summary, findings, repo_root=root)
         # asdict-style serialization to keep stdout tooling compatible.
         summary_dict = summary.to_dict()
         summary_dict["start_here"] = sh.to_dict()
         payload = {
+            # Match the on-disk shape from generator.py — schema_version + tier
+            # per finding so dry-run JSON is consumed identically by tooling.
+            "schema_version": "1.1",
             "repo_summary": summary_dict,
             "findings": sorted(
-                (f.to_dict() for f in findings),
+                ({**f.to_dict(), "tier": tier_of(f)} for f in findings),
                 key=lambda d: (d["file"], d["line"], d["scanner"]),
             ),
         }
@@ -313,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         # interactive remediation prompt.
         return 0
 
-    _prompt_remediation_level(findings, out, args)
+    _prompt_remediation_level(findings, out, args, root=root)
     return 0
 
 
@@ -462,7 +466,9 @@ def _handle_diff(args: argparse.Namespace) -> int:
     return 0
 
 
-def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespace) -> None:
+def _prompt_remediation_level(
+    findings: list, out: Path, args: argparse.Namespace, root: Path | None = None,
+) -> None:
     """After scan + generate, show the remediation menu when combos exist.
 
     Resolution order (first match wins):
@@ -470,11 +476,16 @@ def _prompt_remediation_level(findings: list, out: Path, args: argparse.Namespac
       2. SUPERVISOR_REMEDIATION_LEVEL env var → explicit, no prompt
       3. non-TTY or --no-prompt → silent default (1)
       4. interactive TTY → prompt, default 1 on Enter
+
+    `root`, when provided, lets `detect_combos` apply import-graph
+    reachability — combos with no path between LLM and side-effect
+    modules get demoted to `low` so the wizard doesn't spin up a
+    remediation flow for a non-existent attack chain.
     """
     from .combo_state import filter_reported, load, state_path_for
     from .combos import detect_combos
 
-    combos = detect_combos(findings)
+    combos = detect_combos(findings, root=root)
     # Nivel 3: no preguntar por combos ya marcados resolved (unless --show-resolved).
     if not getattr(args, "show_resolved", False):
         states = load(state_path_for(out))
@@ -637,7 +648,7 @@ def _print_start_here(root: Path, findings: list, elapsed: float, out: Path,
 
     Replaces the legacy tier-by-tier dump as the default. The legacy view is
     still available behind --full for users who want the full breakdown."""
-    summary = build_summary(findings, hidden_counts=hidden_counts)
+    summary = build_summary(findings, hidden_counts=hidden_counts, root=root)
     sh = build_start_here(summary, findings, repo_root=root)
 
     for line in render_cli_start_here(sh, elapsed_s=elapsed, root=str(root)):

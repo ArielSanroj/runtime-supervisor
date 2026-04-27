@@ -44,6 +44,24 @@ def test_findings_json_is_sorted_for_stable_diff(tmp_path):
     assert keys == sorted(keys)
 
 
+def test_findings_json_embeds_tier_per_finding(tmp_path):
+    """schema_version 1.1: every finding carries a `tier` derived via
+    classifier.tier_of so direct artifact consumers don't have to recompute
+    it. The 10-repo benchmark surfaced consumers reading findings.json and
+    reporting priority=0 because the tier was never embedded."""
+    from supervisor_discover.classifier import TIER_ORDER
+
+    findings = validate(scan_all(FLASK_FIXTURE))
+    out = tmp_path / "rs"
+    generate(findings, out)
+    payload = json.loads((out / "findings.json").read_text())
+    assert payload["schema_version"] == "1.1"
+    assert payload["findings"], "fixture should produce findings"
+    for d in payload["findings"]:
+        assert "tier" in d, f"finding missing tier: {d}"
+        assert d["tier"] in TIER_ORDER, f"tier out of range: {d['tier']!r}"
+
+
 def test_report_is_tiered_with_rollout_guidance(tmp_path):
     findings = validate(scan_all(FLASK_FIXTURE))
     out = tmp_path / "rs"
@@ -78,8 +96,12 @@ def test_rollout_md_is_stack_aware_for_python_repo(tmp_path):
     rollout = (out / "ROLLOUT.md").read_text()
 
     # Phase structure is present + env-var is the primary control lever.
-    assert "Shadow" in rollout
-    assert "Enforce" in rollout
+    # Case-insensitive on the phase names: the rollout uses "Phase N —
+    # Progressive enforce" (lowercase) when the repo doesn't have enough
+    # high-confidence priority findings to warrant a separate Sample phase
+    # (which is the only place "Enforce" appears with a capital E).
+    assert "shadow" in rollout.lower()
+    assert "enforce" in rollout.lower()
     assert "SUPERVISOR_ENFORCEMENT_MODE" in rollout
     # Rollback section with the no-redeploy escape hatch.
     assert "Rollback" in rollout
@@ -331,7 +353,7 @@ def test_findings_json_wraps_repo_summary(tmp_path):
     # `schema_version` was added when stable IDs landed — CI consumers gate
     # on this before parsing.
     assert set(data.keys()) == {"schema_version", "repo_summary", "findings"}
-    assert data["schema_version"] == "1.0"
+    assert data["schema_version"] == "1.1"
     assert "frameworks" in data["repo_summary"]
     assert "total_findings" in data["repo_summary"]
 

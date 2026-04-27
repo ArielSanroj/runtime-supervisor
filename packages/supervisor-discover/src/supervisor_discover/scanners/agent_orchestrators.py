@@ -111,6 +111,56 @@ _FRAMEWORK_IMPORTS: list[tuple[re.Pattern, str]] = [
 # MEDIUM-confidence — class defs with agent-y names.
 _AGENT_CLASS_NAMES = r"(?:Controller|Dispatcher|Orchestrator|Planner|Agent|ToolDispatcher|AgentExecutor|AgentRouter)"
 
+# Tokens *other* than `Controller` that the regex above can match. When a
+# class name only matches because of the `Controller` suffix (no Dispatcher /
+# Orchestrator / Agent / Planner token nearby), the match is high-FP — every
+# NestJS controller, every Frappe form controller, every Rails-style
+# `*Controller` would fire. The 10-repo benchmark showed erpnext (Frappe)
+# and medusa (NestJS) inflated to ≥90% priority almost entirely on these
+# false matches. Controllers gated by additional evidence below.
+_NON_CONTROLLER_AGENT_TOKENS = (
+    "Dispatcher", "Orchestrator", "Planner", "Agent",
+    "ToolDispatcher", "AgentExecutor", "AgentRouter",
+)
+
+
+def _is_controller_only_match(class_name: str) -> bool:
+    """True when the class name only matches `_AGENT_CLASS_NAMES` because of
+    its `Controller` suffix — no Dispatcher / Orchestrator / Agent / Planner
+    token in the name. These are the matches that need extra evidence (LLM
+    import, decision-branching) before being treated as agent classes."""
+    if not class_name.endswith("Controller"):
+        return False
+    return not any(tok in class_name for tok in _NON_CONTROLLER_AGENT_TOKENS)
+
+
+def _controller_has_agent_signals(text: str, language: str) -> bool:
+    """True when the file containing a `*Controller` class has at least one
+    positive signal that this is an agent (not an MVC controller):
+      - LLM SDK imported in the file
+      - Decision-branching on a curated key (`if action == ...`,
+        `match intent: case ...`)
+
+    Both signals are reused from the pipeline classifier — they're already
+    AST-validated for Python and regex-based for TS/JS. Falls back to
+    False on parse failure (conservative — drop the FP rather than retain it)."""
+    if language == "python":
+        tree = parse_python(text)
+        if tree is None:
+            return False
+        if _file_imports_llm_client(tree):
+            return True
+        if _has_decision_branching(tree):
+            return True
+        return False
+    if _LLM_IMPORT_REGEX.search(text):
+        return True
+    decision_re = re.compile(
+        r"\b(?:if|switch)\s*\(\s*(?:msg\.|message\.|input\.|payload\.|this\.)?"
+        r"(?:" + "|".join(_DECISION_KEYS) + r")\b"
+    )
+    return bool(decision_re.search(text))
+
 # Shims / test doubles / abstract bases — names that look agent-shaped but
 # never run a real agent in prod. Filter OUT matches whose class name
 # contains any of these tokens (case-insensitive).
@@ -626,6 +676,15 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 continue
             if class_name in deprecated_classes:
                 continue
+            # `*Controller`-only matches (NestJS, Frappe, Rails-style MVC) need
+            # additional positive evidence — an LLM import in the file or a
+            # decision-branching method. Without that, this is just a routing
+            # controller and the agent-class label is wrong. Other agent tokens
+            # (Dispatcher / Orchestrator / Agent / Planner / ...) keep firing
+            # unconditionally because those names are agent-specific.
+            if _is_controller_only_match(class_name):
+                if not _controller_has_agent_signals(text, file_lang):
+                    continue
             if is_pipeline:
                 # Pipeline orchestrators stay in FULL_REPORT for completeness
                 # but never reach "Best place to wrap first" (low confidence

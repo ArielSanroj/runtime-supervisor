@@ -483,6 +483,37 @@ def test_vercel_saas_server_action_directive_emits_handlers():
     assert all(f.confidence == "high" for f in actions)
 
 
+def test_vercel_saas_emits_webhook_idempotency_combo():
+    """Webhook handler + DB writes triggers the idempotency combo. The
+    handler in the fixture verifies the Stripe signature correctly but
+    has no `processed_events` lookup — so a 5xx + redelivery would replay
+    every Supabase upsert. The combo is the right place to surface that."""
+    from supervisor_discover.combos import detect_combos
+    findings = scan_all(VERCEL_SAAS_FIXTURE)
+    combos = detect_combos(findings)
+    ids = {c.id for c in combos}
+    assert "webhook-plus-db-write" in ids
+    hit = next(c for c in combos if c.id == "webhook-plus-db-write")
+    assert hit.severity == "high"
+    assert "idempotency" in hit.title.lower()
+
+
+def test_vercel_saas_sql_rls_audit():
+    """SQL DDL pass: a table without `enable row level security` is high-
+    confidence (anon key has full access on Supabase). A table with RLS
+    enabled but no policy is medium (locked out by default; confirm
+    intent). Tables with both RLS and a policy emit nothing."""
+    findings = scan_all(VERCEL_SAAS_FIXTURE)
+    rls = [f for f in findings
+           if (f.extra or {}).get("family", "").startswith("rls-")]
+    by_table = {f.extra["table"]: f for f in rls}
+    assert "users" not in by_table  # RLS + 2 policies → silent
+    assert by_table["customers"].confidence == "medium"
+    assert by_table["customers"].extra["family"] == "rls-no-policy"
+    assert by_table["audit_events"].confidence == "high"
+    assert by_table["audit_events"].extra["family"] == "rls-missing"
+
+
 def test_skip_dirs_check_is_relative_to_scan_root(tmp_path):
     """Regression: repos inside ~/Library/CloudStorage/Dropbox (or any path
     whose absolute parts contain a _SKIP_DIRS entry like 'Library') must
@@ -514,6 +545,109 @@ def test_db_mutations_on_customer_table_go_to_customer_data(tmp_path):
         extra={"table": "users", "verb": "INSERT"},
     )
     assert tier_of(f) == "customer_data"
+
+
+def test_nestjs_controller_without_llm_or_branching_skipped(tmp_path):
+    """The 10-repo benchmark caught medusa (NestJS) and erpnext (Frappe)
+    inflating priority because the regex matched any `*Controller`. A
+    plain MVC controller — no LLM import, no decision-branching, just
+    HTTP routes — must NOT emit an agent-class finding."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src" / "users"
+    src.mkdir(parents=True)
+    (src / "users.controller.ts").write_text(
+        "import { Controller, Get, Post } from '@nestjs/common';\n"
+        "import { UsersService } from './users.service';\n"
+        "\n"
+        "@Controller('users')\n"
+        "export class UsersController {\n"
+        "  constructor(private readonly users: UsersService) {}\n"
+        "\n"
+        "  @Get() list() { return this.users.list(); }\n"
+        "  @Post() create(@Body() dto) { return this.users.create(dto); }\n"
+        "}\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if f.scanner == "agent-orchestrators"
+        and (f.extra or {}).get("kind") == "agent-class"
+    ]
+    assert findings == [], (
+        "NestJS *Controller* must not register as agent-class without LLM "
+        "import or decision-branching. Got: "
+        f"{[(f.file, f.line, f.snippet) for f in findings]}"
+    )
+
+
+def test_controller_with_llm_import_still_fires(tmp_path):
+    """When a `*Controller` class lives in a file that imports an LLM SDK,
+    the gate is satisfied — this *is* an agent path."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "agent_controller.py").write_text(
+        "import openai\n"
+        "\n"
+        "class LLMController:\n"
+        "    def dispatch(self, intent):\n"
+        "        if intent == 'summary':\n"
+        "            return openai.chat.completions.create(model='gpt-4', messages=[])\n"
+        "        return None\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if f.scanner == "agent-orchestrators"
+        and (f.extra or {}).get("kind") == "agent-class"
+        and (f.extra or {}).get("class_name") == "LLMController"
+    ]
+    assert len(findings) == 1
+
+
+def test_controller_with_decision_branching_still_fires(tmp_path):
+    """Decision-branching on `action` / `intent` inside the Controller is
+    the second positive signal — covers agents that don't import an LLM
+    SDK directly."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "router_controller.py").write_text(
+        "class RouterController:\n"
+        "    def handle(self, action):\n"
+        "        if action == 'create':\n"
+        "            return self._create()\n"
+        "        if action == 'delete':\n"
+        "            return self._delete()\n"
+        "        if action == 'update':\n"
+        "            return self._update()\n"
+        "        return None\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "RouterController"
+    ]
+    assert len(findings) == 1
+
+
+def test_dispatcher_match_unaffected_by_controller_gate(tmp_path):
+    """`Dispatcher` is one of the non-Controller agent tokens — it fires
+    unconditionally even without LLM imports or branching."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "dispatcher.py").write_text(
+        "class AlertDispatcher:\n"
+        "    def dispatch(self):\n"
+        "        return None\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "AlertDispatcher"
+    ]
+    assert len(findings) == 1
 
 
 def test_db_mutations_finds_raw_sql_in_sql_files(tmp_path):

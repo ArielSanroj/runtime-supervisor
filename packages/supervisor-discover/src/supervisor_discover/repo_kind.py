@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-RepoKind = Literal["framework", "app", "unknown"]
+RepoKind = Literal["framework", "app", "cli_tool", "example_template", "unknown"]
 
 _PYPROJECT_NAME_RE = re.compile(
     r'^\s*name\s*=\s*["\']([^"\']+)["\']', re.MULTILINE
@@ -52,6 +52,27 @@ _LONG_LIVED_PROCESS_RE = re.compile(
 )
 _DOCKER_DIRECTIVE_RE = re.compile(
     r"^\s*(CMD|ENTRYPOINT)\b(.*)", re.IGNORECASE
+)
+
+# pyproject [project.scripts] / poetry [tool.poetry.scripts] declaration
+# detected by section header. CLI tools (medusa CLI, agentic-controls,
+# supervisor-discover itself) declare these. Distinct from a deployed
+# service: nobody wraps a CLI's main() with @supervised.
+_PYPROJECT_SCRIPTS_RE = re.compile(
+    r"^\s*\[(?:project\.scripts|tool\.poetry\.scripts)\]", re.MULTILINE
+)
+# package.json `"bin"` field — same idea for Node CLIs.
+_PACKAGE_BIN_RE = re.compile(r'"bin"\s*:\s*[\{"]')
+
+# Repo names that signal "this is a starter / template / example, not a
+# deployed app". Vercel / Next.js / Solid / Svelte / Astro all ship
+# repos with these suffixes and the scan should reframe accordingly.
+_TEMPLATE_NAME_SUFFIXES = (
+    "-template", "-templates",
+    "-starter", "-starters",
+    "-example", "-examples",
+    "-boilerplate",
+    "-skeleton",
 )
 
 
@@ -121,6 +142,46 @@ def _has_long_lived_dockerfile(root: Path) -> bool:
     return False
 
 
+def _declares_cli_scripts(root: Path) -> bool:
+    """True when the repo's manifest declares CLI entry points.
+
+    Checks `pyproject.toml` for `[project.scripts]` or `[tool.poetry.scripts]`,
+    and `package.json` for a top-level `"bin"` field. One match is enough:
+    repos that ship a binary almost never need agent-loop wrap recommendations.
+    """
+    pp = root / "pyproject.toml"
+    if pp.is_file():
+        try:
+            text = pp.read_text(errors="ignore")
+        except OSError:
+            text = ""
+        if _PYPROJECT_SCRIPTS_RE.search(text):
+            return True
+    pj = root / "package.json"
+    if pj.is_file():
+        try:
+            text = pj.read_text(errors="ignore")
+        except OSError:
+            text = ""
+        if _PACKAGE_BIN_RE.search(text):
+            return True
+    return False
+
+
+def _looks_like_template_repo(root: Path) -> bool:
+    """True when the repo signals "this is a starter / template / example".
+
+    Path-based: repo basename ends with one of `_TEMPLATE_NAME_SUFFIXES`,
+    or the root contains a `template.json` / `registry.json` (Vercel
+    / shadcn / Next.js convention)."""
+    if any(root.name.lower().endswith(s) for s in _TEMPLATE_NAME_SUFFIXES):
+        return True
+    for marker in ("template.json", "registry.json"):
+        if (root / marker).is_file():
+            return True
+    return False
+
+
 def _dockerfile_has_long_lived_directive(text: str) -> bool:
     """Coalesce backslash-continuations, find each CMD/ENTRYPOINT directive
     body, and return True when any of them contains a long-lived process
@@ -154,7 +215,8 @@ def detect_repo_kind(
     http_routes: int = 0,
     chokepoints_in_agent_path: int = 0,
 ) -> RepoKind:
-    """Classify a scanned repo as a framework, an app, or unknown.
+    """Classify a scanned repo as a framework, an app, a CLI tool, an
+    example/template, or unknown.
 
     Inputs come from already-computed scanner state (passed by `build_summary`)
     so this module stays free of `Finding` imports — keeps the dependency
@@ -165,7 +227,27 @@ def detect_repo_kind(
     agent-class findings inside a real `/agents/` directory; large numbers
     on a repo with no Dockerfile and a top-level pyproject is the langchain
     shape — many class definitions, none deployed here.
+
+    Order: the more specific buckets (template, CLI) win before the
+    framework/app score-based decision, because a CLI repo with a
+    `pyproject.toml` would otherwise score as `framework` (medusa CLI
+    was the canonical miss in the 10-repo benchmark).
     """
+    # Most specific first — these buckets short-circuit the score logic
+    # because `cli_tool` and `example_template` change the report's
+    # whole framing, not just one banner.
+    if _looks_like_template_repo(root):
+        return "example_template"
+    # CLI: declared scripts/bin AND no long-lived Dockerfile AND no real
+    # HTTP surface. Tighter than "any pyproject with scripts" so a hybrid
+    # repo (ships a CLI *and* runs a server) lands as `app`.
+    if (
+        _declares_cli_scripts(root)
+        and not _has_long_lived_dockerfile(root)
+        and http_routes <= 2
+    ):
+        return "cli_tool"
+
     score = 0.0
 
     if _has_distributable_pyproject(root):

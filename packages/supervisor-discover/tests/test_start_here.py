@@ -91,7 +91,11 @@ def test_top_risks_ordered_by_severity_payment_before_llm():
         scanner="llm-calls", file="l.py", line=20, snippet="openai.ChatCompletion.create(",
         suggested_action_type="tool_use", confidence="high", rationale="...", extra={},
     )
-    sh = build_start_here(RepoSummary(), [llm, payment])  # input order LLM first
+    # agent_path_present=True so non-self-contained risks aren't dropped.
+    sh = build_start_here(
+        RepoSummary(agent_path_present=True, llm_providers=["openai"]),
+        [llm, payment],
+    )
     assert sh.top_risks[0].family == "payment-calls"
     assert sh.top_risks[1].family == "llm-calls"
 
@@ -103,7 +107,10 @@ def test_top_risks_capped_at_three():
                 extra={"family": "shell-exec"} if s == "fs-shell" else {})
         for s in ("payment-calls", "fs-shell", "email-sends", "messaging", "llm-calls")
     ]
-    sh = build_start_here(RepoSummary(), findings)
+    sh = build_start_here(
+        RepoSummary(agent_path_present=True, llm_providers=["openai"]),
+        findings,
+    )
     assert len(sh.top_risks) == 3
 
 
@@ -302,7 +309,9 @@ def test_render_md_section_order_with_frameworks():
     'What this repo can already do' and 'Highest-risk things to care about now'."""
     cps = [AgentChokepoint(file="src/a.py", line=1,
                            kind="framework-import", label="langchain")]
-    summary = RepoSummary(agent_chokepoints=cps)
+    # Framework signal counts as agent path — keep the risk header.
+    summary = RepoSummary(agent_chokepoints=cps, agent_path_present=True,
+                          llm_providers=["openai"])
     findings = [Finding(
         scanner="agent-orchestrators", file="src/a.py", line=1,
         snippet="from langchain import …",
@@ -537,7 +546,7 @@ def test_render_md_section_order_with_bootstrap(tmp_path: Path):
     cp = AgentChokepoint(
         file=str(tmp_path / "agent.py"), line=1, kind="agent-class", label="A",
     )
-    summary = RepoSummary(agent_chokepoints=[cp])
+    summary = RepoSummary(agent_chokepoints=[cp], agent_path_present=True)
     sh = build_start_here(summary, [], repo_root=tmp_path)
     md = render_start_here_md(sh)
     expected_order = [
@@ -797,6 +806,78 @@ def test_hotspot_ignores_circleci_directory():
         "all candidates are low-reachability — picker must yield None "
         "instead of choosing the least-bad noise file"
     )
+
+
+def test_no_agent_path_demotes_non_self_contained_risks():
+    """When `agent_path_present is False`, only self-contained risks
+    (eval / pickle / verify=False / JWT bypass) make it to top_risks.
+    Stripe, email, etc. become inventory because no agent reaches them.
+    fastapi-realworld and chatwoot were misframed as urgent agent risk
+    in the 10-repo benchmark despite having no agent path."""
+    summary = RepoSummary(agent_path_present=False)
+    findings = [
+        # Stripe — would normally be top_risk, but no agent path → drops.
+        Finding(scanner="payment-calls", file="api/checkout.py", line=10,
+                snippet="stripe.charges.create(", suggested_action_type="payment",
+                confidence="high", rationale="...", extra={}),
+        # eval — self-contained RCE primitive, stays in top_risks even
+        # without an agent (a direct user-input handler can hit it).
+        Finding(scanner="fs-shell", file="api/admin.py", line=20,
+                snippet="eval(payload)", suggested_action_type="tool_use",
+                confidence="high", rationale="...",
+                extra={"family": "code-eval"}),
+    ]
+    sh = build_start_here(summary, findings)
+    titles = [r.title for r in sh.top_risks]
+    assert any("eval" in t.lower() or "exec" in t.lower() for t in titles), (
+        f"self-contained RCE risk must survive — got titles {titles}"
+    )
+    assert not any("money" in t.lower() for t in titles), (
+        f"Stripe risk must drop when no agent path — got titles {titles}"
+    )
+
+
+def test_agent_path_present_keeps_normal_priority_ladder():
+    """When `agent_path_present is True`, top_risks behave as before —
+    Stripe + eval both surface, ordered by severity."""
+    summary = RepoSummary(
+        agent_path_present=True,
+        llm_providers=["openai"],
+    )
+    findings = [
+        Finding(scanner="payment-calls", file="api/checkout.py", line=10,
+                snippet="stripe.charges.create(", suggested_action_type="payment",
+                confidence="high", rationale="...", extra={}),
+        Finding(scanner="fs-shell", file="api/admin.py", line=20,
+                snippet="eval(payload)", suggested_action_type="tool_use",
+                confidence="high", rationale="...",
+                extra={"family": "code-eval"}),
+    ]
+    sh = build_start_here(summary, findings)
+    titles = [r.title for r in sh.top_risks]
+    assert any("money" in t.lower() for t in titles)
+    assert any("eval" in t.lower() or "exec" in t.lower() for t in titles)
+
+
+def test_renderer_uses_capability_inventory_header_without_agent_path():
+    """The 10-repo benchmark caught fastapi-realworld being framed as
+    urgent agent risk despite having no agent path. The renderer must
+    flip the header to 'Capability inventory' when agent_path_present
+    is False."""
+    summary = RepoSummary(agent_path_present=False)
+    sh = build_start_here(summary, [])
+    md = render_start_here_md(sh)
+    assert "## Capability inventory" in md
+    assert "## Highest-risk things to care about now" not in md
+
+
+def test_renderer_uses_risk_header_with_agent_path():
+    """With an agent path present, the original risk header stays."""
+    summary = RepoSummary(agent_path_present=True, llm_providers=["openai"])
+    sh = build_start_here(summary, [])
+    md = render_start_here_md(sh)
+    assert "## Highest-risk things to care about now" in md
+    assert "## Capability inventory" not in md
 
 
 def test_hotspot_returns_none_when_all_candidates_demoted():

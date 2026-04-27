@@ -103,6 +103,10 @@ class StartHere:
     # Lets the scanner stay useful on plain-SaaS repos where "agent loop" is
     # the wrong mental model.
     capability_hotspot: WrapTarget | None = None
+    # Mirrors `RepoSummary.agent_path_present`. The renderer reads this to
+    # flip the "Highest-risk things" header into a "Capability inventory"
+    # section when no agent/LLM is reachable in the scanned code.
+    agent_path_present: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -585,7 +589,27 @@ def _risk_wrap_example(f: Finding) -> str:
     )
 
 
-def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Risk]:
+# Capability keys that remain "real risk" even without an agent in the
+# loop — these are RCE / auth-bypass primitives dangerous on their own.
+# When `agent_path_present is False`, all OTHER capability keys (Stripe,
+# email, DB writes, ...) move from "risk" to "inventory" because no
+# LLM/agent reaches them. The 10-repo benchmark caught fastapi-realworld,
+# nextjs-subscription-payments and chatwoot being misframed as urgent
+# agent risk despite having no agent path.
+_SELF_CONTAINED_RISK_KEYS = frozenset({
+    "fs-shell-code-eval",        # eval(request.body) is bad regardless of LLM
+    "fs-shell-unsafe-deserialize",  # pickle.loads(request.body) — RCE primitive
+    "auth-bypass-tls-bypass",    # verify=False is MITM exposure
+    "auth-bypass-jwt-bypass",    # bypassing signature → auth bypass
+})
+
+
+def _build_top_risks(
+    findings: list[Finding],
+    policy: dict[str, Any],
+    *,
+    agent_path_present: bool = True,
+) -> list[Risk]:
     """One Risk per high-confidence capability key, ordered by risk_severity.
 
     Skip findings that:
@@ -596,6 +620,11 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
       - are already wrapped (`extra.already_gated == True`) — the user has
         a `@supervised(...)` or a `guarded(...)` covering this call-site, so
         rendering "do this now: wrap it" is wrong.
+
+    When `agent_path_present is False`, the priority ladder shrinks to
+    `_SELF_CONTAINED_RISK_KEYS` only (eval / pickle / verify=False / JWT
+    bypass). Stripe, email, DB writes etc. become inventory in FULL_REPORT
+    because no agent in this repo can trigger them on its own.
 
     Such findings stay in FULL_REPORT for completeness.
     """
@@ -614,6 +643,8 @@ def _build_top_risks(findings: list[Finding], policy: dict[str, Any]) -> list[Ri
             continue
         key = _capability_key(f)
         if key not in representative and key in _RISK_CARDS:
+            if not agent_path_present and key not in _SELF_CONTAINED_RISK_KEYS:
+                continue
             representative[key] = f
 
     # Order by severity (descending), tie-break by capability key for determinism.
@@ -1038,7 +1069,9 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     targets = _build_wrap_targets(summary, max_wrap, findings)
     framework_signals = _build_framework_signals(summary, findings)
     capabilities = _build_capabilities(summary, findings, capability_phrases)
-    top_risks = _build_top_risks(findings, p)
+    top_risks = _build_top_risks(
+        findings, p, agent_path_present=summary.agent_path_present,
+    )
     bootstrap = _build_bootstrap(repo_root, targets) if repo_root is not None else None
     # Hotspot fallback only matters when neither an agent class nor a
     # framework loop is detected. Computing it always would be cheap, but
@@ -1061,6 +1094,7 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
         bootstrap=bootstrap,
         repo_kind=summary.repo_kind,
         capability_hotspot=hotspot,
+        agent_path_present=summary.agent_path_present,
     )
 
 
@@ -1337,9 +1371,24 @@ def render_start_here_md(sh: StartHere) -> str:
         )
         parts.append("")
 
-    # 3. top risks
-    parts.append("## Highest-risk things to care about now")
-    parts.append("")
+    # 3. top risks — when no agent/LLM is reachable in this repo, the
+    # report shifts from "highest-risk things" to "capability inventory".
+    # The 10-repo benchmark caught fastapi-realworld and chatwoot being
+    # framed as urgent agent risk despite having no agent path; the
+    # capability inventory framing is what actually applies.
+    if sh.agent_path_present:
+        parts.append("## Highest-risk things to care about now")
+        parts.append("")
+    else:
+        parts.append("## Capability inventory")
+        parts.append("")
+        parts.append(
+            "_No agent or LLM is reachable in this scan. The items below "
+            "describe what an attacker who reaches the code-path could do — "
+            "wrap them once you add an agent loop, or treat as a checklist "
+            "for direct user input handling today._"
+        )
+        parts.append("")
     if sh.top_risks:
         for r in sh.top_risks:
             parts.append(f"### {r.title}")

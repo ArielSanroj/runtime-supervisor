@@ -149,6 +149,15 @@ class RepoSummary:
     # adopt this in your app". "app" → standard runtime, normal copy.
     # "unknown" → heuristic was inconclusive; default to standard copy.
     repo_kind: str = "unknown"
+    # True when at least one agent/LLM signal was detected — an LLM SDK
+    # provider, an agent-class chokepoint, or a registered agent tool.
+    # When False, findings represent **capability inventory** (what an
+    # attacker reaching the code-path could do), not **agent risk** (what
+    # an LLM in a loop could trigger). The renderer flips its priority
+    # ladder copy on this flag — fastapi-realworld, nextjs-subscription-
+    # payments and chatwoot all came back agent-pathless on the 10-repo
+    # benchmark and were being misframed as urgent agent risk.
+    agent_path_present: bool = False
     # Counts of findings hidden from START_HERE / public output, by category:
     #   "tests"           — files in tests/, __tests__/, etc.
     #   "legacy"          — files in legacy/, archive/, deprecated/
@@ -553,6 +562,15 @@ def build_summary(
         ),
         repo_type=repo_type,
         repo_kind=repo_kind,
+        # An LLM provider, an agent-class chokepoint, or a registered agent
+        # tool counts as an active agent path. The renderer uses this to
+        # decide whether priority cards apply or the report is just a
+        # capability inventory.
+        agent_path_present=bool(
+            llms
+            or any(cp.kind == "agent-class" for cp in unique_chokepoints)
+            or tools
+        ),
         hidden_findings=dict(hidden_counts or {}),
     )
 

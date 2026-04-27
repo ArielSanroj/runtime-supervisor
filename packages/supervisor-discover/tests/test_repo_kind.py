@@ -123,6 +123,83 @@ def test_entrypoint_directive_recognised(tmp_path: Path):
     assert kind != "framework"
 
 
+def test_pyproject_with_scripts_classifies_as_cli_tool(tmp_path: Path):
+    """A repo whose pyproject.toml declares `[project.scripts]` and ships
+    no Dockerfile / minimal HTTP surface is a CLI tool, not an app or
+    framework. medusa CLI was the canonical miss in the 10-repo
+    benchmark — got tagged framework when it's a developer tool."""
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[project]\nname = "supervisor-discover"\n'
+        '[project.scripts]\nsupervisor-discover = "supervisor_discover.cli:main"\n',
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=0, chokepoints_in_agent_path=0,
+    )
+    assert kind == "cli_tool"
+
+
+def test_node_package_with_bin_classifies_as_cli_tool(tmp_path: Path):
+    """package.json with a `bin` field on the root → Node CLI tool."""
+    _write(
+        tmp_path,
+        "package.json",
+        '{"name": "vercel", "bin": {"vercel": "./bin/vercel"}}\n',
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=0, chokepoints_in_agent_path=0,
+    )
+    assert kind == "cli_tool"
+
+
+def test_template_repo_basename_classifies_as_example_template(tmp_path: Path):
+    """Repos named `*-template` / `*-starter` / `*-example` are scaffold
+    repos. The benchmark's `nextjs-subscription-payments` (a starter)
+    used to land as `app` — wrong category for the playbook."""
+    template = tmp_path / "nextjs-subscription-starter"
+    template.mkdir()
+    _write(template, "package.json", '{"name": "starter"}\n')
+    kind = detect_repo_kind(
+        template, http_routes=4, chokepoints_in_agent_path=0,
+    )
+    assert kind == "example_template"
+
+
+def test_registry_json_marks_example_template(tmp_path: Path):
+    """shadcn / Vercel marketplace conventions ship a `registry.json`
+    or `template.json` at root. Treat as example/template regardless
+    of basename."""
+    _write(tmp_path, "registry.json", '{"name": "ui-blocks"}\n')
+    kind = detect_repo_kind(
+        tmp_path, http_routes=0, chokepoints_in_agent_path=0,
+    )
+    assert kind == "example_template"
+
+
+def test_cli_with_dockerfile_falls_through_to_app(tmp_path: Path):
+    """Hybrid repos that ship a CLI *and* run a server (Dockerfile with
+    long-lived process) get classified as `app` — the deployable surface
+    wins because that's what actually needs guardrails."""
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        '[project]\nname = "hybrid"\n'
+        '[project.scripts]\nhybrid = "hybrid.cli:main"\n',
+    )
+    _write(
+        tmp_path,
+        "Dockerfile",
+        'FROM python:3.12\nCMD ["uvicorn", "main:app"]\n',
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=8, chokepoints_in_agent_path=0,
+    )
+    # Long-lived Dockerfile present + http_routes>0 → app/unknown, NOT cli_tool.
+    assert kind in ("app", "unknown")
+    assert kind != "cli_tool"
+
+
 def test_monorepo_of_packages_recognised(tmp_path: Path):
     """`packages/` with two sub-packages, each carrying a manifest. Frame
     as monorepo even when the root pyproject is absent."""

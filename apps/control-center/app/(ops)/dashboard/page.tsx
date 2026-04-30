@@ -6,6 +6,7 @@ import { threatsApi, type ThreatAssessmentRow } from "@/lib/threats";
 import { getSession } from "@/lib/session";
 import { AutoRefresh } from "../review/AutoRefresh";
 import InfoTip from "../InfoTip";
+import EnforcementReadiness from "./EnforcementReadiness";
 import RepoKpis from "./RepoKpis";
 
 export const dynamic = "force-dynamic";
@@ -240,6 +241,8 @@ export default async function Dashboard({
       </div>
 
       <RepoKpis />
+
+      <EnforcementReadiness />
 
       {!isZeroState && (
         <section className="grid cols-3" style={{ marginTop: 20 }}>

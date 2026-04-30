@@ -37,13 +37,13 @@ def apply(combo_id: str, out_dir: Path, *, experimental: bool = False) -> None:
 
 
 def explain() -> str:
-    """Describe Nivel 2 to the user (printed by `ac fix --help` in the future)."""
+    """Describe Level 2 to the user (printed by `ac fix --help` in the future)."""
     return (
-        "Nivel 2 — auto-fix\n"
+        "Level 2 — auto-fix\n"
         "==================\n"
-        "Aplica el playbook de un combo automáticamente: promueve la policy,\n"
-        "edita los call-sites, corre el test de verificación. High-blast-radius,\n"
-        "requiere --experimental flag una vez implementado.\n"
+        "Applies a combo playbook automatically: promotes the policy, edits\n"
+        "the call-sites, runs the verification test. High-blast-radius —\n"
+        "requires the --experimental flag once implemented.\n"
         "\n"
-        "Estado actual: stub. Usar Nivel 1 (playbook manual) por ahora."
+        "Current status: stub. Use Level 1 (manual playbook) for now."
     )

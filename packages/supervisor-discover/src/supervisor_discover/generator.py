@@ -21,7 +21,7 @@ from .combo_state import (
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .narrator import render_summary as render_summary_email
-from .prompts import prompt_for
+from .prompts import prompt_for, repo_relative_path
 from .rollout import render_rollout_md
 from .start_here import build_start_here, render_start_here_md
 from .summary import build_summary, render_markdown as render_summary_md
@@ -370,28 +370,28 @@ def generate(
 # reader should care about for each kind of action.
 _OWASP_PER_ACTION_TYPE: dict[str, list[tuple[str, str]]] = {
     "refund": [
-        ("LLM01", "Prompt injection — el monto o el motivo pueden venir inyectados"),
-        ("LLM02", "Sensitive info disclosure — customer_id y reason pueden filtrar PII"),
+        ("LLM01", "Prompt injection — amount or reason can be attacker-controlled"),
+        ("LLM02", "Sensitive info disclosure — customer_id and reason can leak PII"),
     ],
     "payment": [
-        ("LLM01", "Prompt injection — monto/destino pueden venir inyectados"),
-        ("LLM10", "Unbounded consumption — bursts de payments = fraude o DoS"),
+        ("LLM01", "Prompt injection — amount/destination can be attacker-controlled"),
+        ("LLM10", "Unbounded consumption — bursts of payments = fraud or DoS"),
     ],
     "account_change": [
-        ("LLM01", "Prompt injection — el nuevo email/password puede venir del attacker"),
-        ("LLM02", "Sensitive info disclosure — email/phone son PII"),
+        ("LLM01", "Prompt injection — the new email/password can come from the attacker"),
+        ("LLM02", "Sensitive info disclosure — email/phone are PII"),
     ],
     "data_access": [
-        ("LLM02", "Sensitive info disclosure — el objetivo del query es exfiltrar data"),
-        ("LLM10", "Unbounded consumption — queries sin límite agotan DB"),
+        ("LLM02", "Sensitive info disclosure — the query's goal can be data exfiltration"),
+        ("LLM10", "Unbounded consumption — queries without limits drain the DB"),
     ],
     "tool_use": [
-        ("LLM01", "Prompt injection — el prompt es la superficie primaria"),
-        ("LLM06", "Jailbreak — evadir guardrails del modelo"),
-        ("LLM10", "Unbounded consumption — prompts gigantes/loops infinitos"),
+        ("LLM01", "Prompt injection — the prompt is the primary attack surface"),
+        ("LLM06", "Jailbreak — evading the model's guardrails"),
+        ("LLM10", "Unbounded consumption — huge prompts / infinite loops"),
     ],
     "compliance": [
-        ("LLM09", "Overreliance — no delegar decisiones de compliance al agente solo"),
+        ("LLM09", "Overreliance — don't delegate compliance decisions to the agent alone"),
     ],
 }
 
@@ -469,11 +469,12 @@ def _render_applicable_guardrails(findings: list[Finding]) -> str:
     if not buckets:
         return ""
 
-    lines: list[str] = ["\n## Guardrails que el supervisor aplicaría", ""]
+    lines: list[str] = ["\n## Guardrails the supervisor would apply", ""]
     lines.append(
-        "Lo que pasa cuando un agente intenta ejecutar cada acción: "
-        "el supervisor corre la política listada, más el pipeline OWASP LLM Top 10. "
-        "Si la política o un detector de amenaza matchea, la acción se bloquea o va a review."
+        "What happens when an agent tries to run each action: the supervisor "
+        "runs the listed policy plus the OWASP LLM Top 10 threat pipeline. "
+        "If the policy or a threat detector matches, the action is blocked "
+        "or sent to review."
     )
     lines.append("")
 
@@ -496,13 +497,13 @@ def _render_applicable_guardrails(findings: list[Finding]) -> str:
         # Policy rules block
         if rules is None:
             lines.append(
-                f"**Política:** `{action_type}.base.v1` (no hay YAML todavía). "
-                "El scanner generó un template placeholder en "
-                f"`runtime-supervisor/policies/{action_type}.base.v1.yaml` — editalo "
-                "con las reglas reales y promovelo vía `POST /v1/policies`."
+                f"**Policy:** `{action_type}.base.v1` (no YAML yet). "
+                "The scanner generated a placeholder template at "
+                f"`runtime-supervisor/policies/{action_type}.base.v1.yaml` — edit it "
+                "with the real rules and promote it via `POST /v1/policies`."
             )
         else:
-            lines.append(f"**Política:** `{action_type}.base.v1` ({len(rules)} reglas)")
+            lines.append(f"**Policy:** `{action_type}.base.v1` ({len(rules)} rules)")
             for rule in rules:
                 rule_id = rule.get("id", "?")
                 action = str(rule.get("action", "?")).upper()
@@ -517,18 +518,18 @@ def _render_applicable_guardrails(findings: list[Finding]) -> str:
 
         # OWASP threats block
         if owasp:
-            lines.append("**Amenazas OWASP LLM cubiertas por el threat pipeline:**")
+            lines.append("**OWASP LLM threats covered by the threat pipeline:**")
             for ref, desc in owasp:
                 lines.append(f"  - **{ref}** — {desc}")
             lines.append("")
 
         # Call-sites
-        lines.append("**Call-sites detectados:**")
+        lines.append("**Detected call-sites:**")
         for f in items[:10]:
             conf_badge = f" [{f.confidence}]" if f.confidence != "low" else ""
             lines.append(f"  {f.file.split('/')[-1]}:{f.line} — `{f.snippet}`{conf_badge}")
         if len(items) > 10:
-            lines.append(f"  … y {len(items) - 10} más (ver tabla completa abajo).")
+            lines.append(f"  … and {len(items) - 10} more (see the full table below).")
         lines.append("")
 
     return "\n".join(lines) + "\n"
@@ -664,7 +665,7 @@ def _top_files_evidence(items: list[Finding], limit: int = 3) -> str:
         shorts.append(f"`{short}:{f.line}`")
     rendered = " · ".join(shorts)
     if len(items) > limit:
-        rendered += f" _+{len(items) - limit} más_"
+        rendered += f" _+{len(items) - limit} more_"
     return rendered
 
 
@@ -718,9 +719,7 @@ def _render_per_finding_prompts(items: list[Finding]) -> list[str]:
         "",
     ]
     for f in eligible:
-        rel = f.file.split("/")
-        short = "/".join(rel[-3:]) if len(rel) >= 3 else f.file
-        lines.append(f"**`{short}:{f.line}`** — `{f.scanner}`")
+        lines.append(f"**`{repo_relative_path(f.file)}:{f.line}`** — `{f.scanner}`")
         lines.append("")
         # 4-backtick outer fence so the inner ```python / ```ts blocks
         # the prompt embeds don't close the outer fence prematurely.
@@ -787,7 +786,7 @@ def _render_tier_block(
 
     # Headline tiers: high+medium in a rich table, low in a nested <details>.
     if high or medium:
-        lines.append("| Confianza | Scanner | File:Line | Snippet | Rationale |")
+        lines.append("| Confidence | Scanner | File:Line | Snippet | Rationale |")
         lines.append("|---|---|---|---|---|")
         for f in high + medium:
             lines.append(

@@ -123,8 +123,8 @@ rules:
     action: deny
     reason: destination-not-in-allowlist
     explanation: >
-      Outbound calls sólo a números en ALLOWED_NUMBERS. Editar la lista
-      desde la UI (/policies) o redeploy del YAML.
+      Outbound calls only to numbers in ALLOWED_NUMBERS. Edit the list
+      from the UI (/policies) or redeploy the YAML.
   - id: voice-clone-then-call-review
     when: "payload.get('tool', '').startswith('elevenlabs')
            and session.get('recent_tools', []) and
@@ -132,8 +132,8 @@ rules:
     action: review
     reason: voice-clone-followed-by-call
     explanation: >
-      Si el agente clonó una voz y después intenta hacer una llamada en la
-      misma sesión, escalar a humano — vector clásico de vishing.
+      If the agent cloned a voice and then tries to place a call in the
+      same session, escalate to a human — classic vishing vector.
 """
 
     ev_lines = [
@@ -285,10 +285,11 @@ def _llm_plus_shell_exec(combo: Combo, findings: list[Finding], summary: RepoSum
             "and [payload.get('command'), *payload.get('args', [])] not in allowed_commands"
         )
         explanation = (
-            "Los únicos comandos aprobados son los que ya viven en `allowed_commands` "
-            "(extraídos del repo). Cualquier otro va a review si es legítimo, deny si no.\n"
-            "Revisá la lista antes de promover la policy — eliminá los comandos que "
-            "NO querés que el agente pueda invocar."
+            "The only approved commands are the ones already living in `allowed_commands` "
+            "(extracted from the repo). Anything else goes to review if legitimate, "
+            "deny otherwise.\n"
+            "Review the list before promoting the policy — remove the commands you "
+            "do NOT want the agent to be able to invoke."
         )
     else:
         allowlist_yaml = "  # TODO: replace with the commands your agent legitimately runs.\n  # Example: [\"git\", \"--version\"]"
@@ -297,9 +298,9 @@ def _llm_plus_shell_exec(combo: Combo, findings: list[Finding], summary: RepoSum
             "and [payload.get('command'), *payload.get('args', [])] not in allowed_commands"
         )
         explanation = (
-            "Los únicos comandos aprobados viven en `allowed_commands`. Cualquier "
-            "otro viene a review manual si es legítimo; caso contrario, deny.\n"
-            "Llename `allowed_commands` con la lista exacta antes de promover."
+            "The only approved commands live in `allowed_commands`. Anything else "
+            "goes to manual review if legitimate; otherwise, deny.\n"
+            "Fill `allowed_commands` with the exact list before promoting."
         )
     policy_yaml = (
         "name: tool_use.llm-plus-shell-exec\n"
@@ -323,9 +324,9 @@ def _llm_plus_shell_exec(combo: Combo, findings: list[Finding], summary: RepoSum
         "    action: deny\n"
         "    reason: shell-metacharacters-detected\n"
         "    explanation: >\n"
-        "      Pipes, subcomandos, o backticks en los args son la forma clásica de\n"
-        "      inyección. Si realmente necesitas un pipe, ejecútalo con subprocess\n"
-        "      args=[...] en vez de shell=True.\n"
+        "      Pipes, subcommands, or backticks in args are the classic injection\n"
+        "      surface. If you really need a pipe, run it via subprocess args=[...]\n"
+        "      instead of shell=True.\n"
     )
 
     ev_lines = [
@@ -455,17 +456,17 @@ def _generic_playbook(combo: Combo, findings: list[Finding], summary: RepoSummar
         "",
     ]
     header.extend(_intro_block(combo))
-    body = f"""## Pasos genéricos
+    body = f"""## Generic steps
 
-1. Revisa cada call-site listado arriba.
-2. Envuélvelo con `@supervised("tool_use")` usando los stubs generados.
-3. Promueve la policy `tool_use.base.v1` si no está ya activa.
-4. Verifica en shadow mode durante 7 días antes de enforce.
+1. Review each call-site listed above.
+2. Wrap it with `@supervised("tool_use")` using the generated stubs.
+3. Promote the `tool_use.base.v1` policy if it isn't already active.
+4. Verify in shadow mode for 7 days before flipping to enforce.
 
 ---
 
-_Este combo no tiene playbook hand-written todavía. Si te importa, abre un issue
-en github.com/ArielSanroj/runtime-supervisor con el combo_id `{combo.id}`._
+_This combo doesn't have a hand-written playbook yet. If it matters to you, open
+an issue at github.com/ArielSanroj/runtime-supervisor with combo_id `{combo.id}`._
 """
     md = "\n".join(header) + body
     return Playbook(combo_id=combo.id, markdown=md, policy_yaml=None)

@@ -463,6 +463,23 @@ function PriorityBrief({ grouped }: { grouped: Record<string, ScanFinding[]> }) 
     );
   }
 
+  // Count distribution along the orthogonal axis: tier says *what surface*,
+  // category says *what kind of pain*. Same finding contributes to one chip
+  // in each row. Skipped if backend hasn't populated the field yet (older
+  // scans persisted before the categorize() rollout).
+  const allFindings = TIER_ORDER.flatMap((t) => grouped[t] ?? []);
+  const axisCounts: Record<FindingCategory, number> = { security: 0, efficiency: 0, quality: 0 };
+  let axisTotal = 0;
+  for (const f of allFindings) {
+    if (f.category) {
+      axisCounts[f.category]++;
+      axisTotal++;
+    }
+  }
+  const axisRows = (["security", "efficiency", "quality"] as const)
+    .map((axis) => ({ axis, count: axisCounts[axis] }))
+    .filter((r) => r.count > 0);
+
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -480,6 +497,23 @@ function PriorityBrief({ grouped }: { grouped: Record<string, ScanFinding[]> }) 
           ))}
         </div>
       </div>
+      {axisTotal > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-4">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">by axis</span>
+          {axisRows.map(({ axis, count }) => (
+            <span
+              key={axis}
+              className={`rounded px-2 py-0.5 font-mono text-[11px] ${CATEGORY_TONE[axis]}`}
+            >
+              <span className="capitalize">{axis}</span>
+              <span className="ml-1.5 opacity-70">{count}</span>
+            </span>
+          ))}
+          <span className="ml-auto font-mono text-[10px] text-zinc-600">
+            tier = surface · axis = pain dimension
+          </span>
+        </div>
+      )}
     </div>
   );
 }

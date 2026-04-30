@@ -136,16 +136,24 @@ def _payload_hint(action_type: str) -> str:
     }.get(action_type, "the args your policy's `when:` expression references")
 
 
-def _short_path(file: str) -> str:
-    """Drop the absolute prefix so the prompt stays portable across
-    workspaces — Cursor / Claude Code resolve relative paths fine."""
+def repo_relative_path(file: str) -> str:
+    """Drop the absolute prefix so paths stay portable across workspaces.
+
+    Used wherever we surface a file path to the user's coding agent
+    (Cursor / Claude Code / Codex resolve repo-relative paths fine, and
+    leaking `/Users/<name>/work/...` makes the output non-portable).
+
+    Strategy:
+      1. If the path contains a recognizable repo-root marker, return
+         everything from that marker onward (`src/...`, `apps/...`).
+      2. Otherwise fall back to the last 3 segments — long enough to
+         locate the file, short enough to read.
+    """
     parts = Path(file).parts
-    # Try to take the path from the first segment that looks repo-rooted
     for marker in ("src", "app", "apps", "packages", "services", "supabase", "lib"):
         if marker in parts:
             i = parts.index(marker)
             return "/".join(parts[i:])
-    # Fallback — last 3 components
     return "/".join(parts[-3:]) if len(parts) >= 3 else file
 
 
@@ -158,7 +166,7 @@ def prompt_for(finding: Finding, language: Lang | None = None) -> str:
     block on the first PR.
     """
     lang = language or _detect_language(finding.file)
-    file = _short_path(finding.file)
+    file = repo_relative_path(finding.file)
     snippet = (finding.snippet or "").replace("\n", " ").strip()
     if len(snippet) > 120:
         snippet = snippet[:117] + "…"
@@ -222,7 +230,7 @@ def prompt_for_group(
 
     target_lines = []
     for f in findings[:12]:
-        target_lines.append(f"  - {_short_path(f.file)}:{f.line}")
+        target_lines.append(f"  - {repo_relative_path(f.file)}:{f.line}")
     if len(findings) > 12:
         target_lines.append(f"  - …and {len(findings) - 12} more (see `runtime-supervisor/findings.json`)")
 

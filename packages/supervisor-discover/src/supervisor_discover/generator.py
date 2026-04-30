@@ -26,6 +26,7 @@ from .rollout import render_rollout_md
 from .start_here import build_start_here, render_start_here_md
 from .summary import build_summary, render_markdown as render_summary_md
 from .templates import (
+    CHATBOT_SCOPE_GUARD_EXAMPLE,
     CI_WORKFLOW,
     ENV_EXAMPLE,
     PY_STUB,
@@ -247,6 +248,16 @@ def generate(
         else:
             dst.write_text(_policy_template(action_type))
 
+    # scope_guard policy ships with chatbot-rag repos — the dominant risk
+    # there is the LLM mentioning entities outside the user's scope, which
+    # the action_type policies don't cover. Customers wire the helper at
+    # `supervisor_guards.scope.assert_entities_in_scope` into their wrapper
+    # to populate `entities_mentioned` + `allowed_entities` in the payload.
+    if summary.repo_type == "chatbot-rag":
+        scope_src = _POLICY_SOURCE_DIR / "scope_guard.base.v1.yaml"
+        if scope_src.exists():
+            shutil.copyfile(scope_src, policies_dir / "scope_guard.base.v1.yaml")
+
     # Repo-specific tool_use policy seeded from the repo's action enums.
     # The reviewer flagged on castor-1 that the generic policy referenced
     # `'system.exec'` / `'fs.delete'` — names that never matched because
@@ -332,6 +343,15 @@ def generate(
                     stable_id=f.id or "(legacy)",
                 )
             )
+    # Chatbot-rag repos get a one-time scope-guard example alongside the
+    # per-call-site stubs. The per-call stubs cover the LLM-call wrapper;
+    # this file shows the response-side check using assert_entities_in_scope.
+    # Together they're the two halves of the Andrea-class regression.
+    if summary.repo_type == "chatbot-rag":
+        (stubs_py / "chatbot_scope_guard_example.stub.py").write_text(
+            CHATBOT_SCOPE_GUARD_EXAMPLE
+        )
+
     # Drop a one-line README in stubs/ to record the housekeeping counts.
     if orphan_count or already_gated_count or stale_count:
         readme_lines = ["# stubs/", ""]

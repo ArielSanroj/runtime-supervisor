@@ -1,0 +1,52 @@
+name: scope_guard.base
+version: 1
+description: >
+  Scope guard for chatbot/RAG agents — denies LLM responses that reference
+  entities (people, accounts, identifiers) outside the user's authorized
+  scope. Modeled on the Andrea/Prodesa incident: the LLM produced archetype
+  analyses for people who weren't in the user's `team_members`, with the
+  manager treating the output as data.
+
+  Wiring: the caller (a wrapper around the LLM call) extracts entity names
+  from the model's response and the user's source-of-truth, passes both
+  into the supervisor's evaluate payload, and lets these rules decide
+  whether the response goes through. The DSL is synchronous, so the
+  caller does the lookup; the policy only checks set-membership.
+
+  Required payload fields:
+    - entities_mentioned: list[str] — proper-noun candidates from the LLM
+      output. Use `supervisor_guards.scope.extract_entities()` or your own
+      NER. Empty list = "no entities to gate".
+    - allowed_entities: list[str] — names the user is authorized to see
+      (e.g., from `team_members` for a manager, all customers for an
+      account-owner, etc.). Empty list = "no scope was passed; deny on
+      first non-empty mention".
+
+rules:
+  - id: deny-out-of-scope-entity
+    # set(mentioned) - set(allowed) is non-empty iff at least one mention
+    # falls outside the authorized scope. Using set difference because
+    # asteval's minimal interpreter doesn't support `any(generator)`.
+    # The caller is responsible for normalizing case/accents before
+    # passing the lists in (the supervisor_guards.scope helper does it).
+    when: "len(set(payload.get('entities_mentioned', [])) - set(payload.get('allowed_entities', []))) > 0"
+    action: deny
+    reason: out-of-scope-entity-in-llm-response
+    explanation: >
+      The LLM mentioned an entity (person, account, identifier) that the
+      caller did not include in `allowed_entities`. Treating that response
+      as data risks acting on a fabricated reference. The caller should
+      either (a) surface a "no data on X" message to the user instead of
+      the model output, or (b) fetch the missing entity from the
+      source-of-truth and re-evaluate with the expanded scope.
+
+  - id: review-empty-allowed-with-mentions
+    when: "len(payload.get('allowed_entities', [])) == 0 and len(payload.get('entities_mentioned', [])) > 0"
+    action: review
+    reason: scope-not-passed
+    explanation: >
+      The LLM mentioned entities but the caller passed an empty
+      `allowed_entities` list. This is most often a wiring bug — the
+      wrapper forgot to thread the user's scope into the policy payload.
+      Surface to a reviewer so the bug doesn't silently mask real
+      hallucinations behind a permissive default.

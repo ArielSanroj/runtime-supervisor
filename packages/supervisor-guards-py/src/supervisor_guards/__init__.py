@@ -4,6 +4,7 @@ from .config import configure, get_client
 from .context import observe, observing
 from .core import guarded, supervised, supervised_async
 from .errors import SupervisorBlocked, SupervisorReviewPending
+from .scope import ScopeCheck, assert_entities_in_scope, extract_entities
 
 __all__ = [
     "configure",
@@ -15,6 +16,9 @@ __all__ = [
     "observing",
     "SupervisorBlocked",
     "SupervisorReviewPending",
+    "assert_entities_in_scope",
+    "extract_entities",
+    "ScopeCheck",
 ]
 
 try:

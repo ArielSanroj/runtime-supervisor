@@ -34,9 +34,9 @@ export default function LoginForm({ next }: { next: string }) {
   }
 
   return (
-    <form onSubmit={submit}>
-      <label style={{ display: "block", marginBottom: 10 }}>
-        <span className="muted">Email</span>
+    <form onSubmit={submit} className="space-y-4">
+      <label className="block">
+        <span className="font-mono text-xs uppercase tracking-widest text-zinc-500">Email</span>
         <input
           type="email"
           value={email}
@@ -46,8 +46,8 @@ export default function LoginForm({ next }: { next: string }) {
           autoComplete="email"
         />
       </label>
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span className="muted">Password</span>
+      <label className="block">
+        <span className="font-mono text-xs uppercase tracking-widest text-zinc-500">Password</span>
         <input
           type="password"
           value={password}
@@ -56,12 +56,18 @@ export default function LoginForm({ next }: { next: string }) {
           autoComplete="current-password"
         />
       </label>
-      <button className="primary" type="submit" disabled={busy || !email || !password} style={{ width: "100%" }}>
+      <button
+        type="submit"
+        className="primary"
+        disabled={busy || !email || !password}
+        style={{ width: "100%" }}
+      >
         {busy ? "Signing in…" : "Sign in"}
       </button>
-      {err && <p className="chain-bad" style={{ marginTop: 12 }}>{err}</p>}
-      <p className="muted" style={{ marginTop: 16, fontSize: 13 }}>
-        Don&apos;t have an account? Ask your admin to create one via <code>POST /v1/users</code>.
+      {err && <p className="text-sm text-rose-400">{err}</p>}
+      <p className="text-xs leading-5 text-zinc-500">
+        Don&apos;t have an account? Ask your admin to create one via{" "}
+        <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-zinc-400">POST /v1/users</code>.
       </p>
     </form>
   );

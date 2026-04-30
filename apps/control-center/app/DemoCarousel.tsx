@@ -11,7 +11,11 @@ import { useEffect, useState } from "react";
  * first roundtrip.
  */
 
-const API = process.env.NEXT_PUBLIC_SUPERVISOR_API_URL ?? "http://localhost:8000";
+// Empty = same-origin; Next.js rewrites /v1/* to SUPERVISOR_API_URL via
+// next.config.js. Hardcoding a `localhost:8000` fallback here pinned the
+// browser to a port that doesn't exist in production (and is the wrong
+// dev port — the supervisor lives on :8099 under `ac start`).
+const API = process.env.NEXT_PUBLIC_SUPERVISOR_API_URL ?? "";
 
 interface ThreatSpec {
   id: string;

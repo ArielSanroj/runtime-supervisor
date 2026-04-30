@@ -92,7 +92,11 @@ export default function RepoKpis() {
         <Kpi value={agg.repos} label="Repos connected" tone="muted" href="/repos" />
         <Kpi value={agg.highFindings} label="High-risk findings" tone={agg.highFindings > 0 ? "danger" : "good"} />
         <Kpi value={agg.criticalCombos} label="Critical combos" tone={agg.criticalCombos > 0 ? "warn" : "good"} />
-        <Kpi value={agg.enforceMode} label="In enforce mode" tone={agg.enforceMode > 0 ? "good" : "muted"} />
+        <Kpi
+          value={agg.enforceMode > 0 ? `${agg.enforceMode}/${agg.repos}` : "shadow"}
+          label={agg.enforceMode > 0 ? "Enforcing" : "Enforcement"}
+          tone={agg.enforceMode > 0 ? "good" : "muted"}
+        />
       </section>
 
       {agg.recent.length > 0 && (

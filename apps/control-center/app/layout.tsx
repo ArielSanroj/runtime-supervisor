@@ -1,7 +1,23 @@
 import type { Metadata } from "next";
+import { Space_Grotesk, DM_Sans } from "next/font/google";
 import "./globals.css";
 
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-heading",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  display: "swap",
+});
+
+const dmSans = DM_Sans({
+  variable: "--font-sans-body",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.vibefixing.me"),
   title: "Vibefixing — AI Agent Security Scanner | Guardrails for Vibe Coders",
   description:
     "Vibefixing scans your repo and finds unsafe AI agent actions before they hit production. Detect prompt injection risks, unguarded Stripe calls, DB mutations, and filesystem writes. Free public scan.",
@@ -122,7 +138,7 @@ const faqSchema = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${spaceGrotesk.variable} ${dmSans.variable}`}>
       <body>
         <script
           type="application/ld+json"

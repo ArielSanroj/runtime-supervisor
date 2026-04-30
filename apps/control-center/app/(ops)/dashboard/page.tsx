@@ -239,30 +239,32 @@ export default async function Dashboard({
 
       <RepoKpis />
 
-      <section className="grid cols-3" style={{ marginTop: 20 }}>
-        <MetricCard
-          value={isZeroState ? "—" : String(pending.length)}
-          label="needs your decision"
-          tone={isZeroState ? "muted" : pending.length ? "warn" : "good"}
-          href="/review?status=pending"
-        />
-        <MetricCard
-          value={isZeroState ? "—" : String(blocks.length)}
-          label="recently blocked"
-          tone={isZeroState ? "muted" : blocks.length ? "danger" : "good"}
-          href="/policies"
-        />
-        <MetricCard
-          value={isZeroState ? "—" : String(m.threats.total)}
-          label={isZeroState ? "threats - awaiting traffic" : `threats - ${threatRate}% of traffic`}
-          tone={isZeroState ? "muted" : m.threats.critical ? "danger" : m.threats.total ? "warn" : "good"}
-          href="/threats"
-        />
-      </section>
+      {!isZeroState && (
+        <section className="grid cols-3" style={{ marginTop: 20 }}>
+          <MetricCard
+            value={String(pending.length)}
+            label="needs your decision"
+            tone={pending.length ? "warn" : "good"}
+            href="/review?status=pending"
+          />
+          <MetricCard
+            value={String(blocks.length)}
+            label="recently blocked"
+            tone={blocks.length ? "danger" : "good"}
+            href="/policies"
+          />
+          <MetricCard
+            value={String(m.threats.total)}
+            label={`threats - ${threatRate}% of traffic`}
+            tone={m.threats.critical ? "danger" : m.threats.total ? "warn" : "good"}
+            href="/threats"
+          />
+        </section>
+      )}
 
       <section style={{ marginTop: 24 }}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-          <h2 style={{ marginTop: 0 }}>Fix first</h2>
+          <h2 style={{ marginTop: 0 }}>{isZeroState ? "Start here" : "Action queue"}</h2>
           <span className="muted mono" style={{ fontSize: 12 }}>auto-refreshing</span>
         </div>
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>

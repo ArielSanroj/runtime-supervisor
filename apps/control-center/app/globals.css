@@ -2,11 +2,54 @@
 
 :root {
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  /* --font-sans-body and --font-heading are wired up by next/font in app/layout.tsx.
+     Fall back to system stacks so the page still renders if the font CSS
+     hasn't loaded yet. */
+  --sans: var(--font-sans-body, system-ui), -apple-system, Segoe UI, Roboto, sans-serif;
+  --display: var(--font-heading, var(--font-sans-body, system-ui)), system-ui, sans-serif;
+
+  /* Surface radius scale — derived from uupm.cc/demo (var(--radius-sm…3xl)).
+     Existing utility classes keep working; these become available for new
+     components that want larger, more generous corners. */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+
+  /* Soft emerald glow used on hover/focus surfaces. The brand accent
+     #34d399 is unchanged; this is just a layered shadow recipe. */
+  --shadow-glow: 0 0 0 1px rgba(52, 211, 153, 0.18),
+                 0 12px 36px -10px rgba(52, 211, 153, 0.28);
+}
+
+@theme inline {
+  --font-sans: var(--font-sans-body, system-ui, sans-serif);
+  --font-heading: var(--font-heading, system-ui, sans-serif);
+  --font-mono: var(--mono);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; font-family: var(--sans); }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
+
+/* ------- Animations adapted from uupm.cc/demo (float, fade-in) ------- */
+@keyframes vf-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes vf-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-float { animation: vf-float 6s ease-in-out infinite; }
+.animate-fade-in { animation: vf-fade-in 0.6s ease-out both; }
+
+/* Subtle emerald glow on hover. Use on cards/CTAs that already have a
+   border + dark background; the shadow stacks on top, the existing
+   `.transition-colors` Tailwind class still drives the smoothness. */
+.hover-glow { transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease; }
+.hover-glow:hover { box-shadow: var(--shadow-glow); }
 
 /* ------- Ops console dark theme (scoped to .ops-shell) ------- */
 .ops-shell {
@@ -41,12 +84,19 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 .ops-shell h1 { font-size: 22px; margin: 0 0 16px; }
 .ops-shell h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
-.ops-shell .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+.ops-shell .card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.ops-shell .card:hover { box-shadow: var(--shadow-glow); }
 .ops-shell .grid { display: grid; gap: 16px; }
 .ops-shell .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .ops-shell .grid.cols-2 { grid-template-columns: 2fr 1fr; }
 
-.ops-shell .kpi { font-size: 30px; font-weight: 700; }
+.ops-shell .kpi { font-family: var(--display); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
 .ops-shell .kpi .label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 
 .ops-shell table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -59,18 +109,23 @@ html, body { margin: 0; padding: 0; font-family: var(--sans); }
 .ops-shell .badge.approved { color: var(--ok); border-color: rgba(62, 207, 142, 0.4); background: rgba(62, 207, 142, 0.08); }
 .ops-shell .badge.rejected { color: var(--danger); border-color: rgba(239, 79, 90, 0.4); background: rgba(239, 79, 90, 0.08); }
 
-.ops-shell pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
+.ops-shell pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; overflow: auto; font-family: var(--mono); font-size: 12.5px; }
 
 .ops-shell button {
-  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font-weight: 500;
+  padding: 9px 16px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font-weight: 500;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
 }
+.ops-shell button:hover:not(:disabled) { border-color: var(--accent); }
+.ops-shell button.primary:hover:not(:disabled) { box-shadow: var(--shadow-glow); }
 .ops-shell button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d12; }
 .ops-shell button.danger { background: var(--danger); border-color: var(--danger); color: #0b0d12; }
 .ops-shell button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ops-shell input, .ops-shell textarea {
-  width: 100%; padding: 8px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-family: inherit;
+  width: 100%; padding: 10px 12px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md); font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+.ops-shell input:focus, .ops-shell textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15); }
 .ops-shell textarea { min-height: 80px; resize: vertical; }
 
 .ops-shell .row { display: flex; gap: 10px; align-items: center; }

@@ -31,6 +31,7 @@ export default async function ReviewQueue({
       {/* Only poll the pending list — approved/rejected don't change often
           and operators browsing history don't need auto-refresh. */}
       <AutoRefresh intervalMs={5000} enabled={status === "pending"} />
+      <div className="eyebrow">// human-in-the-loop</div>
       <h1 style={{ display: "flex", alignItems: "center" }}>
         Review queue
         <InfoTip>

@@ -37,6 +37,7 @@ export default async function FindingsPage() {
     <div>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
         <div>
+          <div className="eyebrow">// scan history</div>
           <h1 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
             Scans
             <InfoTip>

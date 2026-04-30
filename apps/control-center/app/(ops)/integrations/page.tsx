@@ -8,6 +8,7 @@ export default async function IntegrationsPage() {
   if (!adminTokenConfigured()) {
     return (
       <div>
+        <div className="eyebrow">// connected systems</div>
         <h1>Integrations</h1>
         <div className="card" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
           <strong>SUPERVISOR_ADMIN_TOKEN is not configured.</strong>
@@ -30,15 +31,18 @@ export default async function IntegrationsPage() {
 
   return (
     <div>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
-          Integrations
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="eyebrow">// connected systems</div>
+          <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+            Integrations
           <InfoTip>
             <strong>What:</strong> apps that talk to the supervisor. Each integration has its own <code>APP_ID</code> + <code>SHARED_SECRET</code> for signing JWTs. Scopes define which <code>action_type</code> it can evaluate.<br /><br />
             <strong>When:</strong> add a new one when you wire up a new agent or service. Rotate when a secret leaks or a teammate leaves.<br /><br />
             <strong>Action:</strong> <code>+ New integration</code> issues a secret. <em>Copy it now — it won&apos;t be shown again.</em> To rotate, click an existing integration → <code>rotate secret</code>.
           </InfoTip>
-        </h1>
+          </h1>
+        </div>
         <Link href="/integrations/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New integration</Link>
       </div>
 

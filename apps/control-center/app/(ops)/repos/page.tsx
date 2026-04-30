@@ -65,8 +65,9 @@ export default function ReposPage() {
 
   return (
     <div style={{ padding: 24 }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 16 }}>
+      <div className="row" style={{ justifyContent: "space-between", marginBottom: 16, alignItems: "flex-start" }}>
         <div>
+          <div className="eyebrow">// repository registry</div>
           <h1 style={{ margin: 0 }}>Repos</h1>
           <p className="muted" style={{ marginTop: 4 }}>
             {rows.length} repo{rows.length === 1 ? "" : "s"} scanned from this browser

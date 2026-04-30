@@ -45,6 +45,15 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 .animate-float { animation: vf-float 6s ease-in-out infinite; }
 .animate-fade-in { animation: vf-fade-in 0.6s ease-out both; }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-fade-in,
+  .hover-glow {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* Subtle emerald glow on hover. Use on cards/CTAs that already have a
    border + dark background; the shadow stacks on top, the existing
    `.transition-colors` Tailwind class still drives the smoothness. */
@@ -81,7 +90,16 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 .ops-shell .brand .env { color: var(--muted); font-size: 12px; }
 .ops-main { max-width: 1180px; margin: 24px auto; padding: 0 24px; }
 
-.ops-shell h1 { font-size: 22px; margin: 0 0 16px; }
+.ops-shell .eyebrow {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.ops-shell h1 { font-size: 24px; margin: 0 0 16px; }
 .ops-shell h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
 .ops-shell .card {

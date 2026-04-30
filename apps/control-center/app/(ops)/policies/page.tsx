@@ -43,15 +43,18 @@ export default async function PoliciesPage({
 
   return (
     <div>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
-          Policies
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="eyebrow">// rules engine</div>
+          <h1 style={{ margin: 0, display: "flex", alignItems: "center" }}>
+            Policies
           <InfoTip>
             <strong>What:</strong> the rules the supervisor checks on every agent call. Grouped by <code>action_type</code> (refund, payment, account_change, tool_use, data_access). Each rule has a <code>when</code> condition that decides <code>allow / deny / review</code>.<br /><br />
             <strong>When:</strong> any time you want to tighten or loosen what your agent can do. A new rule is live on the next agent call — no redeploy.<br /><br />
             <strong>Action:</strong> click a policy → edit YAML → <code>promote</code> a new version. The change applies on the next call. To roll back, promote the previous version.
           </InfoTip>
-        </h1>
+          </h1>
+        </div>
         <Link href="/policies/new" className="badge approved" style={{ padding: "8px 14px" }}>+ New policy</Link>
       </div>
 

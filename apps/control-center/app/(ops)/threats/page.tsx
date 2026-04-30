@@ -35,6 +35,7 @@ export default async function ThreatsPage({
 
   return (
     <div>
+      <div className="eyebrow">// runtime feed</div>
       <h1 style={{ display: "flex", alignItems: "center" }}>
         Live attacks
         <InfoTip>

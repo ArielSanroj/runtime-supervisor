@@ -189,6 +189,7 @@ export default async function Dashboard({
     const baseUrl = process.env.SUPERVISOR_API_URL ?? "http://localhost:8000";
     return (
       <div>
+        <div className="eyebrow">// fix queue</div>
         <h1>Fix this first</h1>
         <p className="muted" style={{ margin: "8px 0 16px" }}>
           What your agent can do unchecked, where it is, and how to gate it.
@@ -214,8 +215,9 @@ export default async function Dashboard({
     <div>
       <AutoRefresh intervalMs={5000} />
 
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
         <div>
+          <div className="eyebrow">// fix queue</div>
           <div className="row" style={{ alignItems: "center", gap: 8 }}>
             <h1 style={{ margin: 0 }}>Fix this first</h1>
             <InfoTip>

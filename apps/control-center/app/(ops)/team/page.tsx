@@ -40,6 +40,7 @@ export default async function TeamPage() {
   if (!session) {
     return (
       <div style={{ padding: 24 }}>
+        <div className="eyebrow">// workspace members</div>
         <h1>Team</h1>
         <p className="muted">Sign in to manage team members.</p>
       </div>
@@ -49,6 +50,7 @@ export default async function TeamPage() {
   if (!tenantId) {
     return (
       <div style={{ padding: 24 }}>
+        <div className="eyebrow">// workspace members</div>
         <h1>Team</h1>
         <p className="muted">Your account isn&apos;t linked to a workspace.</p>
       </div>
@@ -58,6 +60,7 @@ export default async function TeamPage() {
 
   return (
     <div style={{ padding: 24 }}>
+      <div className="eyebrow">// workspace members</div>
       <div className="row" style={{ alignItems: "baseline", gap: 12 }}>
         <h1 style={{ margin: 0 }}>Team</h1>
         <span className="muted mono" style={{ fontSize: 12 }}>

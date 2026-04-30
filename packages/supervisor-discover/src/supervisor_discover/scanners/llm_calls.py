@@ -185,14 +185,54 @@ _TS_CONSTRUCT_RE = re.compile(
 )
 
 
+def _ts_sdk_root(import_match: re.Match[str]) -> str:
+    """Map a matched TS/JS LLM import to the canonical SDK root used by
+    `summary._LLM_BRAND`. This is what populates `RepoSummary.llm_providers`
+    — without it, JS chatbots show 0 providers even though the call-site
+    fires correctly."""
+    pkg = import_match.group(1)
+    # @anthropic-ai/sdk → anthropic, @ai-sdk/anthropic → anthropic,
+    # @langchain/community → langchain. Strip scope and lowercase.
+    if pkg.startswith("@anthropic-ai/"):
+        return "anthropic"
+    if pkg.startswith("@langchain/"):
+        return "langchain"
+    if pkg.startswith("@ai-sdk/"):
+        # Vercel AI SDK provider — try to extract the underlying provider
+        # (anthropic / openai / google) so the brand resolves correctly.
+        sub = pkg.removeprefix("@ai-sdk/").lower()
+        if "anthropic" in sub:
+            return "anthropic"
+        if "openai" in sub:
+            return "openai"
+        if "google" in sub or "vertex" in sub:
+            return "google"
+        return sub
+    if pkg.startswith("@google/") or pkg.startswith("@google-cloud/"):
+        return "google"
+    if pkg.startswith("@cohere/"):
+        return "cohere"
+    if pkg.startswith("@mistralai/"):
+        return "mistral"
+    if pkg.startswith("@llamaindex/"):
+        return "llama_index"
+    if pkg == "ai":
+        return "vercel-ai"  # meta-SDK; brand mapping handles the fallback
+    return pkg.lower()
+
+
 def _scan_ts_js(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in ts_js_files(root):
         text = safe_read(path)
         if text is None:
             continue
-        if not _TS_IMPORT_RE.search(text):
+        import_match = _TS_IMPORT_RE.search(text)
+        if not import_match:
             continue
+        # Use the first import as the SDK signal for the file. Reasonable
+        # heuristic: TS chatbot files usually import a single LLM SDK.
+        sdk = _ts_sdk_root(import_match)
         seen_lines: set[int] = set()
         for m in _TS_CALL_RE.finditer(text):
             line = text[: m.start()].count("\n") + 1
@@ -209,7 +249,7 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                     "'tool_use') so the supervisor catches prompt injection, "
                     "PII leakage, and runaway loops before the call lands."
                 ),
-                extra={"kind": "method-call"},
+                extra={"kind": "method-call", "sdk": sdk},
             ))
             seen_lines.add(line)
         for m in _TS_CONSTRUCT_RE.finditer(text):
@@ -233,7 +273,7 @@ def _scan_ts_js(root: Path) -> list[Finding]:
                     "`generateText(...)` on this client. Treat as an "
                     "informational signal; gate the call-site, not the constructor."
                 ),
-                extra={"kind": "construction", "client": m.group(1)},
+                extra={"kind": "construction", "client": m.group(1), "sdk": sdk},
             ))
     return findings
 

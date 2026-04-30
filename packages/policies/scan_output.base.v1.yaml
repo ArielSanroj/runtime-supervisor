@@ -139,6 +139,19 @@ risk_severity:
   llm-calls: 30
   agent-orchestrators: 20
 
+# Per-repo_type severity overrides — only the keys listed here override the
+# base values, everything else falls through. Reason: a chatbot-shaped repo
+# has email/db as side concerns; the dominant risk is the LLM talking to
+# users with hallucinated entities. The base ladder ranks payment > email >
+# llm, which is correct for an agent that can move money but inverted for
+# a chat surface where the LLM IS the user-facing product.
+risk_severity_by_repo_type:
+  chatbot-rag:
+    llm-output-without-validation: 100   # reserved for the assertion-risk detector (PR 3)
+    llm-calls: 95                        # the actual user-facing risk for chat surfaces
+    email-sends: 50                      # still real but secondary to the conversation
+    db-mutations-write: 35               # background concern vs. what the LLM says
+
 # Wrap-target ranking — already implemented in summary.chokepoint_rank.
 # Mirrored here for transparency; code is authoritative.
 wrap_target_ranking:

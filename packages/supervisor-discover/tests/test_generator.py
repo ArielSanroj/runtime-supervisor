@@ -357,7 +357,7 @@ def test_report_includes_applicable_guardrails_section(tmp_path):
     out = tmp_path / "rs"
     generate(findings, out)
     report = (out / "FULL_REPORT.md").read_text()
-    assert "## Guardrails que el supervisor aplicaría" in report
+    assert "## Guardrails the supervisor would apply" in report
     # Refund is present in the flask fixture → should show its policy + OWASP refs.
     assert "refund.base.v1" in report
     assert "Policy `refund.base.v1`" in report

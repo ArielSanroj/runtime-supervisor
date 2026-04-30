@@ -538,6 +538,21 @@ def build_summary(
     )
     is_skill_repo = bool(skill_artifacts) and not has_app_surface and not is_mcp
 
+    # A "chatbot-rag" is the shape we missed in v1: an HTTP server that calls
+    # an LLM SDK directly and returns the model output to the user, without an
+    # agent loop / tool dispatcher in between. cliocsbot is the canonical case
+    # — Express + anthropic.messages.create, no LangChain, no MCP. The risk
+    # there is conversational (LLM hallucinates an entity → user trusts it),
+    # not action-shaped, so the priority ladder needs to invert vs. the
+    # default agent-scanner one. Detection is structural: LLM provider seen,
+    # no agent chokepoint class, and at least one HTTP route (rules out
+    # CLI/script repos that happen to call OpenAI).
+    is_chatbot_rag = (
+        bool(llms)
+        and not unique_chokepoints
+        and http_count > 0
+    )
+
     if is_skill_repo:
         repo_type: str | None = "claude-skill"
     elif is_mcp and has_langchain_framework:
@@ -546,6 +561,8 @@ def build_summary(
         repo_type = "mcp-server"
     elif has_langchain_framework:
         repo_type = "langchain-agent"
+    elif is_chatbot_rag:
+        repo_type = "chatbot-rag"
     else:
         repo_type = None
 
@@ -688,6 +705,18 @@ def _one_liner(
             ordered = [c for c in _RWA_PRIORITY if c in caps] + [c for c in caps if c not in _RWA_PRIORITY]
             feature_extra = f" with {ordered[0]}"
         return f"a **langchain agent**{feature_extra}"
+
+    if repo_type == "chatbot-rag":
+        # The framing has to make the *conversation* the headline, not the
+        # framework or the side-channel actions. A reader who sees "an Express
+        # app with email sends" reaches for SPF/DKIM thinking; a reader who
+        # sees "a chatbot answering through Claude" reaches for what the model
+        # might say. That switch is the entire point of the repo_type.
+        provider = sorted(llms)[0] if llms else "an LLM"
+        base = f"a **{fw_label}** chatbot" if fw_label else "a chatbot"
+        if sensitive_tables:
+            return f"{base} answering from your customer data via {provider}"
+        return f"{base} answering through {provider}"
 
     features: list[str] = []
 

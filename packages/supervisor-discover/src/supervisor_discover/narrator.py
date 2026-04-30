@@ -769,6 +769,17 @@ def _clean_tiers_notes(findings: list[Finding], summary: RepoSummary) -> list[st
             "No direct LLM SDKs (anthropic / openai / langchain) detected."
         )
 
+    # Chatbot-specific reassurance: in a conversational repo the absence of
+    # an agent loop is itself a positive signal — the LLM can talk but can't
+    # decide which tool to call without a human in the loop. Emit only when
+    # the surface is detected (chatbot-rag) so we don't repeat it for agent
+    # repos where the absence reads as a missing capability.
+    if summary.repo_type == "chatbot-rag" and not has_agent:
+        notes.append(
+            "No agent tools detected — the LLM can produce text, but can't "
+            "trigger external actions on its own."
+        )
+
     return notes
 
 

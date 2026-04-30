@@ -682,6 +682,7 @@ def _build_top_risks(
     policy: dict[str, Any],
     *,
     agent_path_present: bool = True,
+    repo_type: str | None = None,
 ) -> list[Risk]:
     """One Risk per high-confidence capability key, ordered by risk_severity.
 
@@ -699,9 +700,23 @@ def _build_top_risks(
     bypass). Stripe, email, DB writes etc. become inventory in FULL_REPORT
     because no agent in this repo can trigger them on its own.
 
+    `repo_type`, when present, applies two transforms:
+      1. Severity overrides from `risk_severity_by_repo_type` shadow the base
+         ladder. Used to invert the agent-shaped default for chatbots, where
+         `llm-calls` is the dominant user-facing risk.
+      2. Per-family card overrides (e.g. `_RISK_CARDS_CHATBOT_OVERRIDE`) replace
+         title/chain/do for families whose framing is wrong outside an
+         agent-tool-loop context.
+
     Such findings stay in FULL_REPORT for completeness.
     """
-    risk_severity: dict[str, int] = policy.get("risk_severity") or {}
+    risk_severity_base: dict[str, int] = policy.get("risk_severity") or {}
+    risk_severity_overrides: dict[str, int] = (
+        (policy.get("risk_severity_by_repo_type") or {}).get(repo_type, {})
+        if repo_type
+        else {}
+    )
+    risk_severity = {**risk_severity_base, **risk_severity_overrides}
     max_risks: int = policy.get("max_top_risks") or 3
 
     representative: dict[str, Finding] = {}
@@ -730,15 +745,32 @@ def _build_top_risks(
     for key in ordered_keys[:max_risks]:
         f = representative[key]
         card = _RISK_CARDS[key]
+        title = card["title"]
+        chain_text = card["chain"]
         do_text = card["do"]
+
+        # JS/TS overrides come first — only the `do` field today.
         if _is_js_file(f.file):
-            override = _RISK_CARDS_JS_OVERRIDE.get(key)
-            if override and "do" in override:
-                do_text = override["do"]
+            js_override = _RISK_CARDS_JS_OVERRIDE.get(key)
+            if js_override and "do" in js_override:
+                do_text = js_override["do"]
+
+        # repo_type overrides win against the base + JS layers. They can
+        # rewrite any of the three text fields. Today only chatbot-rag has
+        # entries; future repo_types plug in via the same pattern.
+        repo_override_table: dict[str, dict[str, dict[str, str]]] = {
+            "chatbot-rag": _RISK_CARDS_CHATBOT_OVERRIDE,
+        }
+        repo_override = (repo_override_table.get(repo_type or "") or {}).get(key)
+        if repo_override:
+            title = repo_override.get("title", title)
+            chain_text = repo_override.get("chain", chain_text)
+            do_text = repo_override.get("do", do_text)
+
         risks.append(Risk(
-            title=card["title"],
+            title=title,
             confirmed_in_code=f"`{f.snippet}` at `{_short_path(f.file)}:{f.line}`",
-            possible_chain=card["chain"],
+            possible_chain=chain_text,
             do_this_now=do_text,
             family=key,
             example=_risk_wrap_example(f),
@@ -1178,7 +1210,9 @@ def build_start_here(summary: RepoSummary, findings: list[Finding],
     framework_signals = _build_framework_signals(summary, findings)
     capabilities = _build_capabilities(summary, findings, capability_phrases)
     top_risks = _build_top_risks(
-        findings, p, agent_path_present=summary.agent_path_present,
+        findings, p,
+        agent_path_present=summary.agent_path_present,
+        repo_type=summary.repo_type,
     )
     bootstrap = _build_bootstrap(repo_root, targets) if repo_root is not None else None
     # Hotspot fallback only matters when neither an agent class nor a

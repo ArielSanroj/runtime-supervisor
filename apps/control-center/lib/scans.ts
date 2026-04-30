@@ -69,7 +69,7 @@ export type RepoSummary = {
   scheduled_jobs: number;
   total_findings: number;
   one_liner: string;
-  // "mcp-server" | "mcp-server+langchain" | "langchain-agent" | "claude-skill" | null
+  // "mcp-server" | "mcp-server+langchain" | "langchain-agent" | "claude-skill" | "chatbot-rag" | null
   repo_type?: string | null;
   // New: per-category counts for the "+ N hidden" counter (tests / legacy / migrations / generated).
   hidden_findings?: Record<string, number>;
@@ -142,6 +142,15 @@ export function buildEnglishBanner(summary: RepoSummary): string {
 
   if (summary.repo_type === "claude-skill") {
     return "a Claude Code skill / plugin";
+  }
+
+  if (summary.repo_type === "chatbot-rag") {
+    const provider = summary.llm_providers[0] ?? "an LLM";
+    const base = frameworks.length ? `a ${stack} chatbot` : "a chatbot";
+    if (summary.sensitive_tables.length > 0) {
+      return `${base} answering from your customer data via ${provider}`;
+    }
+    return `${base} answering through ${provider}`;
   }
 
   if (capabilities.length === 0) {

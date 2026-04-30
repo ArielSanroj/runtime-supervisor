@@ -10,9 +10,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: 'https://www.vibefixing.me/blog',
-      lastModified: new Date('2026-04-25'),
+      lastModified: new Date('2026-04-30'),
       changeFrequency: 'weekly',
       priority: 0.8,
+    },
+    {
+      url: 'https://www.vibefixing.me/blog/chatbot-hallucination-andrea',
+      lastModified: new Date('2026-04-30'),
+      changeFrequency: 'monthly',
+      priority: 0.9,
     },
     {
       url: 'https://www.vibefixing.me/blog/voice-phishing-langchain-agent',

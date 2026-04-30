@@ -40,8 +40,10 @@ export default async function Landing() {
             .
           </h1>
           <p className="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-zinc-400">
-            Paste a repo and see the unsafe tool calls before an LLM touches Stripe, your DB,
-            filesystem, or customer data. Static analysis. No instrumentation. Free public scan.
+            Paste a repo and see what your agent can do unchecked &mdash; the tool calls
+            that touch money, data, or the filesystem, <em className="text-zinc-200 not-italic">and</em> the
+            chatbot responses reaching users with hallucinated names, accounts, or facts.
+            Static analysis. No instrumentation. Free public scan.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link
@@ -144,6 +146,54 @@ export default async function Landing() {
             />
           </div>
         </div>
+      </section>
+
+      {/* AGENT SHAPES — repo_type taxonomy. The labels are part of the
+          product taxonomy (same status as the 3 risk axes); the scanner
+          assigns one of these per scan. Hardcoded copy is fine here —
+          we're naming the categories, not interpolating numbers from
+          a finding. */}
+      <section id="shapes" className="mx-auto max-w-6xl px-6 py-20 scroll-mt-20">
+        <div className="mx-auto mb-12 max-w-2xl text-center">
+          <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+            agent shapes
+          </div>
+          <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+            What kind of agent are you building?
+          </h2>
+          <p className="mt-4 text-zinc-400">
+            The scanner picks a shape per repo and adapts its priorities. A chatbot
+            doesn&apos;t worry about agent loops; a tool-using agent doesn&apos;t worry
+            about hallucinated entities. The framing is in the report.
+          </p>
+        </div>
+        <div className="grid gap-6 md:grid-cols-3">
+          <ShapeCard
+            tone="agent"
+            label="Tool-using agent"
+            slug="langchain-agent · mcp-server"
+            body="Orchestrator picks a tool and fires. Risk lives in what the tool does — payments, deletes, sends. Scanner leads with the agent chokepoint and every action call-site downstream."
+            example="LangChain · CrewAI · MCP servers · custom OpenAI function-calling"
+          />
+          <ShapeCard
+            tone="chatbot"
+            label="Chatbot or RAG"
+            slug="chatbot-rag"
+            body="Direct LLM call, no tool dispatch. The model talks to users from your data. Risk is the model asserting a name, account, or fact that doesn't exist — and the user trusting it. Scanner leads with the LLM call and the path to the user."
+            example="Anthropic + Express · OpenAI + FastAPI · vector-store RAG · Q&A bots"
+          />
+          <ShapeCard
+            tone="skill"
+            label="Claude skill or plugin"
+            slug="claude-skill"
+            body="No runtime to gate — you ship prompt content Claude reads at call time. Risk is what the prompt instructs Claude to do in the user's workspace. Scanner audits the SKILL.md and CLAUDE.md surface."
+            example=".claude/skills/* · claude-code-plugin.json · CLAUDE.md packages"
+          />
+        </div>
+        <p className="mx-auto mt-8 max-w-2xl text-center font-mono text-xs text-zinc-500">
+          // each shape adjusts the report&apos;s priority order, the policy templates that ship,
+          and the wrap example in <code className="rounded bg-zinc-900 px-1 py-0.5">stubs/</code>.
+        </p>
       </section>
 
       {/* LIVE ATTACK CAROUSEL — kept, restyled */}
@@ -266,8 +316,34 @@ def handle_tool_call(tool, args):
             <Risk title="Cost loops" body="Retry logic goes sideways and calls the same tool hundreds of times in a minute." />
             <Risk title="Unreviewed money movement" body="Refunds, transfers, payouts, and checkout sessions get a risk decision before the SDK call." />
             <Risk title="Role and account changes" body="Admin grants, password changes, and fresh-account edits get blocked or escalated." />
+            <Risk
+              title="Hallucinated entities reaching users"
+              body="The chatbot names a person, account, or identifier that doesn't exist in your data — and the user reads it as fact. The taint scanner flags every path from an LLM call to a response, email, or message without a source-of-truth check in between."
+            />
           </div>
-          <div className="mt-12">
+          <div className="mt-12 grid gap-5 lg:grid-cols-2">
+            <Link
+              href="/blog/chatbot-hallucination-andrea"
+              className="hover-glow group block overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 p-6 transition-colors hover:border-emerald-700/50 md:p-8"
+            >
+              <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+                <span className="rounded-full border border-amber-700/40 bg-amber-500/10 px-2.5 py-0.5 text-amber-300">
+                  chatbot · hallucinated entities
+                </span>
+                <span className="text-zinc-500">april 30, 2026</span>
+              </div>
+              <h3 className="mt-4 text-xl font-bold leading-snug tracking-tight text-zinc-100 group-hover:text-emerald-300 sm:text-2xl">
+                When the chatbot invents a person: the hallucination class your scanner missed
+              </h3>
+              <p className="mt-3 leading-7 text-zinc-400">
+                A manager asked her CRM bot about her team. The bot confidently
+                analyzed five people who didn&apos;t exist in her data. Three hours, 35
+                messages, one lost user &mdash; and the wrap pattern that stops it.
+              </p>
+              <span className="mt-5 inline-flex items-center gap-1 font-mono text-sm text-emerald-400 group-hover:text-emerald-300">
+                read field note &rarr;
+              </span>
+            </Link>
             <Link
               href="/blog/voice-phishing-langchain-agent"
               className="hover-glow group block overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 p-6 transition-colors hover:border-emerald-700/50 md:p-8"
@@ -279,11 +355,11 @@ def handle_tool_call(tool, args):
                 <span className="text-zinc-500">april 25, 2026</span>
               </div>
               <h3 className="mt-4 text-xl font-bold leading-snug tracking-tight text-zinc-100 group-hover:text-emerald-300 sm:text-2xl">
-                The vishing recipe hiding in your LangChain agent: ElevenLabs + Twilio + one prompt injection
+                The vishing recipe hiding in your LangChain agent
               </h3>
               <p className="mt-3 leading-7 text-zinc-400">
-                We scanned a real parenting assistant. Three innocent features &mdash; TTS, outbound calls,
-                an ungated LLM &mdash; compose into a working voice-phishing weapon under one calendar-event
+                Three innocent features &mdash; TTS, outbound calls, an ungated LLM
+                &mdash; compose into a voice-phishing weapon under one calendar-event
                 injection. The exploit, the code, and the gate.
               </p>
               <span className="mt-5 inline-flex items-center gap-1 font-mono text-sm text-emerald-400 group-hover:text-emerald-300">
@@ -602,6 +678,38 @@ function AxisCard({
       <div className="flex items-center gap-2">
         <span className={`font-mono text-xs ${palette.text}`}>{chip}</span>
         <span className="font-semibold text-zinc-100">{title}</span>
+      </div>
+      <p className="mt-3 flex-1 text-sm leading-7 text-zinc-300">{body}</p>
+      <div className={`mt-4 rounded-lg border border-zinc-800 ${palette.bg} px-3 py-2 font-mono text-[11px] text-zinc-400`}>
+        <span className="text-zinc-600">e.g.</span> <span className="text-zinc-300">{example}</span>
+      </div>
+    </div>
+  );
+}
+
+function ShapeCard({
+  tone,
+  label,
+  slug,
+  body,
+  example,
+}: {
+  tone: "agent" | "chatbot" | "skill";
+  label: string;
+  slug: string;
+  body: string;
+  example: string;
+}) {
+  const palette = {
+    agent: { border: "border-emerald-700/50", text: "text-emerald-300", bg: "bg-emerald-500/10" },
+    chatbot: { border: "border-cyan-700/50", text: "text-cyan-300", bg: "bg-cyan-500/10" },
+    skill: { border: "border-violet-700/50", text: "text-violet-300", bg: "bg-violet-500/10" },
+  }[tone];
+  return (
+    <div className={`hover-glow flex h-full flex-col rounded-2xl border ${palette.border} bg-zinc-950/60 p-6`}>
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-lg font-semibold text-zinc-100">{label}</h3>
+        <span className={`font-mono text-[10px] uppercase tracking-widest ${palette.text}`}>{slug}</span>
       </div>
       <p className="mt-3 flex-1 text-sm leading-7 text-zinc-300">{body}</p>
       <div className={`mt-4 rounded-lg border border-zinc-800 ${palette.bg} px-3 py-2 font-mono text-[11px] text-zinc-400`}>

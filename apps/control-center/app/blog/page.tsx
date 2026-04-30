@@ -34,6 +34,15 @@ type Post = {
 
 const POSTS: Post[] = [
   {
+    slug: "chatbot-hallucination-andrea",
+    date: "April 30, 2026",
+    badge: { label: "chatbot · hallucinated entities", tone: "warn" },
+    title:
+      "When the chatbot invents a person: the hallucination class your scanner missed",
+    dek:
+      "A real chat session: a manager asked her CRM bot about her team. The bot confidently analyzed five people who didn't exist in her data. Three hours, 35 messages, one lost user. Here's the failure mode, the wrap pattern, and the policy that stops it.",
+  },
+  {
     slug: "voice-phishing-langchain-agent",
     date: "April 25, 2026",
     badge: { label: "combo · voice-clone + outbound-call", tone: "danger" },

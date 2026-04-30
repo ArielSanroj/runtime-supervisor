@@ -46,6 +46,7 @@ capability_phrases:
   fs-shell-code-eval: run arbitrary code via eval / exec
   fs-shell-unsafe-deserialize: deserialize untrusted bytes (pickle / dill)
   llm-calls: call LLMs
+  llm-output-without-validation: return LLM responses to users without an entity check
   db-mutations-write: write to the database
   db-mutations-delete: delete database rows
   db-mutations-redis-flush: wipe redis keyspaces
@@ -137,6 +138,9 @@ risk_severity:
   db-mutations-redis-flush: 45    # data loss, no rollback
   db-mutations-write: 40
   llm-calls: 30
+  # Base value below llm-calls; the chatbot-rag override (below) bumps
+  # it to 100 because that's where assertion-risk is the headline.
+  llm-output-without-validation: 28
   agent-orchestrators: 20
 
 # Per-repo_type severity overrides — only the keys listed here override the

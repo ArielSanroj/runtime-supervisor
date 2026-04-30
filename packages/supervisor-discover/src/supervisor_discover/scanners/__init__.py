@@ -15,6 +15,7 @@ from . import (
     fs_shell,
     http_routes,
     llm_calls,
+    llm_output,
     mcp_tools,
     media_gen,
     messaging,
@@ -31,6 +32,12 @@ def scan_all(root: Path) -> list[Finding]:
     for module in (
         http_routes,
         llm_calls,
+        # llm_output runs right after llm_calls so its taint analysis
+        # sees the LLM provider context and the sink resolutions
+        # immediately. Its findings stand alongside llm-calls in the
+        # priority list — the call-site and the unguarded path are
+        # complementary signals for chatbot-rag repos.
+        llm_output,
         payment_calls,
         db_mutations,
         cron_schedules,
@@ -313,6 +320,15 @@ def _self_check(findings: list[Finding]) -> list[Finding]:
     cache: dict[str, list[str] | None] = {}
     for f in findings:
         if f.scanner == _SKILLS_SCANNER:
+            clean.append(f)
+            continue
+        # llm-output emits SYNTHETIC snippets ("return ... (tainted by
+        # LLM output, def chat)") because the finding describes a
+        # *path*, not a single line of code. The reported line is real
+        # (the sink), but the snippet is meta — bypassing self-check
+        # for this scanner is correct; the visitor's source/sink
+        # resolution is its own validity check.
+        if f.scanner == "llm-output":
             clean.append(f)
             continue
         if f.file not in cache:

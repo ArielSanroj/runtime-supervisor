@@ -258,6 +258,17 @@ _RISK_CARDS: dict[str, dict[str, str]] = {
         "do":    "Wrap your LLM call-site (or the dispatcher around it) with "
                  "`@supervised(\"tool_use\")`.",
     },
+    "llm-output-without-validation": {
+        "title": "LLM output reaches the user without validation",
+        "chain": "The model's response flows to a response/email/message "
+                 "without an entity check in between. If the LLM invents a "
+                 "name or fact, the user reads it as data — the Andrea / "
+                 "Prodesa class of failure.",
+        "do":    "Add `assert_entities_in_scope(reply, allowed_entities)` "
+                 "between the LLM call and the sink. The helper is in "
+                 "`supervisor_guards.scope`; the policy "
+                 "`scope_guard.base.v1` enforces the deny / review.",
+    },
     "agent-orchestrators": {
         "title": "Agent loop present",
         "chain": "An agent loop that decides which tool to call next is the "
@@ -391,6 +402,10 @@ def _capability_key(f: Finding) -> str:
         if verb in ("delete", "drop", "truncate"):
             return "db-mutations-delete"
         return "db-mutations-write"
+    if f.scanner == "llm-output":
+        # Always one family today; using the `family` field for forward
+        # compatibility (e.g., `llm-output-pii-leak` later).
+        return extra.get("family") or "llm-output-without-validation"
     return f.scanner
 
 

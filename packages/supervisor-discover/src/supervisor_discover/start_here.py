@@ -308,6 +308,53 @@ _RISK_CARDS: dict[str, dict[str, str]] = {
 }
 
 
+# JS/TS-flavored "do this now" overrides. The default `_RISK_CARDS` copy is
+# Python-leaning for `fs-shell-code-eval` (mentions `ast.literal_eval`,
+# which doesn't exist in JS). When a finding for that family lands in a
+# `.js` / `.ts` file, the card builder below substitutes this string so the
+# advice points at JS-side parser libraries instead.
+_RISK_CARDS_JS_OVERRIDE: dict[str, dict[str, str]] = {
+    "fs-shell-code-eval": {
+        "do":    "Wrap the call-site with `@supervised(\"tool_use\")` and "
+                 "validate the input first; better, replace `new Function(...)` "
+                 "/ `eval(...)` with a parser-based evaluator (e.g. `jsep` + a "
+                 "tiny interpreter, or `expr-eval` for math) so untrusted "
+                 "strings never reach the JS engine.",
+    },
+}
+
+
+# Chatbot-RAG-flavored overrides. When `repo_type == "chatbot-rag"` the LLM
+# isn't a tool-call-loop entry point — it's *the user-facing surface*. The
+# default `llm-calls` copy frames it as a prompt-injection vector for
+# downstream tools, which is wrong for chatbots: the dominant risk is the
+# model asserting facts (people, numbers, archetypes) that don't exist in
+# the customer's source-of-truth, with the user trusting the output. The
+# Andrea/cliocsbot incident is the canonical case.
+_RISK_CARDS_CHATBOT_OVERRIDE: dict[str, dict[str, str]] = {
+    "llm-calls": {
+        "title": "LLM is talking to your users",
+        "chain": "The LLM output is user-facing — hallucinated names, "
+                 "fabricated facts, or coherent-sounding lies become live in "
+                 "your conversation. Users treat the response as data.",
+        "do":    "Wrap the call-site with `@supervised(\"tool_use\")` AND "
+                 "validate any entities the model mentions against your "
+                 "source-of-truth before returning. See "
+                 "`supervisor_guards.scope.assert_entities_in_scope`.",
+    },
+}
+
+
+_JS_FILE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+
+
+def _is_js_file(path: str) -> bool:
+    """True if the path's extension is JS/TS family. Mirrors the suffix
+    check in `_build_do_this_now` so risk-card and snippet branching agree
+    on what counts as 'JS' for copy purposes."""
+    return Path(path).suffix.lower() in _JS_FILE_SUFFIXES
+
+
 # Plain-English labels for the "Database hygiene" section. Keep the copy
 # free of agent-supervision framing — these findings live next door to the
 # threat model, not inside it.
@@ -683,11 +730,16 @@ def _build_top_risks(
     for key in ordered_keys[:max_risks]:
         f = representative[key]
         card = _RISK_CARDS[key]
+        do_text = card["do"]
+        if _is_js_file(f.file):
+            override = _RISK_CARDS_JS_OVERRIDE.get(key)
+            if override and "do" in override:
+                do_text = override["do"]
         risks.append(Risk(
             title=card["title"],
             confirmed_in_code=f"`{f.snippet}` at `{_short_path(f.file)}:{f.line}`",
             possible_chain=card["chain"],
-            do_this_now=card["do"],
+            do_this_now=do_text,
             family=key,
             example=_risk_wrap_example(f),
         ))
@@ -1018,13 +1070,21 @@ def _build_do_this_now(
         if hotspot is not None:
             rel = _short_path(hotspot.file)
             if not agent_path_present:
+                # No-agent-loop checklist. Three concrete steps a vibe-coder
+                # can do today — auth at the hotspot, sanity-check DB
+                # writes, re-scan after the first model SDK lands. The
+                # banner at the top of START_HERE.md already says "nothing
+                # to gate yet"; this section is the *checklist for what
+                # to do anyway*, not another restatement of that fact.
                 return (
-                    f"No agent loop is reachable in this scan. Treat "
-                    f"`{rel}:{hotspot.line}` as a capability hotspot, not "
-                    f"an immediate `@supervised` target. {hotspot.why} "
-                    "Review auth, direct user input, and webhook idempotency "
-                    "around this handler today; add `@supervised(...)` once "
-                    "an agent or automation path can trigger it."
+                    f"1. Make sure only your code can reach "
+                    f"`{rel}:{hotspot.line}` — handler-level auth check + "
+                    f"signed webhook secret.\n"
+                    f"2. Spot-check the medium-confidence DB writes in "
+                    f"`FULL_REPORT.md` for a `WHERE` clause and a row cap.\n"
+                    f"3. Re-scan after the first model SDK call (Stripe / "
+                    f"OpenAI / Anthropic / sgMail / langchain) lands — "
+                    f"that's when concrete `@supervised(...)` wraps apply."
                 )
             return (
                 f"No agent class detected, but supervised-worthy calls "
@@ -1033,6 +1093,18 @@ def _build_do_this_now(
                 f"`@supervised(...)` matching what it actually does "
                 f"(`payment` for Stripe calls, `account_change` for "
                 f"profile mutations, `data_access` for general DB writes)."
+            )
+        if not agent_path_present:
+            # Section 1 ("Best place to wrap first") already explains the
+            # whole "no agent, no findings" situation in detail, and the
+            # Heads-up banner has already told the dev nothing has to be
+            # gated yet. Returning the long version here would just print
+            # the same paragraph twice. Keep this one to a single pointer.
+            return (
+                "Re-scan once you wire in the first model SDK call "
+                "(Stripe, OpenAI, Anthropic, sgMail, langchain, …) — "
+                "that's when this report has something concrete to "
+                "recommend."
             )
         return (
             "No agent class and no high-confidence supervised-worthy calls "
@@ -1319,6 +1391,22 @@ def render_start_here_md(sh: StartHere) -> str:
             "agent loop here, so don't add the wrap to this repo."
         )
         parts.append("")
+    elif not sh.agent_path_present and not sh.framework_signals:
+        # No-AI-loop banner — fires for plain SaaS / bot / job-worker repos
+        # where no model is calling tools today. Without this banner, every
+        # subsection below ends up restating "no agent loop" in different
+        # words ("not an immediate wrap instruction", "No agent or LLM is
+        # reachable", "No agent loop is reachable in this scan"), which
+        # reads as self-contradicting to a vibe-coder. The banner says it
+        # once, up front, so the rest of the report can be concrete.
+        parts.append(
+            "> **Heads up:** this repo doesn't run an AI loop today, so "
+            "there's nothing to gate right now. The sections below tell "
+            "you (a) what your app can already do on its own, and (b) "
+            "where the gates go on day one if you add a model that "
+            "decides what to call."
+        )
+        parts.append("")
 
     # 0. Step 0 — install the SDK (only when bootstrap was detected)
     parts.extend(_render_step0(sh))
@@ -1369,16 +1457,17 @@ def render_start_here_md(sh: StartHere) -> str:
             )
         else:
             parts.append(
-                f"No agent loop detected. `{rel}:{h.line}` is the highest-density "
-                "capability hotspot, not an immediate wrap instruction."
+                f"The busiest \"do something\" call in your codebase is "
+                f"`{rel}:{h.line}`."
             )
             parts.append("")
             parts.append(f"_{h.why}_")
             parts.append("")
             parts.append(
-                "Review auth, direct user input, and webhook idempotency around "
-                "this handler. Add `@supervised(...)` only once an agent or "
-                "automation path can trigger it."
+                f"If you add an AI step later, that's the first line to "
+                f"wrap with `@supervised(...)`. Until then: confirm only "
+                f"your handler can reach it (auth check + signed webhook "
+                f"secret), and that a replayed webhook can't double-send."
             )
     else:
         parts.append(
@@ -1433,13 +1522,12 @@ def render_start_here_md(sh: StartHere) -> str:
         parts.append("## Highest-risk things to care about now")
         parts.append("")
     else:
-        parts.append("## Capability inventory")
+        parts.append("## If you add an AI step, gate these first")
         parts.append("")
         parts.append(
-            "_No agent or LLM is reachable in this scan. The items below "
-            "describe what an attacker who reaches the code-path could do — "
-            "wrap them once you add an agent loop, or treat as a checklist "
-            "for direct user input handling today._"
+            "_The day you add a model (OpenAI, Anthropic, langchain, …) it "
+            "inherits everything below on day one — wrap each before "
+            "flipping the switch._"
         )
         parts.append("")
     if sh.top_risks:
@@ -1456,12 +1544,26 @@ def render_start_here_md(sh: StartHere) -> str:
         # phrasing tells the dev which case applies — and what would change
         # the result on the next scan — instead of implying the repo is
         # incomplete.
-        parts.append(
-            "No high-confidence risk patterns matched the current detectors "
-            "in this scan. Re-scan after adding a new SDK call (Stripe, "
-            "OpenAI, sgMail, …) or a new mutation surface — and check the "
-            "release notes if you expected a specific category to fire."
-        )
+        if not sh.agent_path_present and sh.repo_capabilities:
+            # Repo has real capabilities (messaging, DB writes, …) but no
+            # agent path yet. The section heading already tells the dev
+            # those are the surfaces to gate; pointing them back at the
+            # list keeps the message consistent instead of contradicting
+            # itself with "no patterns matched".
+            parts.append(
+                "The capabilities listed above are your day-one wrap "
+                "points. Re-scan after the first model SDK call (Stripe, "
+                "OpenAI, Anthropic, langchain, sgMail, …) lands — that's "
+                "when each one gets a concrete `@supervised(...)` "
+                "recommendation."
+            )
+        else:
+            parts.append(
+                "No high-confidence risk patterns matched the current detectors "
+                "in this scan. Re-scan after adding a new SDK call (Stripe, "
+                "OpenAI, sgMail, …) or a new mutation surface — and check the "
+                "release notes if you expected a specific category to fire."
+            )
         parts.append("")
 
     # 3b. database hygiene — adjacent web-app security findings (RLS missing

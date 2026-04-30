@@ -188,6 +188,78 @@ def test_empty_findings_shows_no_obvious_wrap_target():
     assert "re-scan once you add the first SDK call" in md
     # Capabilities section also shows the empty-state copy.
     assert "No high-stakes capabilities" in md
+    # The "Heads up" banner fires whenever no agent loop is reachable, and
+    # replaces the four-times-restated "no agent loop" jargon scattered
+    # through the body.
+    assert "**Heads up:**" in md
+
+
+def test_no_agent_with_hotspot_renders_single_voice():
+    """The buky shape: real capabilities + a hotspot, but no agent loop yet.
+
+    Before this test existed, START_HERE.md restated "no agent loop" four
+    times in jargon ("highest-density capability hotspot, not an immediate
+    wrap instruction" / "No agent or LLM is reachable in this scan" /
+    "Capability inventory" / "No agent loop is reachable in this scan"),
+    which read as self-contradicting to a vibe-coder. The contract here:
+    say it once, up front, then keep the rest of the report concrete.
+    """
+    sh = StartHere(
+        repo_capabilities=["call messaging tools", "write to the database"],
+        capability_hotspot=WrapTarget(
+            label="messaging",
+            file="infra/notifications/TelegramTransport.ts",
+            line=94,
+            why="1 high-confidence call concentrates in this file (messaging).",
+        ),
+        agent_path_present=False,
+        do_this_now=(
+            "1. Make sure only your code can reach "
+            "`infra/notifications/TelegramTransport.ts:94` — handler-level "
+            "auth check + signed webhook secret.\n"
+            "2. Spot-check the medium-confidence DB writes in "
+            "`FULL_REPORT.md` for a `WHERE` clause and a row cap.\n"
+            "3. Re-scan after the first model SDK call (Stripe / OpenAI / "
+            "Anthropic / sgMail / langchain) lands — that's when concrete "
+            "`@supervised(...)` wraps apply."
+        ),
+        hidden_counter={"tests": 13, "migrations": 21},
+    )
+    md = render_start_here_md(sh)
+
+    # Banner appears exactly once — that's the whole point of the rewrite.
+    assert md.count("**Heads up:**") == 1
+
+    # New positive heading replaces the old "Capability inventory" framing.
+    assert "## If you add an AI step, gate these first" in md
+    assert "## Capability inventory" not in md
+
+    # Deny-list jargon and self-cancelling phrases that the old branch
+    # emitted. Each one is what a vibe-coder failed to parse — they must
+    # not reappear in the rendered output.
+    forbidden = [
+        "highest-density capability hotspot",
+        "not an immediate wrap instruction",
+        "webhook idempotency",
+        "## Capability inventory",
+        "No agent or LLM is reachable in this scan",
+        "No high-confidence risk patterns matched",
+    ]
+    for phrase in forbidden:
+        assert phrase not in md, f"jargon leaked back into START_HERE: {phrase!r}"
+
+    # The "no agent loop" message lives in the banner only; subsections
+    # don't restate it. Allow the banner phrase to appear, count the
+    # noisier restatements separately.
+    noisy = ["No agent loop", "No agent class"]
+    total_noisy = sum(md.count(p) for p in noisy)
+    assert total_noisy <= 1, (
+        f"expected the banner to absorb the 'no agent loop' message, "
+        f"but {total_noisy} restatements remain in the body"
+    )
+
+    # Hotspot path is anchored once under "Best place to wrap first".
+    assert md.count("infra/notifications/TelegramTransport.ts:94") >= 1
 
 
 def test_render_md_includes_hidden_counter_when_present():
@@ -862,12 +934,14 @@ def test_agent_path_present_keeps_normal_priority_ladder():
 def test_renderer_uses_capability_inventory_header_without_agent_path():
     """The 10-repo benchmark caught fastapi-realworld being framed as
     urgent agent risk despite having no agent path. The renderer must
-    flip the header to 'Capability inventory' when agent_path_present
-    is False."""
+    swap the urgent risk header for an "if you add an AI step" framing
+    when agent_path_present is False, so the report tells the dev the
+    truth: nothing to gate today, here's the day-one list when there is.
+    """
     summary = RepoSummary(agent_path_present=False)
     sh = build_start_here(summary, [])
     md = render_start_here_md(sh)
-    assert "## Capability inventory" in md
+    assert "## If you add an AI step, gate these first" in md
     assert "## Highest-risk things to care about now" not in md
 
 
@@ -926,8 +1000,10 @@ def test_hotspot_does_not_choose_http_route_inventory():
 
 def test_no_agent_hotspot_copy_is_inventory_not_wrap_instruction():
     """Plain SaaS repos can have Stripe/DB capabilities without an agent path.
-    START_HERE should tell the user to review the handler, not to wrap it
-    immediately."""
+    START_HERE should tell the user to harden the handler today and reserve
+    the `@supervised(...)` wrap for the day a model can actually reach it
+    — never frame it as an immediate wrap instruction.
+    """
     summary = RepoSummary(agent_path_present=False)
     findings = [
         Finding(scanner="payment-calls", file="utils/stripe/server.ts",
@@ -937,7 +1013,13 @@ def test_no_agent_hotspot_copy_is_inventory_not_wrap_instruction():
     ]
     sh = build_start_here(summary, findings)
     md = render_start_here_md(sh)
-    assert "capability hotspot" in md
-    assert "not an immediate wrap instruction" in md
+    # Banner up front owns the "no AI loop" message.
+    assert "**Heads up:**" in md
+    # Wrap framing is conditional on a future AI step, not "do it now".
+    assert "If you add an AI step later" in md
+    # "Open that file and wrap …" is the agent-path-present copy and must
+    # not leak into the no-agent branch.
     assert "Open that file and wrap the exported handler" not in md
-    assert "add `@supervised(...)` once" in md.lower()
+    # Self-cancelling jargon from the old branch must not reappear.
+    assert "highest-density capability hotspot" not in md
+    assert "not an immediate wrap instruction" not in md

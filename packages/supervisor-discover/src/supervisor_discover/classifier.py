@@ -6,6 +6,7 @@ report and the generated stubs pick it up.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from .findings import Finding
@@ -123,4 +124,92 @@ def group_by_risk_tier(findings: list[Finding]) -> dict[Tier, list[Finding]]:
     buckets: dict[Tier, list[Finding]] = {t: [] for t in TIER_ORDER}
     for f in findings:
         buckets[tier_of(f)].append(f)
+    return buckets
+
+
+# ── Category: orthogonal axis to Tier ────────────────────────────────────
+#
+# A Tier answers "what surface is at risk?" (money / customer-data / llm /
+# real-world / business-data / general). A Category answers "what dimension
+# of pain does it cause?" — and most findings touch more than one. Every
+# finding gets a *primary* category (the dominant axis a reader uses to
+# prioritize) plus an ordered tuple of *secondary* axes (real but not the
+# headline). The primary drives sorting and chip color; secondaries render
+# as muted lowercase tags after a `·` separator.
+#
+# Rationale by axis:
+#   security   — adversarial: prompt injection, vishing, money movement,
+#                PII exfil, RCE, deepfake distribution, identity rewrite.
+#   efficiency — runaway: token burn, oversized prompts, bulk DML,
+#                premium-rate phone calls, retry storms.
+#   quality    — auditability / reversibility: no trace ID, no allowlist,
+#                no `tool_name`, irreversible business mutations, content
+#                review on plugin artifacts.
+Category = Literal["security", "efficiency", "quality"]
+
+
+@dataclass(frozen=True)
+class CategoryLabels:
+    """Primary + secondary categories for a finding.
+
+    `primary` is the axis a reader uses to prioritize. `secondary` is an
+    ordered tuple (most-relevant first), excluding the primary, that
+    rendering surfaces show as muted tags. Empty tuple is fine — for purely
+    informational findings (http-routes / skills) there's nothing to add
+    beyond the primary "quality" tag.
+    """
+    primary: Category
+    secondary: tuple[Category, ...] = ()
+
+
+_CATEGORY_BY_SCANNER: dict[str, CategoryLabels] = {
+    "payment-calls":       CategoryLabels("security",   ("efficiency",)),
+    "voice-actions":       CategoryLabels("security",   ("efficiency",)),
+    "messaging":           CategoryLabels("security",   ("quality",)),
+    "email-sends":         CategoryLabels("security",   ("quality",)),
+    "calendar-actions":    CategoryLabels("security",   ("quality",)),
+    "media-gen":           CategoryLabels("security",   ("efficiency",)),
+    "agent-orchestrators": CategoryLabels("security",   ("efficiency", "quality")),
+    "mcp-tools":           CategoryLabels("security",   ("quality",)),
+    "cron-schedules":      CategoryLabels("quality",    ("security",)),
+    "http-routes":         CategoryLabels("quality",    ()),
+    "skills":              CategoryLabels("quality",    ()),
+}
+
+
+def categorize(f: Finding) -> CategoryLabels:
+    """Map a finding to (primary, secondary…) categories.
+
+    Splits where the dominant axis depends on more than the scanner:
+      - fs-shell: shell-exec / fs-delete are RCE-class (security primary);
+        fs-write is path-dependent (quality primary).
+      - db-mutations: customer tables = PII bypass (security primary);
+        business tables = irreversibility / audit (quality primary).
+      - llm-calls: high confidence = a real .create() call where token
+        burn dominates (efficiency primary); low confidence = constructor,
+        nothing has fired yet (quality primary).
+    """
+    if f.scanner == "fs-shell":
+        family = str(f.extra.get("family", ""))
+        if family in ("shell-exec", "fs-delete"):
+            return CategoryLabels("security", ("quality",))
+        return CategoryLabels("quality", ("security",))
+
+    if f.scanner == "db-mutations":
+        if tier_of(f) == "customer_data":
+            return CategoryLabels("security", ("quality",))
+        return CategoryLabels("quality", ("security", "efficiency"))
+
+    if f.scanner == "llm-calls":
+        if f.confidence == "high":
+            return CategoryLabels("efficiency", ("security", "quality"))
+        return CategoryLabels("quality", ("security",))
+
+    return _CATEGORY_BY_SCANNER.get(f.scanner, CategoryLabels("quality", ()))
+
+
+def group_by_category(findings: list[Finding]) -> dict[Category, list[Finding]]:
+    buckets: dict[Category, list[Finding]] = {"security": [], "efficiency": [], "quality": []}
+    for f in findings:
+        buckets[categorize(f).primary].append(f)
     return buckets

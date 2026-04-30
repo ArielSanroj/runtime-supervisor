@@ -14,6 +14,8 @@ const SECRET = process.env.SUPERVISOR_SECRET;
 
 export type ScanStatus = "queued" | "scanning" | "done" | "error";
 
+export type FindingCategory = "security" | "efficiency" | "quality";
+
 export type ScanFinding = {
   scanner: string;
   file: string;
@@ -24,6 +26,9 @@ export type ScanFinding = {
   rationale: string;
   extra: Record<string, unknown>;
   tier: string | null;
+  category: FindingCategory | null;
+  category_secondary: FindingCategory[];
+  prompt: string | null;
 };
 
 export type WrapTarget = {

@@ -1,11 +1,45 @@
 "use client";
 
 import { useState } from "react";
-import { buildEnglishBanner, type ScanFinding, type ScanResponse } from "@/lib/scans";
+import { buildEnglishBanner, type FindingCategory, type ScanFinding, type ScanResponse } from "@/lib/scans";
+import { CodeBlock } from "@/components/CodeBlock";
 import CombosList from "./CombosList";
 import NotWorriedAbout from "./NotWorriedAbout";
 import StartHere from "./StartHere";
 import ZeroConfigPanel from "./ZeroConfigPanel";
+
+// Category chip — primary is the dominant axis (security / efficiency /
+// quality), shown in color. Secondaries are real-but-not-headline axes,
+// shown muted lowercase after a `·`. Empty secondaries (purely informational
+// findings) just show the primary.
+const CATEGORY_TONE: Record<FindingCategory, string> = {
+  security: "bg-red-500/15 text-red-300",
+  efficiency: "bg-amber-500/15 text-amber-300",
+  quality: "bg-zinc-500/15 text-zinc-300",
+};
+
+function CategoryChip({
+  primary,
+  secondary,
+}: {
+  primary: FindingCategory | null;
+  secondary: FindingCategory[];
+}) {
+  if (!primary) return null;
+  const tone = CATEGORY_TONE[primary];
+  const cap = primary.charAt(0).toUpperCase() + primary.slice(1);
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-widest ${tone}`}>
+      <span className="uppercase">{cap}</span>
+      {secondary.length > 0 && (
+        <span className="text-zinc-500/80">
+          {" · "}
+          {secondary.join(" · ")}
+        </span>
+      )}
+    </span>
+  );
+}
 
 const TIER_ORDER = ["money", "real_world_actions", "customer_data", "business_data", "llm", "general"] as const;
 
@@ -524,6 +558,7 @@ function FamilyGroups({ groups }: { groups: ScanFinding[][] }) {
 function FamilyGroup({ findings }: { findings: ScanFinding[] }) {
   const [expanded, setExpanded] = useState(false);
   const [showRemedy, setShowRemedy] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
   const first = findings[0];
   const family = familyOf(first);
   const label = FAMILY_LABEL[family] ?? family;
@@ -536,6 +571,7 @@ function FamilyGroup({ findings }: { findings: ScanFinding[] }) {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className={`font-mono text-xs uppercase tracking-widest ${tone}`}>{label}</span>
         <span className="font-mono text-xs text-zinc-500">· {findings.length} call-sites</span>
+        <CategoryChip primary={first.category} secondary={first.category_secondary ?? []} />
         <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-400">
           {first.suggested_action_type}
         </span>
@@ -572,11 +608,29 @@ function FamilyGroup({ findings }: { findings: ScanFinding[] }) {
             {showRemedy ? "hide fix ▴" : "see fix snippet ▾"}
           </button>
         )}
+        {first.prompt && (
+          <button
+            type="button"
+            onClick={() => setShowPrompt((v) => !v)}
+            className="font-mono text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            {showPrompt ? "hide prompt ▴" : "see prompt ▾"}
+          </button>
+        )}
       </div>
       {remedy && showRemedy && (
         <pre className="mt-3 overflow-auto rounded-lg border border-emerald-900/30 bg-emerald-500/5 p-3 font-mono text-xs leading-6 text-zinc-200">
           {remedy}
         </pre>
+      )}
+      {first.prompt && showPrompt && (
+        <div className="mt-3">
+          <p className="mb-2 text-xs text-zinc-500">
+            Paste into Cursor / Claude Code — the prompt targets the first call-site
+            ({first.file}:{first.line}). For other call-sites, expand the row.
+          </p>
+          <CodeBlock code={first.prompt} label="copy prompt" />
+        </div>
       )}
     </div>
   );
@@ -717,6 +771,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function FindingRow({ f }: { f: ScanFinding }) {
   const [open, setOpen] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
   const confDot =
     f.confidence === "high" ? "bg-emerald-500" : f.confidence === "medium" ? "bg-amber-500" : "bg-zinc-600";
   return (
@@ -732,6 +787,7 @@ function FindingRow({ f }: { f: ScanFinding }) {
             <span className="font-mono text-xs text-emerald-400">{f.scanner}</span>
             <span className="font-mono text-zinc-300">{f.file}</span>
             <span className="font-mono text-xs text-zinc-500">:{f.line}</span>
+            <CategoryChip primary={f.category} secondary={f.category_secondary ?? []} />
             <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-zinc-400">
               {f.suggested_action_type}
             </span>
@@ -743,6 +799,25 @@ function FindingRow({ f }: { f: ScanFinding }) {
         <pre className="mt-3 overflow-auto rounded-lg border border-zinc-800 bg-black/50 p-3 font-mono text-xs leading-relaxed text-zinc-300">
           {f.snippet}
         </pre>
+      )}
+      {f.prompt && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowPrompt((v) => !v)}
+            className="font-mono text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            {showPrompt ? "hide prompt ▴" : "see prompt ▾"}
+          </button>
+          {showPrompt && (
+            <div className="mt-2">
+              <p className="mb-2 text-xs text-zinc-500">
+                Paste into Cursor / Claude Code to apply the wrap.
+              </p>
+              <CodeBlock code={f.prompt} label="copy prompt" />
+            </div>
+          )}
+        </div>
       )}
     </li>
   );

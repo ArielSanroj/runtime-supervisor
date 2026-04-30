@@ -119,7 +119,7 @@ def test_render_summary_emits_priority_emojis():
 
 
 def test_render_summary_every_item_has_tri_part_labels():
-    """Each priority item must emit 🔴 Problem / 📍 Where / ✅ Fix."""
+    """Each priority item must emit 🔴 Problem / 📍 Where / ✅ Fix / 💬 Prompt."""
     findings = [
         _f("/repo/handler.py", scanner="email-sends", confidence="high"),
     ]
@@ -128,6 +128,54 @@ def test_render_summary_every_item_has_tri_part_labels():
     assert "🔴 **Problem:**" in md
     assert "📍 **Where:**" in md
     assert "✅ **Fix:**" in md
+    assert "💬 **Prompt:**" in md
+
+
+def test_render_summary_prompt_is_fenced_and_targets_the_call_site():
+    """The Prompt block must contain a fenced code block, the GOAL header,
+    and the actual file:line so a reader can paste it straight into an LLM."""
+    findings = [
+        _f("/repo/api/voice.ts", scanner="voice-actions", confidence="high"),
+    ]
+    summary = build_summary(findings)
+    md = render_summary(summary, findings)
+    # 4-backtick fenced block right after the prompt header — the prompt
+    # embeds inner ```python / ```ts blocks, so a 3-backtick outer fence
+    # would close prematurely on Markdown renderers.
+    assert "💬 **Prompt:**" in md
+    assert "````\nGOAL:" in md
+    assert "TARGETS:" in md
+    # The actual call-site is named so the LLM doesn't have to grep
+    assert "api/voice.ts" in md
+
+
+def test_render_summary_emits_category_chip():
+    """Every priority item must carry a `[Primary · secondary]` chip so the
+    reader can tell security findings apart from efficiency / quality ones
+    at a glance."""
+    findings = [
+        _f("/repo/api/voice.ts", scanner="voice-actions", confidence="high"),
+        _f("/repo/db/q.ts", scanner="db-mutations", confidence="high", table="agent_events"),
+        _f("/repo/llm/openai.ts", scanner="llm-calls", confidence="high"),
+    ]
+    summary = build_summary(findings)
+    md = render_summary(summary, findings)
+    # voice-actions → Security primary
+    assert "[Security" in md
+    # business-tier db-mutations → Quality primary
+    assert "[Quality" in md
+    # llm-calls high → Efficiency primary (this is the differentiator the user asked for)
+    assert "[Efficiency" in md
+
+
+def test_llm_calls_problem_text_leads_with_efficiency_axis():
+    """Per the category mapping, llm-calls high-confidence is efficiency-
+    primary. The Problem text must lead with cost / token-burn framing,
+    not generic 'prompt injections run freely'."""
+    findings = [_f("/repo/llm/openai.ts", scanner="llm-calls", confidence="high")]
+    summary = build_summary(findings)
+    md = render_summary(summary, findings).lower()
+    assert "burns your api budget" in md or "cost cap" in md
 
 
 def test_render_summary_problem_copy_is_scanner_specific():

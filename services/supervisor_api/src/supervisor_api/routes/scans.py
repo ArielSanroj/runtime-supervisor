@@ -169,9 +169,9 @@ _REDACTED_SNIPPET = "[hidden]"
 
 
 def _redact_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop file:line and snippet from each finding; keep scanner, tier,
-    confidence, suggested_action_type. Caller still sees `5 LLM call-sites
-    detected, 3 shell exec` but not where they live."""
+    """Drop file:line, snippet, and prompt from each finding; keep scanner,
+    tier, category, confidence, suggested_action_type. Caller still sees
+    `5 LLM call-sites detected, 3 shell exec` but not where they live."""
     out = []
     for f in findings:
         d = dict(f)
@@ -185,6 +185,11 @@ def _redact_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # informational-only.
         d["extra"] = {}
         d["rationale"] = d.get("rationale", "")
+        # Prompt embeds file:line + snippet, so it has to go too. Category
+        # tags (primary + secondary) are pure metadata and stay visible —
+        # they help anonymous callers see the security/efficiency/quality
+        # mix without leaking location.
+        d["prompt"] = None
         out.append(d)
     return out
 
@@ -615,8 +620,9 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         try:
             from dataclasses import replace as dc_replace
 
-            from supervisor_discover.classifier import tier_of, validate
+            from supervisor_discover.classifier import categorize, tier_of, validate
             from supervisor_discover.combos import detect_combos
+            from supervisor_discover.prompts import prompt_for
             from supervisor_discover.scanners import apply_default_hidden, scan_all
             from supervisor_discover.start_here import build_start_here
             from supervisor_discover.summary import build_summary
@@ -690,6 +696,13 @@ def _run_scan_sync(scan_id: str, url: str, ref: str | None) -> None:
         if d["file"].startswith(tmp_prefix):
             d["file"] = d["file"][len(tmp_prefix):]
         d["tier"] = tier
+        labels = categorize(f)
+        d["category"] = labels.primary
+        d["category_secondary"] = list(labels.secondary)
+        # Generate the prompt against the *cleaned* file path so the user's
+        # LLM sees a workspace-relative path, not the tmp clone prefix.
+        clean_finding = dc_replace(f, file=d["file"])
+        d["prompt"] = prompt_for(clean_finding)
         out_findings.append(d)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)

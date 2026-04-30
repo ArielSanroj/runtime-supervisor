@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { CodeBlock } from "@/components/CodeBlock";
 
 type Creds = {
   app_id: string;
@@ -262,43 +263,19 @@ function Tabs({ tabs }: { tabs: { label: string; content: React.ReactNode }[] })
   );
 }
 
-function CodeBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={onCopy}
-        className="button-secondary"
-        style={{ position: "absolute", top: 8, right: 8, fontSize: 11, padding: "3px 8px" }}
-      >
-        {copied ? "✓ copied" : "copy"}
-      </button>
-      <pre
-        style={{
-          background: "rgba(0,0,0,0.4)",
-          border: "1px solid #27272a",
-          borderRadius: 6,
-          padding: 16,
-          fontSize: 12.5,
-          lineHeight: 1.55,
-          overflow: "auto",
-          margin: 0,
-        }}
-      >
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
-}
-
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ maxWidth: 720, margin: "32px auto", padding: 24 }}>{children}</div>
+    <div className="ops-shell min-h-screen bg-black text-zinc-100">
+      <div className="mx-auto max-w-3xl px-6 py-12">
+        <Link href="/" className="font-mono text-xs text-zinc-500 hover:text-zinc-300">
+          <span className="text-emerald-400">$</span>{" "}
+          <span className="font-semibold text-zinc-200">vibefixing</span>{" "}
+          <span className="text-zinc-600">// onboard</span>
+        </Link>
+        <div className="hover-glow mt-6 animate-fade-in rounded-2xl border border-zinc-800 bg-zinc-950/80 p-8">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }

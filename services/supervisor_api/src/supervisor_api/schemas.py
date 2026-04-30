@@ -367,6 +367,20 @@ class ScanFinding(BaseModel):
     rationale: str
     extra: dict[str, Any] = Field(default_factory=dict)
     tier: str | None = None
+    # Axis (orthogonal to tier): which dimension of pain dominates this
+    # finding — security (adversarial), efficiency (cost / runaway), or
+    # quality (auditability / reversibility). Drives chip color in the UI
+    # and gives readers a way to skim past findings that don't match the
+    # axis they're triaging today.
+    category: Literal["security", "efficiency", "quality"] | None = None
+    # Real-but-not-headline axes for this finding, ordered by relevance.
+    # Renders as muted lowercase tags after the primary chip.
+    category_secondary: list[Literal["security", "efficiency", "quality"]] = Field(default_factory=list)
+    # Copy-paste prompt the user pastes into Cursor / Claude Code so its
+    # agent applies the @supervised wrap end-to-end. Contains file:line,
+    # the snippet, and a minimal pattern in the right language. Redacted
+    # for anonymous callers (it embeds the file path).
+    prompt: str | None = None
 
 
 class ScanCombo(BaseModel):

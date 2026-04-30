@@ -21,6 +21,7 @@ from .combo_state import (
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
 from .narrator import render_summary as render_summary_email
+from .prompts import prompt_for
 from .rollout import render_rollout_md
 from .start_here import build_start_here, render_start_here_md
 from .summary import build_summary, render_markdown as render_summary_md
@@ -699,6 +700,39 @@ def _tier_runtime_behavior(copy: dict[str, str], tier: Tier, agent_path_present:
     return copy.get("runtime_behavior", "")
 
 
+def _render_per_finding_prompts(items: list[Finding]) -> list[str]:
+    """Per-call-site copy-paste LLM prompts, collapsed under one <details>.
+
+    Each prompt names the specific file:line so the user's coding agent
+    (Cursor / Claude Code / Codex) can apply the wrap without re-grepping.
+    Skips findings whose `suggested_action_type` is `other` — those don't
+    have a meaningful policy mapping yet.
+    """
+    eligible = [f for f in items if f.suggested_action_type and f.suggested_action_type != "other"]
+    if not eligible:
+        return []
+    lines: list[str] = [
+        "<details>",
+        "<summary>💬 <strong>Per-call-site fix prompts</strong> "
+        f"({len(eligible)} prompts — paste into Cursor / Claude Code)</summary>",
+        "",
+    ]
+    for f in eligible:
+        rel = f.file.split("/")
+        short = "/".join(rel[-3:]) if len(rel) >= 3 else f.file
+        lines.append(f"**`{short}:{f.line}`** — `{f.scanner}`")
+        lines.append("")
+        # 4-backtick outer fence so the inner ```python / ```ts blocks
+        # the prompt embeds don't close the outer fence prematurely.
+        lines.append("````")
+        lines.append(prompt_for(f))
+        lines.append("````")
+        lines.append("")
+    lines.append("</details>")
+    lines.append("")
+    return lines
+
+
 def _render_tier_block(
     tier: Tier,
     items: list[Finding],
@@ -760,6 +794,14 @@ def _render_tier_block(
                 f"| {f.confidence} | `{f.scanner}` | `{f.file}`:{f.line} | `{f.snippet}` | {f.rationale} |"
             )
         lines.append("")
+
+        # 💬 Per-call-site prompts — collapsed under one <details> so the
+        # table stays scannable, but every high+medium finding has a paste-
+        # ready prompt one click away. Skipped for `general` tier and other
+        # tiers that don't get a dedicated prompt structure (informational).
+        prompt_block = _render_per_finding_prompts(high + medium)
+        if prompt_block:
+            lines.extend(prompt_block)
 
     if low:
         lines.append(f"<details>\n<summary>{len(low)} low-confidence findings</summary>\n")

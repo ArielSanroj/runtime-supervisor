@@ -24,9 +24,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from .classifier import group_by_risk_tier
+from .classifier import (
+    Category,
+    CategoryLabels,
+    categorize,
+    group_by_risk_tier,
+)
 from .combos import Combo
 from .findings import Finding
+from .prompts import prompt_for_group
 from .summary import RepoSummary
 
 Priority = Literal["wrap", "prod", "confirm", "discard"]
@@ -71,6 +77,8 @@ class PriorityItem:
     solution: str           # ✅ concrete fix (may link to a combo playbook)
     evidence: list[str]     # 📍 file:line references
     minutes_to_apply: int   # rough effort estimate
+    category: CategoryLabels = CategoryLabels("quality", ())  # axis chip
+    prompt: str = ""        # 💬 LLM-ready copy-paste prompt (empty for discard)
 
 
 def _bucket_findings(findings: list[Finding]) -> dict[Priority, list[Finding]]:
@@ -207,8 +215,9 @@ _PROBLEM_BY_SCANNER: dict[str, str] = {
         "can trigger refunds or charges directly."
     ),
     "llm-calls": (
-        "your agent calls the LLM without a gate. Prompt injections run "
-        "freely; a tool-call loop can burn your API budget in minutes."
+        "every LLM call lands without a cost cap. A tool-call loop or an "
+        "oversized prompt burns your API budget in minutes — and a prompt "
+        "injection rides the same unguarded path."
     ),
     "db-mutations": (
         "your agent can modify tables directly. A malformed `DELETE FROM users` "
@@ -376,6 +385,40 @@ def _minutes_for(scanner: str, count: int) -> int:
     return max(5, per_site.get(scanner, 5) * count)
 
 
+def _category_for_group(findings: list[Finding]) -> CategoryLabels:
+    """Aggregate per-finding categories into one (primary, secondary…)
+    label for a PriorityItem bucket.
+
+    Primary is the *modal* primary across the bucket (the axis that fires
+    most often). Secondaries are the union of all primaries + secondaries
+    seen in the bucket, minus the chosen primary, ordered by frequency.
+    Ties broken by the canonical security → efficiency → quality order so
+    the chip renders deterministically across runs.
+    """
+    if not findings:
+        return CategoryLabels("quality", ())
+
+    primary_counts: dict[Category, int] = {"security": 0, "efficiency": 0, "quality": 0}
+    secondary_counts: dict[Category, int] = {"security": 0, "efficiency": 0, "quality": 0}
+    for f in findings:
+        labels = categorize(f)
+        primary_counts[labels.primary] += 1
+        for s in labels.secondary:
+            secondary_counts[s] += 1
+
+    canonical: tuple[Category, ...] = ("security", "efficiency", "quality")
+    primary = max(canonical, key=lambda c: (primary_counts[c], -canonical.index(c)))
+
+    union_counts: dict[Category, int] = {
+        c: primary_counts[c] + secondary_counts[c] for c in canonical
+    }
+    secondaries = tuple(
+        c for c in sorted(canonical, key=lambda c: (-union_counts[c], canonical.index(c)))
+        if c != primary and union_counts[c] > 0
+    )
+    return CategoryLabels(primary, secondaries)
+
+
 def _scanner_problem(
     f: Finding,
     count: int,
@@ -407,9 +450,10 @@ def _scanner_problem(
                 else "a malformed `UPDATE`"
             )
             return (
-                f"{actor} modify business-state tables (e.g. `{table}`) — "
-                f"not PII, but a `DELETE` without `WHERE` or {update_source} "
-                f"corrupts your books."
+                f"mutations land on `{table}` with no audit trail and no "
+                f"row-cap policy. {actor.capitalize()} run a `DELETE` without "
+                f"`WHERE` or {update_source} that corrupts your books — "
+                f"and nothing logs which call wrote what."
             )
         rewrite_source = (
             "can quietly rewrite credentials"
@@ -475,13 +519,16 @@ def _wrap_item(f: Finding) -> PriorityItem:
         or f.extra.get("framework")
         or "agent"
     )
+    title = f"Wrap `{label}`"
     return PriorityItem(
         priority="wrap",
-        label=f"Wrap `{label}`",
+        label=title,
         problem=_PROBLEM_BY_ORCHESTRATOR_KIND.get(kind, "agent chokepoint detected."),
         solution=_scanner_solution(f),
         evidence=[f"{_short_path(f.file)}:{f.line}"],
         minutes_to_apply=10,
+        category=categorize(f),
+        prompt=prompt_for_group([f], label=title, action_type=f.suggested_action_type),
     )
 
 
@@ -539,6 +586,16 @@ def _group_item(
             "Ignorable unless your tests hit a production database."
         )
 
+    category = _category_for_group(findings)
+    # Discard items don't get a prompt — they're test paths, not wrap targets.
+    if priority == "discard":
+        prompt_text = ""
+    else:
+        prompt_text = prompt_for_group(
+            findings,
+            label=label,
+            action_type=primary.suggested_action_type,
+        )
     return PriorityItem(
         priority=priority,
         label=label,
@@ -546,6 +603,8 @@ def _group_item(
         solution=solution,
         evidence=evidence,
         minutes_to_apply=_minutes_for(scanner, count),
+        category=category,
+        prompt=prompt_text,
     )
 
 
@@ -598,6 +657,12 @@ def _build_priority_list(
             solution=_SOLUTION_BY_ORCHESTRATOR_KIND["agent-method"] + " See `combos/agent-orchestrator.md`.",
             evidence=evidence,
             minutes_to_apply=15,
+            category=_category_for_group(fs),
+            prompt=prompt_for_group(
+                fs,
+                label=f"Wrap `{method_name}()` in `{_short_path(file)}`",
+                action_type=primary.suggested_action_type,
+            ),
         ))
 
     # Tool registrations are usually many — collapse to one item if there are
@@ -621,6 +686,12 @@ def _build_priority_list(
                 ),
                 evidence=[f"{_short_path(f.file)}:{f.line}" for f in reg_wraps[:3]],
                 minutes_to_apply=max(15, 3 * len(unique_tools)),
+                category=_category_for_group(reg_wraps),
+                prompt=prompt_for_group(
+                    reg_wraps,
+                    label=f"Per-tool policies ({len(unique_tools)} tools)",
+                    action_type="tool_use",
+                ),
             ))
         else:
             for f in reg_wraps:
@@ -658,6 +729,8 @@ def _build_priority_list(
             solution="Ignorable unless your tests hit a production database.",
             evidence=evidence,
             minutes_to_apply=0,
+            category=_category_for_group(discard_findings),
+            prompt="",
         ))
 
     return items
@@ -727,22 +800,43 @@ def _emoji(p: Priority) -> str:
     return {"wrap": "🎯", "prod": "🔒", "confirm": "⚠️", "discard": "🗑️"}[p]
 
 
+def _category_chip(labels: CategoryLabels) -> str:
+    """Render the axis chip: primary capitalized + secondaries lowercase
+    after a `·` separator. Lives inside an inline-code span so it survives
+    GitHub's markdown rendering with monospaced styling."""
+    primary = labels.primary.capitalize()
+    if not labels.secondary:
+        return f"`[{primary}]`"
+    secondaries = " · ".join(s for s in labels.secondary)
+    return f"`[{primary} · {secondaries}]`"
+
+
 def _render_item(item: PriorityItem) -> str:
-    """Render one PriorityItem as a 4-line block:
-      🎯/🔒/⚠️/🗑️  **title**  (~N min)
+    """Render one PriorityItem as a 4–5-line block:
+      🎯/🔒/⚠️/🗑️  `[Primary · secondary]`  **title**  (~N min)
           🔴 Problem: ...
           📍 Where:   ...
           ✅ Fix:     ...
+          💬 Prompt:  fenced code block (omitted on discard)
     """
     ev = " · ".join(f"`{e}`" for e in item.evidence) if item.evidence else ""
     mins = f"  _(~{item.minutes_to_apply} min)_" if item.minutes_to_apply > 0 else ""
+    chip = _category_chip(item.category)
     lines = [
-        f"{_emoji(item.priority)}  **{item.label}**{mins}",
+        f"{_emoji(item.priority)}  {chip}  **{item.label}**{mins}",
         f"    🔴 **Problem:** {item.problem}",
     ]
     if ev:
         lines.append(f"    📍 **Where:** {ev}")
     lines.append(f"    ✅ **Fix:** {item.solution}")
+    if item.prompt:
+        lines.append("    💬 **Prompt:** _paste this into Cursor / Claude Code:_")
+        lines.append("")
+        # 4-backtick fence so the inner ```python / ```ts blocks the prompt
+        # carries don't terminate the outer fence on Markdown renderers.
+        lines.append("````")
+        lines.append(item.prompt)
+        lines.append("````")
     return "\n".join(lines)
 
 

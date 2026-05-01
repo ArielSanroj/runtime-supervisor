@@ -45,12 +45,19 @@ export default function StartHere({ data }: { data: StartHereData | null | undef
   if (!data) return null;
   const hidden = data.hidden_counter ?? {};
   const hiddenTotal = Object.values(hidden).reduce((a, b) => a + b, 0);
+  // Default to true when the field is absent (older API responses) — keeps
+  // the existing "Highest-risk" framing for any scan whose Python summary
+  // pre-dates schema 1.1. Only false when the server explicitly says so.
+  const agentPathPresent = data.agent_path_present !== false;
 
   return (
     <div className="space-y-8">
       <BestPlaceToWrap targets={data.top_wrap_targets ?? []} />
       <WhatThisRepoCanDo capabilities={data.repo_capabilities ?? []} />
-      <HighestRiskThings risks={data.top_risks ?? []} />
+      <HighestRiskThings
+        risks={data.top_risks ?? []}
+        agentPathPresent={agentPathPresent}
+      />
       <DoThisNow markdown={data.do_this_now ?? ""} />
       <IgnoreForNow hiddenTotal={hiddenTotal} hiddenBreakdown={hidden} />
     </div>
@@ -151,17 +158,41 @@ function WhatThisRepoCanDo({ capabilities }: { capabilities: string[] }) {
   );
 }
 
-function HighestRiskThings({ risks }: { risks: Risk[] }) {
+function HighestRiskThings({
+  risks,
+  agentPathPresent,
+}: {
+  risks: Risk[];
+  agentPathPresent: boolean;
+}) {
+  // When no agent or LLM is reachable, the section reframes from
+  // "highest-risk" (urgent agent risk) to "capability inventory" (what an
+  // attacker reaching the code-path could do). The 10-repo benchmark
+  // exposed plain SaaS repos being framed as urgent agent risk despite
+  // having no agent path; this header flip mirrors the Python renderer.
+  const heading = agentPathPresent
+    ? "highest-risk things to care about now"
+    : "capability inventory";
+  const headingTone = agentPathPresent ? "text-rose-400" : "text-amber-400";
+  const emptyCopy = agentPathPresent
+    ? "No high-confidence risk patterns surfaced — the repo may not expose agent-grade integrations yet."
+    : "No agent or LLM is reachable in this scan. The items below describe what an attacker reaching the code-path could do — wrap them once you add an agent loop.";
+
   return (
     <section>
-      <h2 className="font-mono text-xs uppercase tracking-widest text-rose-400">
-        highest-risk things to care about now
+      <h2 className={`font-mono text-xs uppercase tracking-widest ${headingTone}`}>
+        {heading}
       </h2>
-      {risks.length === 0 ? (
-        <p className="mt-3 text-zinc-400">
-          No high-confidence risk patterns surfaced — the repo may not expose
-          agent-grade integrations yet.
+      {!agentPathPresent && (
+        <p className="mt-3 text-sm italic text-zinc-400">
+          No agent or LLM is reachable in this scan. The items below describe
+          what an attacker reaching the code-path could do — wrap them once you
+          add an agent loop, or treat as a checklist for direct user-input
+          handling today.
         </p>
+      )}
+      {risks.length === 0 ? (
+        <p className="mt-3 text-zinc-400">{emptyCopy}</p>
       ) : (
         <div className="mt-4 space-y-4">
           {risks.map((r, i) => (

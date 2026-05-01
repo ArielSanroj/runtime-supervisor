@@ -206,7 +206,14 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
   // count powers the Builder upsell — the cut is transparent, not a silent trim.
   const { visible: findings, hidden: hiddenCount } = applyFreeConfidenceGate(rawFindings);
   const grouped = groupByTier(findings);
-  const priorityCount = findings.filter((f) => isPriorityFinding(f)).length;
+  // Schema 1.1 carries `agent_path_present` on the summary. When false,
+  // findings are capability inventory (no LLM/agent reaches them) — we
+  // pivot the headline number from "priority" to "inventory" so the UI
+  // doesn't manufacture urgency on plain SaaS / template repos.
+  const agentPathPresent = summary?.agent_path_present !== false;
+  const priorityTierCount = findings.filter((f) => isPriorityFinding(f)).length;
+  const priorityCount = agentPathPresent ? priorityTierCount : 0;
+  const inventoryCount = agentPathPresent ? 0 : priorityTierCount;
   const generalCount = grouped.general?.length ?? 0;
 
   const combos = scan.combos ?? [];
@@ -267,6 +274,7 @@ export default function FindingsList({ scan }: { scan: ScanResponse }) {
           <BuilderUnlock
             findingsCount={findings.length}
             priorityCount={priorityCount}
+            inventoryCount={inventoryCount}
             generalCount={generalCount}
             hiddenCount={hiddenCount}
             truncated={scan.findings_truncated}
@@ -374,12 +382,17 @@ function BuilderUpgradeButton() {
 function BuilderUnlock({
   findingsCount,
   priorityCount,
+  inventoryCount,
   generalCount,
   hiddenCount,
   truncated,
 }: {
   findingsCount: number;
   priorityCount: number;
+  // Schema 1.1+: present when the repo's `agent_path_present` is False.
+  // Renders as a separate stat with the `inventory` label so the UI
+  // never manufactures urgency on plain SaaS / template / CLI repos.
+  inventoryCount: number;
   generalCount: number;
   hiddenCount: number;
   truncated: boolean;
@@ -418,7 +431,11 @@ function BuilderUnlock({
           )}
         </div>
         <div className="grid min-w-56 gap-3 rounded-lg border border-zinc-800 bg-black/40 p-4 text-right sm:grid-cols-3">
-          <MiniStat value={String(priorityCount)} label="priority" />
+          {inventoryCount > 0 ? (
+            <MiniStat value={String(inventoryCount)} label="inventory" />
+          ) : (
+            <MiniStat value={String(priorityCount)} label="priority" />
+          )}
           <MiniStat value={String(generalCount)} label="general" />
           <MiniStat value={String(findingsCount)} label="preview" />
         </div>

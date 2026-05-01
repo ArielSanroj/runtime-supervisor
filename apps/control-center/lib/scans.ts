@@ -53,6 +53,12 @@ export type StartHere = {
   top_risks: Risk[];
   do_this_now: string;
   hidden_counter: Record<string, number>;
+  // Schema 1.1+: True when an agent/LLM path is reachable in the repo.
+  // When False, top_risks shrinks to self-contained items (eval, pickle,
+  // verify=False, JWT bypass) and the section reframes as inventory.
+  agent_path_present?: boolean;
+  // Renderer-facing kind. The component uses it for the banner copy.
+  repo_kind?: string;
 };
 
 export type RepoSummary = {
@@ -75,6 +81,11 @@ export type RepoSummary = {
   hidden_findings?: Record<string, number>;
   // New: vibe-coder entry view derived from this summary + findings on the server.
   start_here?: StartHere | null;
+  // Schema 1.1+: repo_kind taxonomy ("framework"|"app"|"cli_tool"|
+  // "example_template"|"unknown") and agent_path_present flag. When the
+  // agent path is False, the UI reframes priority as capability inventory.
+  repo_kind?: string;
+  agent_path_present?: boolean;
 };
 
 export type ScanCombo = {

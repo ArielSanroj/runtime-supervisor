@@ -1,6 +1,6 @@
 [project]
 name = "supervisor-discover"
-version = "0.4.1"
+version = "0.4.2"
 description = "Scan an AI-agent repo and emit runtime-supervisor wrappers, policies, and combo playbooks."
 readme = "README.md"
 license = "Apache-2.0"
@@ -8,7 +8,13 @@ license-files = ["LICENSE"]
 authors = [{ name = "Ariel San Martín" }]
 requires-python = ">=3.10"
 keywords = ["ai-agents", "llm", "static-analysis", "guardrails", "scanner", "runtime-supervisor"]
-dependencies = []
+dependencies = [
+    # generator.py reads policy YAML files at scan time. Listed as a hard dep
+    # so `pip install supervisor-discover` works on a clean venv — 0.4.0 and
+    # 0.4.1 silently relied on pyyaml coming in transitively from the
+    # monorepo's editable install, which broke fresh wheel installs.
+    "pyyaml>=6.0",
+]
 
 [project.urls]
 Homepage = "https://vibefixing.me"

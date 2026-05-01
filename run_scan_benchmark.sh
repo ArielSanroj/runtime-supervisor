@@ -40,8 +40,13 @@ Goal: test `supervisor-discover scan` across different repo types and identify w
 
 ## Results
 
-| Repo | Clone | Scan | Elapsed | Findings | Priority | Key files |
-|---|---:|---:|---:|---:|---:|---|
+Priority counts honour the `agent_path_present` flag in `repo_summary`.
+When no agent or LLM is reachable, the report is a capability inventory —
+findings still surface in `FULL_REPORT.md` but priority is reported as `0`
+because nothing wraps in this repo without first wiring an agent loop.
+
+| Repo | Repo kind | Agent path | Findings | Priority | Inventory | Key files |
+|---|---|---|---:|---:|---:|---|
 MD
 
 json_value() {
@@ -52,8 +57,8 @@ import json
 import sys
 from pathlib import Path
 
-from supervisor_discover.classifier import tier_of
-from supervisor_discover.findings import Finding
+# Schema 1.1 embeds `tier` per finding, so the script no longer rebuilds
+# Finding objects to recompute classification — read the field directly.
 
 path = Path(sys.argv[1])
 expr = sys.argv[2]
@@ -65,28 +70,31 @@ except Exception:
 
 findings = payload.get("findings") or []
 summary = payload.get("repo_summary") or {}
+agent_path_present = bool(summary.get("agent_path_present"))
+
+# A finding counts as "priority" when its tier is one of the action tiers
+# (everything except `general`). The benchmark adds an extra honesty gate:
+# when the repo has no agent path, priority is muted to 0 and surfaced as
+# `inventory` instead — honest framing, not synthetic urgency.
+priority_findings = [f for f in findings if (f.get("tier") or "general") != "general"]
+
 if expr == "findings":
     print(len(findings))
 elif expr == "priority":
-    total = 0
-    for item in findings:
-        try:
-            finding = Finding(
-                scanner=item["scanner"],
-                file=item["file"],
-                line=item["line"],
-                snippet=item["snippet"],
-                suggested_action_type=item["suggested_action_type"],
-                confidence=item["confidence"],
-                rationale=item["rationale"],
-                extra=item.get("extra") or {},
-                id=item.get("id") or "",
-            )
-        except Exception:
-            continue
-        if tier_of(finding) != "general":
-            total += 1
-    print(total)
+    print(len(priority_findings) if agent_path_present else 0)
+elif expr == "inventory":
+    # Inventory count = priority-tier findings the user should review even
+    # without an agent present (RCE / auth-bypass primitives) plus the
+    # rest. Reported only when agent_path_present is False to highlight
+    # that there ARE findings but they're framed as inventory.
+    if agent_path_present:
+        print(0)
+    else:
+        print(len(priority_findings))
+elif expr == "agent_path":
+    print("yes" if agent_path_present else "no")
+elif expr == "repo_kind":
+    print(summary.get("repo_kind") or "unknown")
 elif expr == "one_liner":
     print((summary.get("one_liner") or "").replace("\n", " ")[:160])
 else:
@@ -158,6 +166,9 @@ for item in "${repos[@]}"; do
   elapsed="n/a"
   findings="n/a"
   priority="n/a"
+  inventory="n/a"
+  repo_kind="n/a"
+  agent_path="n/a"
 
   if [[ "$clone_code" -eq 0 ]]; then
     printf '[%s] scan\n' "$name" >&2
@@ -170,12 +181,15 @@ for item in "${repos[@]}"; do
     if [[ -f "$result_dir/findings.json" ]]; then
       findings="$(json_value "$result_dir/findings.json" findings)"
       priority="$(json_value "$result_dir/findings.json" priority)"
+      inventory="$(json_value "$result_dir/findings.json" inventory)"
+      repo_kind="$(json_value "$result_dir/findings.json" repo_kind)"
+      agent_path="$(json_value "$result_dir/findings.json" agent_path)"
     fi
   fi
 
   key_files="$(key_files_for "$result_dir")"
   printf '| %s | %s | %s | %s | %s | %s | %s |\n' \
-    "$name" "$clone_code" "$scan_code" "$elapsed" "$findings" "$priority" "$key_files" >> "$SUMMARY"
+    "$name" "$repo_kind" "$agent_path" "$findings" "$priority" "$inventory" "$key_files" >> "$SUMMARY"
 done
 
 cat >> "$SUMMARY" <<MD

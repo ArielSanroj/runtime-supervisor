@@ -166,6 +166,27 @@ def test_template_repo_basename_classifies_as_example_template(tmp_path: Path):
     assert kind == "example_template"
 
 
+def test_vercel_deploy_button_marks_example_template(tmp_path: Path):
+    """`nextjs-subscription-payments` was the canonical miss — its README
+    has the Vercel Deploy button (`vercel.com/new/clone?...`) but the
+    basename doesn't match any of `_TEMPLATE_NAME_SUFFIXES`. Detecting
+    the clone URL in README.md catches Vercel starters even when the
+    repo is named `<framework>-<feature>-<verb>`."""
+    _write(tmp_path, "package.json", '{"name": "nextjs-subscription-payments"}\n')
+    _write(
+        tmp_path,
+        "README.md",
+        "# nextjs-subscription-payments\n\n"
+        "[![Deploy with Vercel](https://vercel.com/button)]"
+        "(https://vercel.com/new/clone?repository-url=https://github.com/"
+        "vercel/nextjs-subscription-payments)\n",
+    )
+    kind = detect_repo_kind(
+        tmp_path, http_routes=4, chokepoints_in_agent_path=0,
+    )
+    assert kind == "example_template"
+
+
 def test_registry_json_marks_example_template(tmp_path: Path):
     """shadcn / Vercel marketplace conventions ship a `registry.json`
     or `template.json` at root. Treat as example/template regardless

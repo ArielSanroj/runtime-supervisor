@@ -43,10 +43,14 @@ def _classes(findings: list[Finding]) -> dict[str, Finding]:
 # ─── Pipeline-shaped → reclassified ────────────────────────────────
 
 
-def test_httpx_scraper_class_reclassified_as_pipeline(tmp_path: Path):
-    """The BurstOrchestrator pattern: httpx async pool, no LLM SDK, no
-    intent dispatch. Should land as pipeline-orchestrator with
-    `confidence=low` so it stays in inventory but not in top wrap."""
+def test_httpx_scraper_class_filtered_by_agent_gate(tmp_path: Path):
+    """The BurstOrchestrator pattern (httpx async pool, no LLM SDK, no
+    intent dispatch) used to be demoted to `pipeline_orchestrator low`.
+    With the generic-token gate it's filtered out earlier — it never
+    even registers as agent-class because there's no LLM import and no
+    decision-branching. The 10-repo benchmark made this the right
+    outcome: medusa's TransactionOrchestrator and chatwoot's similar
+    classes shouldn't be in the priority surface at all."""
     _write(tmp_path, "scraper/burst.py", """
 import asyncio
 import httpx
@@ -60,10 +64,11 @@ class BurstOrchestrator:
 """)
     findings = _scan(tmp_path)
     classes = _classes(findings)
-    assert "BurstOrchestrator" in classes
-    f = classes["BurstOrchestrator"]
-    assert f.confidence == "low"
-    assert (f.extra or {}).get("pipeline_orchestrator") is True
+    assert "BurstOrchestrator" not in classes, (
+        "Generic Orchestrator without LLM/branching evidence must be "
+        "filtered out by the agent-class gate before reaching the "
+        "pipeline classifier."
+    )
 
 
 def test_ocr_pipeline_class_reclassified(tmp_path: Path):
@@ -104,12 +109,19 @@ class TaskDispatcher:
 
 
 def test_alert_dispatcher_not_reclassified(tmp_path: Path):
-    """The castor-1 AlertDispatcher pattern: no LLM SDK in this file (the
-    upstream agent does the LLM call), but it's still a legit agent surface
-    with multiple `dispatch_*_alert` methods. Mustn't be reclassified to
-    pipeline just because it doesn't `import openai` directly."""
+    """The castor-1 AlertDispatcher pattern with bare `action` branching
+    to pass the generic-token gate (the file doesn't `import openai`
+    directly — the upstream agent does — but the `if action ==` branching
+    is the agent signal). Mustn't be reclassified to pipeline just because
+    it has no httpx/cv2 imports."""
     _write(tmp_path, "agents/actuators/alert_dispatcher.py", """
 class AlertDispatcher:
+    async def handle(self, action, alert):
+        if action == "sla":
+            return await self.dispatch_sla_alert(alert)
+        if action == "anomaly":
+            return await self.dispatch_anomaly_alert(alert)
+        return await self.dispatch_deadline_alert(alert)
     async def dispatch_sla_alert(self, alert):
         return await self._dispatch(alert)
     async def dispatch_anomaly_alert(self, alert):
@@ -173,11 +185,12 @@ class MatchOrchestrator:
     assert (f.extra or {}).get("pipeline_orchestrator") is not True
 
 
-def test_class_without_pipeline_lib_stays_agent(tmp_path: Path):
-    """No LLM, no intent branching, but ALSO no pipeline library import.
-    Be conservative — leave classification alone (no `pipeline_orchestrator`
-    flag). The reviewer's complaint was specifically about scrapers/OCR
-    classes that DID have those imports."""
+def test_class_without_pipeline_lib_or_evidence_is_dropped(tmp_path: Path):
+    """Generic Dispatcher with NO LLM imports, NO branching, NO pipeline
+    libs is not an agent at all — the 10-repo benchmark caught medusa's
+    TelemetryDispatcher / TransactionOrchestrator inflating priority via
+    this exact shape. Gate drops it before the pipeline classifier even
+    runs. (Was previously `kept-as-agent`, pre-benchmark.)"""
     _write(tmp_path, "services/business_dispatcher.py", """
 class BusinessDispatcher:
     def __init__(self, db):
@@ -187,8 +200,10 @@ class BusinessDispatcher:
 """)
     findings = _scan(tmp_path)
     classes = _classes(findings)
-    f = classes["BusinessDispatcher"]
-    assert (f.extra or {}).get("pipeline_orchestrator") is not True
+    assert "BusinessDispatcher" not in classes, (
+        "Generic Dispatcher without LLM/branching evidence must be filtered "
+        "out by the agent-class gate, not surfaced as a wrap target."
+    )
 
 
 # ─── Mixed / boundary cases ────────────────────────────────────────

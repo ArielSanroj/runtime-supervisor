@@ -111,27 +111,36 @@ _FRAMEWORK_IMPORTS: list[tuple[re.Pattern, str]] = [
 # MEDIUM-confidence — class defs with agent-y names.
 _AGENT_CLASS_NAMES = r"(?:Controller|Dispatcher|Orchestrator|Planner|Agent|ToolDispatcher|AgentExecutor|AgentRouter)"
 
-# Tokens *other* than `Controller` that the regex above can match. When a
-# class name only matches because of the `Controller` suffix (no Dispatcher /
-# Orchestrator / Agent / Planner token nearby), the match is high-FP — every
-# NestJS controller, every Frappe form controller, every Rails-style
-# `*Controller` would fire. The 10-repo benchmark showed erpnext (Frappe)
-# and medusa (NestJS) inflated to ≥90% priority almost entirely on these
-# false matches. Controllers gated by additional evidence below.
-_NON_CONTROLLER_AGENT_TOKENS = (
-    "Dispatcher", "Orchestrator", "Planner", "Agent",
-    "ToolDispatcher", "AgentExecutor", "AgentRouter",
+# Tokens that are agent-specific by convention — `AgentExecutor` (langchain),
+# `AgentRouter` (langchain), `ToolDispatcher` (explicit tool framing). These
+# fire unconditionally because the names exist exclusively in agent
+# frameworks; nobody calls a non-agent class `AgentExecutor`.
+_LLM_SPECIFIC_AGENT_TOKENS = (
+    "AgentExecutor", "AgentRouter", "ToolDispatcher",
+)
+
+# Generic tokens that match commerce / infra utilities just as often as LLM
+# agents: `TransactionOrchestrator` (commerce saga), `TelemetryDispatcher`
+# (analytics), `MigrationsExecutionPlanner` (DB migrations) — all caught
+# by the medusa scan and none are agents. The 10-repo benchmark showed
+# these four tokens are responsible for ~80 of the agent-class FPs across
+# erpnext, medusa, cal-diy. Gated by LLM/branching evidence below.
+_GENERIC_AGENT_TOKENS = (
+    "Controller", "Dispatcher", "Orchestrator", "Planner",
 )
 
 
-def _is_controller_only_match(class_name: str) -> bool:
-    """True when the class name only matches `_AGENT_CLASS_NAMES` because of
-    its `Controller` suffix — no Dispatcher / Orchestrator / Agent / Planner
-    token in the name. These are the matches that need extra evidence (LLM
-    import, decision-branching) before being treated as agent classes."""
-    if not class_name.endswith("Controller"):
+def _is_generic_token_match(class_name: str) -> bool:
+    """True when the class name matches `_AGENT_CLASS_NAMES` only via a
+    generic token (Controller / Dispatcher / Orchestrator / Planner), not
+    via an LLM-specific compound (AgentExecutor / AgentRouter /
+    ToolDispatcher). Generic matches need extra evidence (LLM import,
+    decision-branching) before being treated as agent classes — they're
+    the FP source on commerce / infra repos."""
+    # LLM-specific tokens fire unconditionally — short-circuit out.
+    if any(tok in class_name for tok in _LLM_SPECIFIC_AGENT_TOKENS):
         return False
-    return not any(tok in class_name for tok in _NON_CONTROLLER_AGENT_TOKENS)
+    return any(class_name.endswith(tok) for tok in _GENERIC_AGENT_TOKENS)
 
 
 def _controller_has_agent_signals(text: str, language: str) -> bool:
@@ -676,13 +685,16 @@ def _scan_text(path: Path, text: str) -> list[Finding]:
                 continue
             if class_name in deprecated_classes:
                 continue
-            # `*Controller`-only matches (NestJS, Frappe, Rails-style MVC) need
-            # additional positive evidence — an LLM import in the file or a
-            # decision-branching method. Without that, this is just a routing
-            # controller and the agent-class label is wrong. Other agent tokens
-            # (Dispatcher / Orchestrator / Agent / Planner / ...) keep firing
-            # unconditionally because those names are agent-specific.
-            if _is_controller_only_match(class_name):
+            # Generic-token matches (Controller / Dispatcher / Orchestrator /
+            # Planner) need additional positive evidence — an LLM import in
+            # the file or a decision-branching method. Without that, this is
+            # commerce / infra code and the agent-class label is wrong. The
+            # 10-repo benchmark caught medusa's TransactionOrchestrator,
+            # TelemetryDispatcher, MigrationsExecutionPlanner inflating
+            # priority via these tokens. LLM-specific tokens
+            # (AgentExecutor / AgentRouter / ToolDispatcher) and the bare
+            # `*Agent` family keep firing unconditionally.
+            if _is_generic_token_match(class_name):
                 if not _controller_has_agent_signals(text, file_lang):
                     continue
             if is_pipeline:

@@ -683,17 +683,108 @@ def test_controller_with_decision_branching_still_fires(tmp_path):
     assert len(findings) == 1
 
 
-def test_dispatcher_match_unaffected_by_controller_gate(tmp_path):
-    """`Dispatcher` is one of the non-Controller agent tokens — it fires
-    unconditionally even without LLM imports or branching."""
+def test_dispatcher_without_llm_or_branching_skipped(tmp_path):
+    """The 10-repo benchmark caught medusa's TelemetryDispatcher /
+    TransactionOrchestrator / MigrationsExecutionPlanner inflating
+    priority. Generic tokens (Controller / Dispatcher / Orchestrator /
+    Planner) now require an LLM import or decision-branching, just like
+    Controller did before — only the LLM-specific compounds
+    (AgentExecutor / AgentRouter / ToolDispatcher) fire unconditionally."""
     from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
 
     src = tmp_path / "src"
     src.mkdir(parents=True)
-    (src / "dispatcher.py").write_text(
-        "class AlertDispatcher:\n"
-        "    def dispatch(self):\n"
+    (src / "telemetry.py").write_text(
+        "class TelemetryDispatcher:\n"
+        "    def send(self, event):\n"
+        "        self._socket.emit(event)\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "TelemetryDispatcher"
+    ]
+    assert findings == [], (
+        f"Plain Dispatcher with no LLM/branching evidence must not register "
+        f"as agent-class. Got: {[(f.file, f.line) for f in findings]}"
+    )
+
+
+def test_orchestrator_without_evidence_skipped(tmp_path):
+    """medusa's TransactionOrchestrator (saga pattern) is not an LLM agent."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "core"
+    src.mkdir(parents=True)
+    (src / "transactions.ts").write_text(
+        "export class TransactionOrchestrator {\n"
+        "  async run(steps: Step[]) {\n"
+        "    for (const step of steps) await step.execute();\n"
+        "  }\n"
+        "}\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "TransactionOrchestrator"
+    ]
+    assert findings == []
+
+
+def test_planner_without_evidence_skipped(tmp_path):
+    """medusa's MigrationsExecutionPlanner is DB migration scheduling."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "core"
+    src.mkdir(parents=True)
+    (src / "plan.ts").write_text(
+        "export class MigrationsExecutionPlanner {\n"
+        "  build(modules: Module[]) { return modules.flatMap(m => m.steps); }\n"
+        "}\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "MigrationsExecutionPlanner"
+    ]
+    assert findings == []
+
+
+def test_agentexecutor_fires_unconditionally(tmp_path):
+    """LLM-specific tokens (AgentExecutor / AgentRouter / ToolDispatcher)
+    fire even without LLM imports or branching — the names are
+    framework-specific enough that FPs don't happen."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "executor.py").write_text(
+        "class CustomAgentExecutor:\n"
+        "    def run(self):\n"
         "        return None\n"
+    )
+    findings = [
+        f for f in scan_orch(tmp_path)
+        if (f.extra or {}).get("class_name") == "CustomAgentExecutor"
+    ]
+    assert len(findings) == 1
+
+
+def test_dispatcher_with_llm_still_fires(tmp_path):
+    """Dispatcher in a file that imports an LLM SDK still registers as
+    agent-class — that's a real LLM dispatcher (e.g. langchain tool
+    dispatcher), the legitimate case the gate must preserve."""
+    from supervisor_discover.scanners.agent_orchestrators import scan as scan_orch
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "tool_dispatcher.py").write_text(
+        "import openai\n"
+        "\n"
+        "class ToolPicker:\n"
+        "    pass\n"
+        "\n"
+        "class AlertDispatcher:\n"
+        "    def dispatch(self, intent):\n"
+        "        if intent == 'sla': return self.sla()\n"
+        "        return openai.chat.completions.create(model='gpt-4', messages=[])\n"
     )
     findings = [
         f for f in scan_orch(tmp_path)

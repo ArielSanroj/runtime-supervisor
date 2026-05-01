@@ -172,12 +172,28 @@ def _looks_like_template_repo(root: Path) -> bool:
     """True when the repo signals "this is a starter / template / example".
 
     Path-based: repo basename ends with one of `_TEMPLATE_NAME_SUFFIXES`,
-    or the root contains a `template.json` / `registry.json` (Vercel
-    / shadcn / Next.js convention)."""
+    the root contains `template.json` / `registry.json` (Vercel / shadcn /
+    Next.js convention), or the README declares a Vercel deploy button
+    with `vercel.com/new/clone?repository-url=…` (the canonical Vercel
+    starter shape — `nextjs-subscription-payments` was the canonical
+    miss in the 10-repo benchmark, which had `Deploy with Vercel` button
+    and clone URL but didn't end in any of the suffixes)."""
     if any(root.name.lower().endswith(s) for s in _TEMPLATE_NAME_SUFFIXES):
         return True
     for marker in ("template.json", "registry.json"):
         if (root / marker).is_file():
+            return True
+    readme = root / "README.md"
+    if readme.is_file():
+        try:
+            text = readme.read_text(errors="ignore")
+        except OSError:
+            text = ""
+        # The Deploy button is a markdown image+link with the URL pattern
+        # `vercel.com/new/clone?repository-url=...`. Detecting the URL
+        # itself is more robust than matching the button alt text (which
+        # appears in many tutorials).
+        if "vercel.com/new/clone" in text:
             return True
     return False
 

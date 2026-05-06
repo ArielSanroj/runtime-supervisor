@@ -2,17 +2,15 @@
 
 ## Vibefixing — AI Agent Security Scanner
 
-**Vibefixing** is an AI agent security scanner for vibe coders. Statically analyzes your repo to detect unsafe tool calls: unguarded Stripe charges, raw DB mutations, filesystem writes, and prompt injection risks.
+**[Vibefixing](https://www.vibefixing.me)** is an AI agent security scanner and runtime supervisor for vibe coders shipping with Claude, Cursor, or Copilot. Paste a GitHub repo and get a full report of unsafe tool calls your AI agent can execute before they hit production: unguarded Stripe charges, raw database mutations, filesystem writes, shell execution, and prompt injection risks.
 
-**[vibefixing.me](https://www.vibefixing.me)** — Free public scan. No instrumentation required.
+**→ [vibefixing.me](https://www.vibefixing.me) — Free public scan. No instrumentation required.**
 
-- Scan any public repo in under 60 seconds — no API key, no instrumentation
-- - Detects prompt injection risks, unguarded payment calls, DB mutations, and filesystem writes
-  - - GitHub App auto-scans every PR and posts findings as inline comments
-    - - Works with LangChain, CrewAI, OpenAI function-calling, Anthropic tool use, MCP servers, plain Python/TypeScript
-      - - Static analysis only — no runtime hooks, no agent instrumentation needed
-       
-        - 
+- **Prevent prompt injection** in LangChain, CrewAI, OpenAI function-calling, and MCP servers
+- **Detect unguarded Stripe calls**, DB mutations, and filesystem writes before shipping
+- **AI agent guardrails** for every PR via GitHub App — auto-scans diffs in under 5 seconds
+- Works with any agent framework: LangChain, LlamaIndex, CrewAI, Anthropic tool use, plain Python
+- Static analysis only — no runtime hooks, no API key required for the free scan
 
 Runtime control layer that gates AI-agent actions against declarative policy + risk scoring, with a tamper-evident evidence log and a human review queue.
 > **Live demo:** [Vibefixing — AI agent security scanner for vibe coders](https://www.vibefixing.me)
@@ -53,7 +51,7 @@ curl -s -X POST http://localhost:8000/v1/integrations \
   -H "X-Admin-Token: $ADMIN_BOOTSTRAP_TOKEN" \
   -H "content-type: application/json" \
   -d '{"name":"acme-refund-agent","scopes":["refund"]}'
-# → {"id":"…","shared_secret":"kX…","…"}    (secret shown once)
+# → {"id":"…","shared_secret":"kX…","…"} (secret shown once)
 ```
 
 Rotate with `POST /v1/integrations/{id}/rotate-secret`, revoke with `/revoke`.
@@ -64,16 +62,15 @@ Option A — **Python SDK** (`packages/supervisor-client-py`):
 
 ```python
 from supervisor_client import Client
-with Client(base_url="http://localhost:8000",
-            app_id=INTEG_ID, shared_secret=SECRET,
-            scopes=["refund"]) as sup:
+
+with Client(base_url="http://localhost:8000", app_id=INTEG_ID, shared_secret=SECRET, scopes=["refund"]) as sup:
     d = sup.evaluate("refund", {
         "amount": 420, "customer_id": "c1",
         "customer_age_days": 18, "refund_velocity_24h": 2, "reason": "changed_mind",
     })
-    if d.allowed: execute_refund()
+    if d.allowed:   execute_refund()
     elif d.blocked: reject(d.reasons)
-    else: queue_for_review(d.action_id)
+    else:           queue_for_review(d.action_id)
 ```
 
 Option B — **TypeScript SDK** (`packages/supervisor-client-ts`, runs in Node/Browser/Edge/Deno/Bun via Web Crypto):
@@ -90,8 +87,6 @@ Option D — **Raw HTTP**: sign your own JWT (`alg: HS256`, claims `sub=integrat
 
 ### 3 · Receive outbound webhooks (optional)
 
-Subscribe your app to events:
-
 ```bash
 curl -s -X POST "http://localhost:8000/v1/integrations/$ID/webhooks" \
   -H "X-Admin-Token: $ADMIN_BOOTSTRAP_TOKEN" \
@@ -100,8 +95,6 @@ curl -s -X POST "http://localhost:8000/v1/integrations/$ID/webhooks" \
 
 The supervisor will POST JSON to that URL with an `x-supervisor-signature: sha256=<hex>` header (HMAC-SHA256 of the raw body using `WEBHOOK_SECRET`). Verify before trusting the payload.
 
-Delivery history: `GET /v1/integrations/{id}/webhooks/{sub_id}/deliveries`.
-
 ### Action type catalog
 
 `GET /v1/action-types` returns every action type, `live` or `planned`. The public landing renders from this — when you ship a new supervisor, marketing copy updates itself.
@@ -109,13 +102,13 @@ Delivery history: `GET /v1/integrations/{id}/webhooks/{sub_id}/deliveries`.
 ## Layout
 
 ```
-services/supervisor_api/    FastAPI, Alembic, engines, evidence, auth, webhooks
-apps/control-center/        Next.js 15 — public landing + reviewer console
-packages/policies/          YAML policies per action type
-packages/supervisor-client-py/   Python SDK
-packages/supervisor-client-ts/   TypeScript SDK
-packages/mcp-supervisor/    MCP stdio server exposing supervisor tools
-.claude/agents/             Claude Code subagent (repo-aware guide)
+services/supervisor_api/       FastAPI, Alembic, engines, evidence, auth, webhooks
+apps/control-center/           Next.js 15 — public landing + reviewer console
+packages/policies/             YAML policies per action type
+packages/supervisor-client-py/ Python SDK
+packages/supervisor-client-ts/ TypeScript SDK
+packages/mcp-supervisor/       MCP stdio server exposing supervisor tools
+.claude/agents/                Claude Code subagent (repo-aware guide)
 ```
 
 ## Ask the repo (Claude Code subagent)
@@ -123,7 +116,10 @@ packages/mcp-supervisor/    MCP stdio server exposing supervisor tools
 Inside a Claude Code session in this repo, invoke:
 
 ```
-Task({ subagent_type: "runtime-supervisor-guide", prompt: "how do I add a payment supervisor?" })
+Task({
+  subagent_type: "runtime-supervisor-guide",
+  prompt: "how do I add a payment supervisor?"
+})
 ```
 
 The subagent reads the live code and answers against current state.
@@ -131,9 +127,9 @@ The subagent reads the live code and answers against current state.
 ## Tests
 
 ```bash
-uv run --all-packages pytest                 # backend + python sdk
-cd packages/supervisor-client-ts && pnpm test # typescript sdk
-cd apps/control-center && pnpm typecheck     # frontend
+uv run --all-packages pytest               # backend + python sdk
+cd packages/supervisor-client-ts && pnpm test   # typescript sdk
+cd apps/control-center && pnpm typecheck   # frontend
 ```
 
 ## Phase 3 candidates

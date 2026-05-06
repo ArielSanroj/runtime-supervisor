@@ -182,7 +182,7 @@ export default function RootLayout({
                                                   width="0"
                                                   style={{ display: "none", visibility: "hidden" }}
                                                 />
-                          </noscript>noscript>
+                          </noscript>
                   
                     {/* Google Tag Manager - script */}
                           <Script
@@ -211,7 +211,7 @@ export default function RootLayout({
                                       dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
                                     />
                     {children}
-                  </body>body>
-          </html>html>
+                  </body>
+          </html>
         );
 }</body>

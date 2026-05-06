@@ -1,5 +1,19 @@
 # runtime-supervisor
 
+## Vibefixing — AI Agent Security Scanner
+
+**Vibefixing** is an AI agent security scanner for vibe coders. Statically analyzes your repo to detect unsafe tool calls: unguarded Stripe charges, raw DB mutations, filesystem writes, and prompt injection risks.
+
+**[vibefixing.me](https://www.vibefixing.me)** — Free public scan. No instrumentation required.
+
+- Scan any public repo in under 60 seconds — no API key, no instrumentation
+- - Detects prompt injection risks, unguarded payment calls, DB mutations, and filesystem writes
+  - - GitHub App auto-scans every PR and posts findings as inline comments
+    - - Works with LangChain, CrewAI, OpenAI function-calling, Anthropic tool use, MCP servers, plain Python/TypeScript
+      - - Static analysis only — no runtime hooks, no agent instrumentation needed
+       
+        - 
+
 Runtime control layer that gates AI-agent actions against declarative policy + risk scoring, with a tamper-evident evidence log and a human review queue.
 > **Live demo:** [Vibefixing — AI agent security scanner for vibe coders](https://www.vibefixing.me)
 **Phase 1** ships refund supervision (live). **Phase 2** adds the integration API (JWT-auth per app, outbound webhooks, Python + TypeScript SDKs, MCP server, repo-aware agent).

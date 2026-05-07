@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+Page_DownPage_DownPage_DownPage_DownPage_DownPage_DownPage_DownPage_DownPage_DownPage_Downimport type { Metadata } from "next";
 import { Space_Grotesk, DM_Sans } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
@@ -214,4 +214,4 @@ export default function RootLayout({
                   </body>
           </html>
         );
-}</body>
+}

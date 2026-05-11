@@ -117,10 +117,18 @@ const faqSchema = {
       },
       {
               "@type": "Question",
+              name: "I'm not building an AI agent — does Vibefixing still help?",
+              acceptedAnswer: {
+                        "@type": "Answer",
+                        text: "Yes. The same patterns an agent can misuse — Stripe checkout sessions, account mutations, webhook handlers that re-deliver and double-charge — are what get exploited by prompt injection, a careless contractor, or a runaway script. Vibefixing flags them whether or not an LLM is in the call chain. Supported stacks include Next.js App Router (route handlers and Server Actions), Stripe (TypeScript and Python), Supabase (service-role writes and row-level security checks on migrations), Prisma, and SQLAlchemy.",
+              },
+      },
+      {
+              "@type": "Question",
               name: "What unsafe actions does Vibefixing detect?",
               acceptedAnswer: {
                         "@type": "Answer",
-                        text: "Vibefixing detects: unguarded payment calls (Stripe, PayPal), raw SQL mutations (INSERT, UPDATE, DELETE without transactions), filesystem writes and deletes, subprocess and shell execution, email sends without confirmation, and external HTTP calls that can exfiltrate data. Each finding includes the file, line, and a fix.",
+                        text: "Vibefixing detects: Stripe charges, refunds, subscription changes, and customer portal sessions (TypeScript and Python); raw SQL mutations and Supabase writes that bypass row-level security; Next.js Server Actions and API route handlers; webhook handlers that replay database writes on retry; filesystem deletes; shell execution; emails sent without per-call confirmation. Each finding includes the file, line, and a one-line wrap.",
               },
       },
       {

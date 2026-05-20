@@ -149,9 +149,8 @@ def invite_teammate(body: TeamInviteRequest, db: Session = Depends(get_db)) -> T
     the admin-token-signed call (same posture as
     /v1/integrations/github/installations/{id}/link).
     """
-    from datetime import UTC, datetime
-    from .billing import _issue_magic_link
     from ..email import send_magic_link
+    from .billing import _issue_magic_link
 
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of {sorted(_VALID_ROLES)}")

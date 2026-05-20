@@ -438,7 +438,6 @@ def download_scan_bundle(scan_id: str, db: Session = Depends(get_db)):
     from pathlib import Path as _Path
 
     from fastapi.responses import StreamingResponse
-
     from supervisor_discover.findings import Finding
     from supervisor_discover.generator import generate
 

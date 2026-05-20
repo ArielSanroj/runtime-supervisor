@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-
 from supervisor_api.db import SessionLocal
 from supervisor_api.models import Integration, MagicLinkToken
 from supervisor_api.routes.public_signup import _send_buckets

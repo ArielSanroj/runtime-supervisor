@@ -8,8 +8,6 @@ the existing UI keeps rendering. The token is constant-time-compared, so
 the secret value is not leakable through timing attacks."""
 from __future__ import annotations
 
-import pytest
-
 from supervisor_api.routes.scans import (
     _check_access_token,
     _redact_combos,

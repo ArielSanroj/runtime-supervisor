@@ -404,7 +404,6 @@ def _run_pr_scan(
         fixed_count = sum(1 for k in previous_by_key if k not in head_by_key)
 
         # 5. Render markdown. Empty body = clean PR; skip post.
-        from supervisor_discover.findings import Confidence  # for type alignment
 
         repo_id_hash = __import__("hashlib").sha256(repo_url.lower().encode()).hexdigest()[:16]
         body = render_pr_comment(
@@ -572,8 +571,8 @@ async def webhook(
 
     try:
         payload = json.loads(body)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="invalid JSON body")
+    except json.JSONDecodeError as err:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from err
 
     log.info(
         "github.webhook event=%s delivery=%s",

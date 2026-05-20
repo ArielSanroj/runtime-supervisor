@@ -9,12 +9,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 from supervisor_api.config import get_settings
 from supervisor_api.db import SessionLocal
 from supervisor_api.github_pr_comment import PrCommentInputs, render_pr_comment

@@ -213,3 +213,80 @@ def test_benchmark_noise_paths_hidden_from_preview():
     assert hidden.get("ci") == 1
     assert hidden.get("infra") == 1
     assert hidden.get("tooling") == 1
+
+
+# 5. Per-language risk-card copy (regression: obscura repro on /scan)
+
+def test_code_eval_card_does_not_recommend_python_only_advice_for_js():
+    """A `new Function(` finding in a `.js` file must not be told to replace
+    it with `ast.literal_eval` — that's a Python-stdlib function and
+    nonsensical advice in JavaScript. Reproduces the obscura `/scan` bug
+    where a JS bundle got Python-only remediation copy."""
+    js_finding = Finding(
+        scanner="fs-shell",
+        file="repo/obscura-js/js/bootstrap.js",
+        line=2691,
+        snippet="new Function(",
+        suggested_action_type="tool_use",
+        confidence="high",
+        rationale="...",
+        extra={"family": "code-eval"},
+    )
+    summary = RepoSummary(agent_path_present=False)
+    sh = build_start_here(summary, [js_finding])
+    eval_risk = next(
+        (r for r in sh.top_risks if r.family == "fs-shell-code-eval"),
+        None,
+    )
+    assert eval_risk is not None, (
+        f"code-eval card must surface — got families "
+        f"{[r.family for r in sh.top_risks]}"
+    )
+    do_lower = eval_risk.do_this_now.lower()
+    assert "ast.literal_eval" not in do_lower, (
+        f"JS finding must not mention ast.literal_eval — got: "
+        f"{eval_risk.do_this_now!r}"
+    )
+    # Sanity: the JS-flavored copy points at a JS-side parser library.
+    assert ("jsep" in do_lower) or ("expr-eval" in do_lower), (
+        f"JS code-eval card should point at a JS parser lib — got: "
+        f"{eval_risk.do_this_now!r}"
+    )
+
+
+def test_code_eval_card_keeps_python_advice_for_py_findings():
+    """Mirror of the JS test: a `.py` file with `eval(...)` must still get
+    the Python-flavored advice (ast.literal_eval / safer-eval)."""
+    py_finding = Finding(
+        scanner="fs-shell",
+        file="repo/api/admin.py",
+        line=20,
+        snippet="eval(payload)",
+        suggested_action_type="tool_use",
+        confidence="high",
+        rationale="...",
+        extra={"family": "code-eval"},
+    )
+    summary = RepoSummary(agent_path_present=False)
+    sh = build_start_here(summary, [py_finding])
+    eval_risk = next(
+        (r for r in sh.top_risks if r.family == "fs-shell-code-eval"),
+        None,
+    )
+    assert eval_risk is not None
+    assert "ast.literal_eval" in eval_risk.do_this_now, (
+        f"Python finding must keep Python advice — got: "
+        f"{eval_risk.do_this_now!r}"
+    )
+
+
+def test_js_scanner_rationale_does_not_say_runs_as_python():
+    """`_scan_js` must use `_RATIONALES_JS` for code-eval, not
+    `_RATIONALES`. Otherwise the rationale string in `findings.json` /
+    `report.md` (Builder export) leaks the Python-only copy."""
+    from supervisor_discover.scanners.fs_shell import _RATIONALES_JS
+
+    rationale = _RATIONALES_JS["code-eval"].lower()
+    assert "as javascript" in rationale
+    assert "as python" not in rationale
+    assert "ast.literal_eval" not in rationale

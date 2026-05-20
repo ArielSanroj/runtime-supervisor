@@ -120,6 +120,24 @@ _RATIONALES = {
 }
 
 
+# JS/TS-specific rationales. `_scan_js` reads from this dict and falls back
+# to `_RATIONALES` for families that read fine in both languages
+# (`fs-delete`, `fs-write`, `shell-exec` — the wording is language-neutral).
+# `code-eval` is the one that diverges: the Python copy mentions
+# `ast.literal_eval`, which doesn't exist in JS, so a JS finding gets a
+# parallel sentence pointing at JS-side parser libraries instead.
+_RATIONALES_JS = {
+    "code-eval": (
+        "`eval()` / `new Function()` runs a string as JavaScript. If the string is "
+        "built from LLM output, request body, or any user input, the agent can run "
+        "arbitrary JS in this process — same blast radius as shell exec. Gate with "
+        "@supervised('tool_use') and validate the source before execution; better, "
+        "parse the expression with `jsep` or `expr-eval` instead of feeding the raw "
+        "string to the JS engine."
+    ),
+}
+
+
 # ─── Python AST path ───────────────────────────────────────────────────
 
 def _dotted_name(node: ast.AST) -> str | None:
@@ -418,7 +436,7 @@ def _scan_js(path: Path, text: str) -> list[Finding]:
                     snippet=m.group(0)[:80],
                     suggested_action_type="tool_use",
                     confidence=severity,
-                    rationale=_RATIONALES[family],
+                    rationale=_RATIONALES_JS.get(family, _RATIONALES[family]),
                     extra={"family": family, "label": m.group(0).rstrip("(")},
                 ))
     return out

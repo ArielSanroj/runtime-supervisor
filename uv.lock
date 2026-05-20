@@ -1512,8 +1512,11 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "supervisor-discover"
-version = "0.4.0"
+version = "0.4.2"
 source = { editable = "packages/supervisor-discover" }
+dependencies = [
+    { name = "pyyaml" },
+]
 
 [package.optional-dependencies]
 dev = [
@@ -1521,7 +1524,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" }]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
 provides-extras = ["dev"]
 
 [[package]]

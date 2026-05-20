@@ -8,6 +8,61 @@ import FindingsList from "./FindingsList";
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 60; // 60 * 2s = 2 minutes cap
 
+function ShareLinkBanner({
+  scanId,
+  accessToken,
+}: {
+  scanId: string;
+  accessToken: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://www.vibefixing.me";
+  const privateUrl = accessToken
+    ? `${origin}/scans/${scanId}?t=${encodeURIComponent(accessToken)}`
+    : `${origin}/scans/${scanId}`;
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(privateUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore clipboard failure
+    }
+  };
+  return (
+    <div className="mt-6 rounded-xl border border-emerald-700/40 bg-emerald-500/5 p-5">
+      <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+        shareable result
+      </div>
+      <p className="mt-2 text-sm leading-7 text-zinc-300">
+        This scan now lives at a permanent URL. Open it in another tab to share
+        with a collaborator, or post the public version on LinkedIn / X.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-black/40 px-3 py-2.5 font-mono text-xs text-zinc-400">
+          {privateUrl}
+        </code>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="rounded-lg bg-emerald-500 px-4 py-2.5 text-xs font-semibold text-black hover:bg-emerald-400"
+        >
+          {copied ? "✓ copied" : "copy link"}
+        </button>
+        <a
+          href={`/scans/${scanId}${accessToken ? `?t=${encodeURIComponent(accessToken)}` : ""}`}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-lg border border-emerald-700/40 px-4 py-2.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/10"
+        >
+          open ↗
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export default function ScanForm() {
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -144,7 +199,12 @@ export default function ScanForm() {
         </div>
       )}
 
-      {scan && status === "done" && <FindingsList scan={scan} />}
+      {scan && status === "done" && (
+        <>
+          <ShareLinkBanner scanId={scan.scan_id} accessToken={scan.access_token ?? null} />
+          <FindingsList scan={scan} />
+        </>
+      )}
     </div>
   );
 }

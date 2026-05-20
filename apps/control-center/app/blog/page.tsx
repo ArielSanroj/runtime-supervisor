@@ -34,6 +34,15 @@ type Post = {
 
 const POSTS: Post[] = [
   {
+    slug: "621-emails-overnight",
+    date: "May 19, 2026",
+    badge: { label: "combo · cron-race + cancel-replan + override-drift", tone: "danger" },
+    title:
+      "Your agent sent 621 emails overnight: the four wraps that would have stopped it",
+    dek:
+      "A real Series-A SaaS. Cron raced itself three ways. An override pointed at a deactivated template. A cancelled batch came back at 03:14. Four independent failures, one morning, 621 emails to real customers. Here's the timeline, the four wraps, and what shadow mode would have shown the founder at 00:01.",
+  },
+  {
     slug: "chatbot-hallucination-andrea",
     date: "April 30, 2026",
     badge: { label: "chatbot · hallucinated entities", tone: "warn" },

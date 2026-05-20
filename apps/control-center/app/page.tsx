@@ -33,34 +33,34 @@ export default async function Landing() {
             for vibe coders shipping AI agents
           </div>
           <h1 className="animate-fade-in mt-7 text-balance text-5xl font-bold leading-[1.04] tracking-tight sm:text-6xl lg:text-7xl">
-            Ship AI agents{" "}
+            Your agent sent{" "}
             <span className="bg-gradient-to-r from-emerald-300 via-emerald-400 to-emerald-200 bg-clip-text text-transparent">
-              with guardrails
-            </span>
-            .
+              621 emails
+            </span>{" "}
+            before you got out of bed.
           </h1>
           <p className="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-zinc-400">
-            Paste a repo and see what your agent can do unchecked &mdash; the tool calls
-            that touch money, data, or the filesystem, <em className="text-zinc-200 not-italic">and</em> the
-            chatbot responses reaching users with hallucinated names, accounts, or facts.
-            Static analysis. No instrumentation. Free public scan.
+            At 03:14 it re-planned a batch you cancelled at 23:47.
+            At 13:00 three cron schedulers fired the same handler in the same minute.
+            We catch the four wraps that would have stopped all of it &mdash; in 15 minutes,
+            in shadow mode, without changing what your agent does.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link
               href="/scan"
               className="hover-glow rounded-xl bg-emerald-500 px-7 py-3.5 text-sm font-semibold text-black transition-colors hover:bg-emerald-400"
             >
-              scan your repo free →
+              scan my repo (free, 30s) →
             </Link>
             <Link
-              href="https://github.com/ArielSanroj/runtime-supervisor"
+              href="/blog/621-emails-overnight"
               className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-7 py-3.5 text-sm font-semibold text-zinc-200 hover:border-emerald-700/50 hover:bg-zinc-900"
             >
-              browse on github
+              see the 621-email walkthrough
             </Link>
           </div>
           <p className="mt-5 text-xs text-zinc-500">
-            Free scan · free SDK · Builder $29/mo · Pro $99/workspace/mo
+            shadow mode first · 4 lines of @supervised · enforce when you trust it
           </p>
         </div>
       </section>

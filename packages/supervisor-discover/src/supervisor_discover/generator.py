@@ -20,6 +20,7 @@ from .combo_state import (
 )
 from .combos import detect_combos, render_markdown as render_combos_md
 from .findings import Finding
+from . import governance
 from .narrator import render_summary as render_summary_email
 from .prompts import prompt_for, repo_relative_path
 from .rollout import render_rollout_md
@@ -147,6 +148,8 @@ def generate(
     *,
     include_resolved: bool = False,
     hidden_counts: dict[str, int] | None = None,
+    live_api_url: str | None = None,
+    owners_config_path: Path | None = None,
 ) -> None:
     """Emit the runtime-supervisor/ output directory.
 
@@ -156,6 +159,11 @@ def generate(
     or when reviewing what was previously fixed. `hidden_counts`, when
     provided, is folded into RepoSummary.hidden_findings so the per-category
     counter (tests/legacy/migrations/generated) reaches the artifacts.
+
+    `live_api_url` opts the governance pack into a best-effort fetch of
+    live review-queue / evidence-chain counters from a running supervisor
+    API; failures fall back silently to the offline text. `owners_config_path`
+    overrides the default `<repo_root>/owners.config.yaml` lookup.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -272,6 +280,20 @@ def generate(
             repo_policy = render_repo_action_policy(action_enums, repo_root.name)
             if repo_policy is not None:
                 (policies_dir / f"tool_use.{repo_root.name}.v1.yaml").write_text(repo_policy)
+
+    # governance/ — vendor-questionnaire-ready artifacts derived from the
+    # same RepoSummary + findings, on top of the policy YAMLs we just
+    # copied. The pack is always emitted (5 markdowns, deterministic), so
+    # customers can paste straight into AI-use questionnaires.
+    governance.write(
+        out_dir / "governance",
+        summary,
+        findings,
+        repo_root,
+        policies_dir=policies_dir,
+        live_api_url=live_api_url,
+        owners_config_path=owners_config_path,
+    )
 
     # combos/ — Nivel 1 remediation playbooks per detected combo.
     # Writes one markdown per combo + an index README. Combo-specific

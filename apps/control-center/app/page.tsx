@@ -148,6 +148,43 @@ export default async function Landing() {
         </div>
       </section>
 
+      {/* GOVERNANCE PACK — every scan also drops a governance/ folder with
+          one-pagers the dev can paste into AI vendor questionnaires. The
+          three cards stay in vibe-coder voice (no compliance jargon) and
+          sell what it prevents: writing the same one-pager at 11pm. */}
+      <section id="governance" className="mx-auto max-w-6xl px-6 py-20 scroll-mt-20">
+        <div className="mx-auto mb-12 max-w-2xl text-center">
+          <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+            governance pack
+          </div>
+          <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+            When your customer asks &ldquo;do you have AI policies?&rdquo;
+          </h2>
+          <p className="mt-4 text-zinc-400">
+            Every scan also writes a <code className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-emerald-300">governance/</code> folder.
+            Paste the one-pagers into your next vendor questionnaire and stop
+            writing them at 11pm.
+          </p>
+        </div>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <Feature
+            icon="¶"
+            title="Policy in one page"
+            body="Lists your real LLM providers and what your agent actually does — pulled from the scan, not a template. If your repo has no LLM, the page says so."
+          />
+          <Feature
+            icon="@"
+            title="Owners named"
+            body="One line per action type, pointing at the human who approves it. Override defaults by dropping owners.config.yaml at the repo root."
+          />
+          <Feature
+            icon="≡"
+            title="Audit trail you can paste"
+            body="Self-attestation answers that cite the runtime review queue and the tamper-evident log already shipping with the supervisor."
+          />
+        </div>
+      </section>
+
       {/* AGENT SHAPES — repo_type taxonomy. The labels are part of the
           product taxonomy (same status as the 3 risk axes); the scanner
           assigns one of these per scan. Hardcoded copy is fine here —

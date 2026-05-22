@@ -97,6 +97,20 @@ def _build_parser() -> argparse.ArgumentParser:
              "`new-medium`: new medium or high. `new-low` / `any`: anything new. "
              "`never`: never fail. Default: don't gate.",
     )
+    scan_p.add_argument(
+        "--with-live-data",
+        action="store_true",
+        help="Augment the governance pack with live counts from a running "
+             "supervisor API. Reads the base URL from the SUPERVISOR_API_URL "
+             "env var. Silently falls back to the offline artifact on any "
+             "fetch failure.",
+    )
+    scan_p.add_argument(
+        "--owners-config",
+        default=None,
+        help="Path to an owners.config.yaml that overrides the default "
+             "<repo_root>/owners.config.yaml lookup. Used by governance/OWNERS.md.",
+    )
 
     init_p = sub.add_parser(
         "init",
@@ -286,10 +300,17 @@ def main(argv: list[str] | None = None) -> int:
         baseline_path = Path(baseline_arg) if baseline_arg else (out / "findings.json")
         pre_existing_baseline = load_payload(baseline_path)
 
+    live_api_url: str | None = None
+    if getattr(args, "with_live_data", False):
+        live_api_url = os.environ.get("SUPERVISOR_API_URL") or None
+    owners_config_arg = getattr(args, "owners_config", None)
+    owners_config_path = Path(owners_config_arg) if owners_config_arg else None
     generate(
         findings, out, repo_root=root,
         include_resolved=bool(getattr(args, "show_resolved", False)),
         hidden_counts=hidden_counts,
+        live_api_url=live_api_url,
+        owners_config_path=owners_config_path,
     )
     _print_start_here(root, findings, elapsed, out, hidden_counts)
     if getattr(args, "full", False):

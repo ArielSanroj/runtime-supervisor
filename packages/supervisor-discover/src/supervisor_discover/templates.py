@@ -556,3 +556,219 @@ jobs:
             exit 1
           }
 """
+
+
+# -----------------------------------------------------------------------------
+# Governance pack scaffolds — used by governance.py
+#
+# Each scaffold is rendered with `.format(...)`. Interpolated fields are listed
+# at the top of every scaffold. Every dynamic value comes from RepoSummary or
+# findings — no hardcoded numbers, providers, or action types may leak into the
+# fixed text. When a list is empty, the renderer substitutes a `_None ..._`
+# italic line, not invented content.
+#
+# Headlines avoid VOICE.md deny-list terms (governance / compliance /
+# auditability) — those words appear only in folder names + footnote
+# attribution lines.
+# -----------------------------------------------------------------------------
+
+POLICY_SCAFFOLD = """# AI Usage Policy — {repo_name}
+
+_Generated from a vibefixing scan on {scan_iso_date}. Re-run the scan after
+any change to the agent's tool surface so this file stays accurate._
+
+## Scope
+
+Applies to AI and LLM use inside `{repo_name}`. Covers the providers, tools,
+and action surfaces detected by the scanner — not retroactive use of AI
+outside this codebase.
+
+## LLM providers detected in this codebase
+
+{providers_block}
+
+## Action types this agent can perform
+
+{action_types_block}
+
+## Default rules in force
+
+These come from the YAML files in `runtime-supervisor/policies/`. Edit the
+YAML to change a rule; promote with `POST /v1/policies` to your supervisor.
+
+{rules_block}
+
+## Frameworks observed
+
+{frameworks_block}
+
+## Retention
+
+Every supervised action emits an event in the tamper-evident chain
+(`services/supervisor_api/evidence.py`, `EvidenceEvent` model). Verify
+integrity with `GET /v1/actions/{{action_id}}/evidence/verify`. The chain
+is append-only; no in-place edits.
+
+## Full call-site inventory
+
+See `ai-use-inventory.md` for every detected AI/LLM call (file, line,
+SDK, suggested action_type).
+
+## Owners
+
+See `OWNERS.md` for the human accountable for each action type.
+"""
+
+
+OWNERS_SCAFFOLD = """# Owners — who approves what
+
+_One line per action type detected in `{repo_name}`. Override defaults by
+dropping `owners.config.yaml` at the repo root._
+
+## Default owner
+
+`{default_owner}`
+
+## Approver of last resort
+
+`{approver_of_last_resort}`
+
+## Action type → owner
+
+{owners_table}
+
+## How to override
+
+Create `owners.config.yaml` at the repo root:
+
+```yaml
+default_owner: security@your-company.example
+approver_of_last_resort: cto@your-company.example
+owners:
+  refund: payments-oncall@your-company.example
+  account_change: identity-team@your-company.example
+  tool_use: ai-platform@your-company.example
+```
+
+Re-run `supervisor-discover scan` and this file regenerates with the
+overrides applied.
+"""
+
+
+REVIEW_PROCESS_SCAFFOLD = """# Review process — when humans see the agent
+
+_How risky actions move from agent → human → resolved in `{repo_name}`._
+
+## Action types under review
+
+{review_action_types_block}
+
+## Runtime queue
+
+Every supervised action that hits a `review` rule in
+`runtime-supervisor/policies/` lands in the review queue exposed by the
+supervisor API:
+
+- `GET /v1/review-cases?status=pending` — open items
+- `GET /v1/review-cases/{{case_id}}` — full payload + rationale
+- `POST /v1/review-cases/{{case_id}}/resolve` — approve or reject
+- `POST /v1/review-cases/{{case_id}}/escalate` — escalate to
+  `approver_of_last_resort` from `OWNERS.md`
+
+The `ReviewItem` record carries `priority` (low / normal / high), the
+`assigned_to` owner from `OWNERS.md`, the resolving `approver`, and an
+`escalated` flag.
+
+## Evidence chain
+
+Every action — approved, denied, or under review — also appends an
+`EvidenceEvent` with `prev_hash` + `hash` + `seq`. Verify the chain at any
+time with `GET /v1/actions/{{action_id}}/evidence/verify`. A failing
+verify means a row was tampered with between the supervisor and the audit
+read.
+
+## Cadence
+
+- **Real-time:** the runtime queue blocks the action until resolved.
+- **Per release:** re-run `supervisor-discover scan` — new wrap points
+  show up as new findings; deleted ones rename to `*.stale.stub.{{py,ts}}`.
+- **Quarterly:** revisit the resolved-cases sample. Confirm the rationales
+  still hold and that no `priority=high` items sat unresolved past SLA.
+
+## Linked artifacts
+
+- `policy.md` — the policy this process enforces
+- `OWNERS.md` — who acts on each queued item
+- `ai-use-inventory.md` — the surface this process covers
+
+{live_review_block}
+"""
+
+
+INVENTORY_SCAFFOLD = """# AI calls in this codebase
+
+_Every detected AI/LLM call-site in `{repo_name}`. Use this as the model
+inventory for vendor questionnaires that ask "what AI does your product
+use, and where?"._
+
+## Providers
+
+{providers_block}
+
+> The `SDK` column shows the package family (e.g. `anthropic`, `openai`).
+> Specific model IDs are not extracted yet — read them from the call-site
+> if a vendor questionnaire wants the exact model name.
+
+## Call-sites
+
+{inventory_table}
+
+## How this was built
+
+The scanner walks the repo at the AST level and tags any call to a
+known LLM SDK, MCP tool registration, or agent orchestrator entry. Hidden
+directories (tests, generated, vendored) are skipped per
+`packages/policies/scan_output.base.v1.yaml`.
+"""
+
+
+ATTESTATION_SCAFFOLD = """# Vendor questionnaire — AI use answers
+
+_Copy-paste responses for common AI vendor assessments. Every "Yes" links
+to the artifact that justifies it — open the linked file before sending._
+
+## Documented policies for AI use
+
+**Yes.** See [`policy.md`](policy.md) — lists the {provider_count_phrase}
+detected in this codebase, the {action_type_count_phrase} the agent can
+perform, and the default deny / review rules in force.
+
+## Designated accountability
+
+**Yes.** See [`OWNERS.md`](OWNERS.md) — one owner per action type, plus a
+named approver of last resort. Overrides land in `owners.config.yaml`.
+
+## Process for reviewing AI use and risk
+
+**Yes.** See [`review-process.md`](review-process.md). Three layers:
+
+1. **Real-time** — every risky action passes through the supervisor's
+   `ReviewItem` queue before it executes. Reviewers act via
+   `/v1/review-cases`.
+2. **Per release** — `supervisor-discover scan` re-walks the repo on
+   every push; new call-sites surface as findings, removed ones rename to
+   `.stale`. See [`ai-use-inventory.md`](ai-use-inventory.md) for the
+   current surface.
+3. **Per action** — every executed action appends to a tamper-evident
+   evidence chain. Verify any action with
+   `GET /v1/actions/{{action_id}}/evidence/verify`.
+
+## How vibefixing built this answer
+
+This file is regenerated on every scan from the actual findings — no
+hand-written claims. If the codebase changes (new LLM provider, new
+action surface, removed integration), the next scan updates this file.
+
+{live_attestation_block}
+"""
+

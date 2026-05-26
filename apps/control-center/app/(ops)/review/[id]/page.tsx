@@ -127,6 +127,13 @@ export default async function ReviewDetail({ params }: { params: Promise<{ id: s
       <h1 style={{ margin: "0 0 8px" }}>Review {item.id.slice(0, 8)}…</h1>
       <p style={{ fontSize: "1.05rem", marginTop: 0 }} dangerouslySetInnerHTML={{ __html: mdBold(summary) }} />
 
+      <ChainBanner
+        chainOk={evidence.chain_ok}
+        events={evidence.events.length}
+        brokenAt={evidence.broken_at_seq}
+        bundleHash={evidence.bundle_hash}
+      />
+
       {agentContext && <AgentContextCard ctx={agentContext} />}
 
       <div className="grid cols-2">
@@ -370,6 +377,76 @@ function CustomerContextView({ ctx }: { ctx: CustomerContext }) {
       </table>
       {ctx.notes && <p style={{ marginTop: 12 }}>{ctx.notes}</p>}
     </>
+  );
+}
+
+function ChainBanner({
+  chainOk,
+  events,
+  brokenAt,
+  bundleHash,
+}: {
+  chainOk: boolean;
+  events: number;
+  brokenAt: number | null;
+  bundleHash: string;
+}) {
+  // Surfaces evidence-chain integrity at the top of the page so the
+  // auditability story is visible without scrolling past the trigger
+  // and customer context. Collapsed view of the chain is still under
+  // the `Audit trail` details below for the full event list.
+  const ok = chainOk && brokenAt === null;
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        marginBottom: 16,
+        padding: "10px 14px",
+        borderRadius: 10,
+        border: `1px solid ${ok ? "rgba(16,128,64,0.35)" : "rgba(180,40,40,0.45)"}`,
+        background: ok ? "rgba(16,128,64,0.08)" : "rgba(180,40,40,0.08)",
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 12,
+        alignItems: "center",
+        justifyContent: "space-between",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 22,
+            height: 22,
+            borderRadius: 999,
+            background: ok ? "#0a7a2e" : "var(--danger)",
+            color: "white",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+          aria-hidden="true"
+        >
+          {ok ? "✓" : "!"}
+        </span>
+        <div>
+          <div style={{ fontWeight: 600 }}>
+            {ok
+              ? "Evidence chain verified"
+              : `Evidence chain BROKEN${brokenAt != null ? ` at seq ${brokenAt}` : ""}`}
+          </div>
+          <div className="muted" style={{ fontSize: "0.85rem" }}>
+            {ok
+              ? `${events} hash-linked events. No tamper detected on read.`
+              : "A row was modified after it was written. Open the audit trail below to locate the break."}
+          </div>
+        </div>
+      </div>
+      <span className="muted mono" style={{ fontSize: "0.8rem" }}>
+        bundle {bundleHash.slice(0, 12)}…
+      </span>
+    </div>
   );
 }
 

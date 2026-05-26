@@ -34,6 +34,42 @@ type Post = {
 
 const POSTS: Post[] = [
   {
+    slug: "why-did-the-agent-do-that",
+    date: "May 26, 2026",
+    badge: { label: "explainability · evidence chain + dry-run replay", tone: "warn" },
+    title:
+      "Why did the agent do that? Reconstructing a decision after the fact",
+    dek:
+      "A customer disputes a refund the agent denied three weeks ago. Without a logged decision, the answer is best guess. With one evidence event per supervised action — input fingerprint, policy version, reasons, threat signals — the answer is replay. Explainability is a logging discipline at the boundary, not a model property.",
+  },
+  {
+    slug: "wrong-customer-invoice",
+    date: "May 26, 2026",
+    badge: { label: "data privacy · cross-tenant read", tone: "danger" },
+    title:
+      "Your agent just emailed the wrong customer's invoice: PII fan-out in tool calls",
+    dek:
+      "A B2B SaaS billing agent generated SQL with a missing tenant filter and emailed eleven customers an invoice belonging to someone else. The supervisor decision belongs at the data layer, not the email layer. Here's the failure, the wrap, and the policy that stops it.",
+  },
+  {
+    slug: "audit-log-your-agent-doesnt-keep",
+    date: "May 26, 2026",
+    badge: { label: "compliance · evidence chain + hash verification", tone: "warn" },
+    title:
+      "The audit log your agent doesn't keep",
+    dek:
+      "Three months in, a regulator asks: show me every refund the agent issued in March. The application logs exist. The decision logs don't. Reconstruction is best-effort and the gap is the finding. Here's the evidence event your agent should be writing, the hash chain that keeps it honest, and the dry-run replay that closes the question.",
+  },
+  {
+    slug: "scanner-caught-itself",
+    date: "May 22, 2026",
+    badge: { label: "reliability · self-check + AST-first + trap fixtures", tone: "warn" },
+    title:
+      "How we caught our own scanner lying: 5 layers so it can't lie that way again",
+    dek:
+      "In a live demo, the scanner reported plan_tool.py:8 as an agent chokepoint. Line 8 was a comment. main.py:813 came back as RCE-equivalent. Line 813 was warnings.filterwarnings. Two real bugs, eight false positives, one rule: the supervisor has to be more reliable than the agent it watches. Here are the five layers we shipped so the scanner can't lie that way again.",
+  },
+  {
     slug: "621-emails-overnight",
     date: "May 19, 2026",
     badge: { label: "combo · cron-race + cancel-replan + override-drift", tone: "danger" },
@@ -136,6 +172,7 @@ export default function BlogIndex() {
           </div>
           <div className="flex gap-6 font-mono">
             <Link href="/" className="hover:text-zinc-300">/home</Link>
+            <Link href="/risks" className="hover:text-zinc-300">/risks</Link>
             <Link href="/scan" className="hover:text-zinc-300">/scan</Link>
             <Link
               href="https://github.com/ArielSanroj/runtime-supervisor"

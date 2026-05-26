@@ -1,0 +1,42 @@
+{
+  "name": "@vibefixing/hallucination-eval",
+  "version": "0.1.0",
+  "description": "Reproducible adversarial eval for AI agents. Deterministic scoring, no model judge. Vibefixing publishes the eval; we don't compete on the leaderboard.",
+  "license": "Apache-2.0",
+  "author": "Ariel San Martín",
+  "homepage": "https://www.vibefixing.me/benchmark",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ArielSanroj/runtime-supervisor.git",
+    "directory": "packages/hallucination-eval"
+  },
+  "keywords": [
+    "ai-agents",
+    "llm",
+    "hallucination",
+    "benchmark",
+    "eval",
+    "agent-reliability"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "bin": {
+    "vf-hallucination-rate": "./dist/cli.js"
+  },
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": { "node": ">=20" },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -79,6 +79,24 @@ const schemaOrg = {
     },
 };
 
+const organizationSchema = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Vibefixing",
+    url: "https://www.vibefixing.me",
+    logo: "https://www.vibefixing.me/icon.svg",
+    description:
+          "Runtime supervisor and pre-deployment scanner for AI agents. Catches the tool calls an LLM can fire in production — refunds, deletes, sends — before they ship.",
+    founder: {
+          "@type": "Person",
+          name: "Ariel Sanroj",
+          email: "ariel@vibefixing.me",
+    },
+    sameAs: [
+          "https://github.com/ArielSanroj/runtime-supervisor",
+    ],
+};
+
 const faqSchema = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
@@ -207,6 +225,10 @@ export default function RootLayout({
                           <script
                                       type="application/ld+json"
                                       dangerouslySetInnerHTML={{ __html: JSON.stringify(schemaOrg) }}
+                                    />
+                          <script
+                                      type="application/ld+json"
+                                      dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
                                     />
                           <script
                                       type="application/ld+json"

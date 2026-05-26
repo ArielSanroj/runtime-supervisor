@@ -43,12 +43,26 @@ const articleSchema = {
   mainEntityOfPage: { "@type": "WebPage", "@id": URL },
 };
 
+const breadcrumbSchema = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: "https://www.vibefixing.me" },
+    { "@type": "ListItem", position: 2, name: "Field notes", item: "https://www.vibefixing.me/blog" },
+    { "@type": "ListItem", position: 3, name: TITLE, item: URL },
+  ],
+};
+
 export default function Post() {
   return (
     <div className="min-h-screen bg-black text-zinc-100 selection:bg-emerald-500/30">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleSchema) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
       />
 
       <header className="sticky top-0 z-10 border-b border-zinc-800 bg-black/80 backdrop-blur">

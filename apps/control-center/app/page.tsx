@@ -273,13 +273,20 @@ export default async function Landing() {
               the triage you&apos;re running today.
             </p>
           </div>
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
             <AxisCard
               tone="security"
               title="Security"
               chip="[Security]"
               body="Adversarial paths: prompt injection moves money, voice-cloning + outbound calls become vishing, agent-orchestrators expose every tool. Anything an attacker would chain."
               example="voice-actions, payment-calls, agent-orchestrators, fs-shell · shell-exec"
+            />
+            <AxisCard
+              tone="reliability"
+              title="Reliability"
+              chip="[Reliability]"
+              body="Things your agent does that shouldn't have happened. Cron raced itself. The cancelled batch came back at 03:14. The chatbot named someone who doesn't exist. Normal traffic — wrong outcome."
+              example="agent-loop, llm-calls (low-confidence drift), cron-overlap, hallucinated-entities"
             />
             <AxisCard
               tone="efficiency"
@@ -358,7 +365,30 @@ def handle_tool_call(tool, args):
               body="The chatbot names a person, account, or identifier that doesn't exist in your data — and the user reads it as fact. The taint scanner flags every path from an LLM call to a response, email, or message without a source-of-truth check in between."
             />
           </div>
-          <div className="mt-12 grid gap-5 lg:grid-cols-2">
+          <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            <Link
+              href="/blog/scanner-caught-itself"
+              className="hover-glow group block overflow-hidden rounded-2xl border border-sky-800/50 bg-sky-950/20 p-6 transition-colors hover:border-sky-600/60 md:p-8"
+            >
+              <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+                <span className="rounded-full border border-sky-700/40 bg-sky-500/10 px-2.5 py-0.5 text-sky-300">
+                  reliability · self-check + AST-first
+                </span>
+                <span className="text-zinc-500">may 22, 2026</span>
+              </div>
+              <h3 className="mt-4 text-xl font-bold leading-snug tracking-tight text-zinc-100 group-hover:text-sky-300 sm:text-2xl">
+                How we caught our own scanner lying
+              </h3>
+              <p className="mt-3 leading-7 text-zinc-400">
+                The scanner reported a comment line as RCE-equivalent. Two real bugs,
+                eight false positives, one rule: the supervisor has to be more reliable
+                than the agent it watches. The five layers we shipped so it can&apos;t
+                lie that way again.
+              </p>
+              <span className="mt-5 inline-flex items-center gap-1 font-mono text-sm text-sky-400 group-hover:text-sky-300">
+                read field note &rarr;
+              </span>
+            </Link>
             <Link
               href="/blog/chatbot-hallucination-andrea"
               className="hover-glow group block overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 p-6 transition-colors hover:border-emerald-700/50 md:p-8"
@@ -403,6 +433,62 @@ def handle_tool_call(tool, args):
                 read field note &rarr;
               </span>
             </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* OPEN BENCHMARK — referee, not contestant */}
+      <section className="mx-auto max-w-5xl px-6 py-16">
+        <div className="rounded-2xl border border-sky-800/40 bg-sky-950/15 p-8 lg:p-10">
+          <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+            <div>
+              <div className="font-mono text-xs uppercase tracking-widest text-sky-300">
+                public benchmark
+              </div>
+              <h2 className="mt-3 text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+                vf hallucination-rate
+              </h2>
+              <p className="mt-4 leading-7 text-zinc-300">
+                Ten adversarial prompts. Deterministic scoring — no model
+                judge, no LLM-as-judge. Score any agent stack against the
+                same eval set and submit to the public leaderboard.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-zinc-500">
+                We publish the eval. We do not appear on the leaderboard.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <Link
+                  href="/benchmark"
+                  className="rounded-xl bg-sky-500 px-6 py-2.5 text-sm font-semibold text-black hover:bg-sky-400"
+                >
+                  open the benchmark →
+                </Link>
+                <Link
+                  href="/blog/scanner-caught-itself"
+                  className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-6 py-2.5 text-sm font-semibold text-zinc-200 hover:border-sky-700/50"
+                >
+                  why we built it
+                </Link>
+              </div>
+            </div>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5 font-mono text-[12px] leading-relaxed text-zinc-300">
+              <div className="text-zinc-500"># install + score any agent</div>
+              <div>
+                <span className="text-sky-300">$</span> npm i -g{" "}
+                <span className="text-emerald-300">@vibefixing/hallucination-eval</span>
+              </div>
+              <div className="mt-2">
+                <span className="text-sky-300">$</span> vf-hallucination-rate score{" "}
+                <span className="text-zinc-500">\</span>
+              </div>
+              <div className="pl-4">
+                --cmd <span className="text-emerald-300">&apos;python my_agent.py&apos;</span>
+              </div>
+              <div className="mt-3 text-zinc-500"># sample output</div>
+              <div>eval-set: v0.1.0</div>
+              <div>total: 10 · passed: 7 · failed: 3</div>
+              <div>hallucination rate: 30.0%</div>
+            </div>
           </div>
         </div>
       </section>
@@ -464,6 +550,7 @@ def handle_tool_call(tool, args):
           <Plan
             name="Free"
             price="$0"
+            tagline="See the prompt-injection paths your agent ships with — scan in 60 seconds."
             cta="scan a public repo"
             href="/scan"
             items={["Public GitHub repo scan", "Top findings preview", "Risk tier summary", "Local CLI install"]}
@@ -471,6 +558,7 @@ def handle_tool_call(tool, args):
           <Plan
             name="Builder"
             price="$29/mo"
+            tagline="Every PR your agent helps write gets the same hallucination + injection check, before merge."
             cta="upgrade to builder"
             href="/scan?upgrade=builder"
             items={["Private repo scans", "Full runtime-supervisor export", "Stubs and YAML policies", "Scan history and diffs", "CI/GitHub PR comments"]}
@@ -479,6 +567,7 @@ def handle_tool_call(tool, args):
             featured
             name="Pro"
             price="$99/workspace/mo"
+            tagline="Your team sees every blocked action with the reason, so debugging an agent decision takes minutes not days."
             cta="contact us"
             href="mailto:ariel@vibefixing.me?subject=Pro%20pricing%20-%20Vibefixing"
             items={[
@@ -492,6 +581,7 @@ def handle_tool_call(tool, args):
           <Plan
             name="Enterprise"
             price="Talk to us"
+            tagline="Tamper-evident evidence chain you can hand an auditor, mapped to the controls they actually ask about."
             cta="email sales"
             href="mailto:ariel@vibefixing.me?subject=Enterprise%20-%20Vibefixing"
             items={[
@@ -522,10 +612,10 @@ def handle_tool_call(tool, args):
               scan free →
             </Link>
             <Link
-              href="/dashboard"
+              href="/risks"
               className="rounded-xl border border-zinc-800 bg-zinc-900 px-7 py-3.5 text-sm font-semibold text-zinc-200 hover:border-emerald-700/50 hover:bg-zinc-900"
             >
-              open dashboard
+              browse the 5 risks
             </Link>
           </div>
           <p className="mt-5 text-xs text-zinc-500">
@@ -710,7 +800,7 @@ function AxisCard({
   body,
   example,
 }: {
-  tone: "security" | "efficiency" | "quality";
+  tone: "security" | "reliability" | "efficiency" | "quality";
   title: string;
   chip: string;
   body: string;
@@ -718,6 +808,7 @@ function AxisCard({
 }) {
   const palette = {
     security: { border: "border-red-900/50", text: "text-red-300", bg: "bg-red-500/10" },
+    reliability: { border: "border-sky-900/50", text: "text-sky-300", bg: "bg-sky-500/10" },
     efficiency: { border: "border-amber-900/50", text: "text-amber-300", bg: "bg-amber-500/10" },
     quality: { border: "border-zinc-700/60", text: "text-zinc-300", bg: "bg-zinc-500/10" },
   }[tone];
@@ -794,6 +885,7 @@ function Risk({ title, body }: { title: string; body: string }) {
 function Plan({
   name,
   price,
+  tagline,
   cta,
   href,
   items,
@@ -801,6 +893,7 @@ function Plan({
 }: {
   name: string;
   price: string;
+  tagline?: string;
   cta: string;
   href: string;
   items: string[];
@@ -813,6 +906,9 @@ function Plan({
         {featured && <span className="rounded-full bg-emerald-500 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-black">best first paid plan</span>}
       </div>
       <div className="mt-4 text-3xl font-bold">{price}</div>
+      {tagline && (
+        <p className="mt-3 text-sm leading-6 text-zinc-300">{tagline}</p>
+      )}
       <ul className="mt-5 space-y-2 text-sm text-zinc-400">
         {items.map((item) => (
           <li key={item} className="flex gap-2">

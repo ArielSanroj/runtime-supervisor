@@ -33,8 +33,10 @@ deterministically, it doesn't belong in the eval set.
 
 ```bash
 npm install -g @runtime-supervisor/hallucination-eval
-# or
-npx @runtime-supervisor/hallucination-eval --help
+vf-hallucination-rate --help
+
+# or run without installing globally:
+npx --package=@runtime-supervisor/hallucination-eval vf-hallucination-rate --help
 ```
 
 ## Use

@@ -60,7 +60,7 @@ const faqSchema = {
       name: "How do I submit a result?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Install @vibefixing/hallucination-eval, run vf-hallucination-rate score against your agent stack with the --json flag, and send us the JSON report. We re-run the same prompts with the answers you submitted to confirm the score is reproducible at the same eval-set version, then add the entry to the leaderboard with the agent stack name, the model, and the eval-set version.",
+        text: "Install @runtime-supervisor/hallucination-eval, run vf-hallucination-rate score against your agent stack with the --json flag, and send us the JSON report. We re-run the same prompts with the answers you submitted to confirm the score is reproducible at the same eval-set version, then add the entry to the leaderboard with the agent stack name, the model, and the eval-set version.",
       },
     },
     {
@@ -236,7 +236,7 @@ export default function Benchmark() {
         <h2 className="text-2xl font-bold tracking-tight">Run it locally</h2>
         <CodeBlock
           code={`# install
-npm install -g @vibefixing/hallucination-eval
+npm install -g @runtime-supervisor/hallucination-eval
 
 # run against any agent that reads a prompt on stdin
 vf-hallucination-rate score --cmd 'python my_agent.py'

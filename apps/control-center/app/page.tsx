@@ -475,7 +475,7 @@ def handle_tool_call(tool, args):
               <div className="text-zinc-500"># install + score any agent</div>
               <div>
                 <span className="text-sky-300">$</span> npm i -g{" "}
-                <span className="text-emerald-300">@vibefixing/hallucination-eval</span>
+                <span className="text-emerald-300">@runtime-supervisor/hallucination-eval</span>
               </div>
               <div className="mt-2">
                 <span className="text-sky-300">$</span> vf-hallucination-rate score{" "}

@@ -1,5 +1,5 @@
 {
-  "name": "@vibefixing/hallucination-eval",
+  "name": "@runtime-supervisor/hallucination-eval",
   "version": "0.1.0",
   "description": "Reproducible adversarial eval for AI agents. Deterministic scoring, no model judge. Vibefixing publishes the eval; we don't compete on the leaderboard.",
   "license": "Apache-2.0",

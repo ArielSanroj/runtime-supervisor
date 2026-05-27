@@ -1,4 +1,4 @@
-# @vibefixing/hallucination-eval
+# @runtime-supervisor/hallucination-eval
 
 Reproducible adversarial eval for AI agents. Deterministic scoring, no model
 judge, no LLM-as-judge.
@@ -32,9 +32,9 @@ deterministically, it doesn't belong in the eval set.
 ## Install
 
 ```bash
-npm install -g @vibefixing/hallucination-eval
+npm install -g @runtime-supervisor/hallucination-eval
 # or
-npx @vibefixing/hallucination-eval --help
+npx @runtime-supervisor/hallucination-eval --help
 ```
 
 ## Use
@@ -56,7 +56,7 @@ cat my-runs.jsonl | vf-hallucination-rate score
 ### As a library
 
 ```ts
-import { scoreAgent } from "@vibefixing/hallucination-eval";
+import { scoreAgent } from "@runtime-supervisor/hallucination-eval";
 
 const report = await scoreAgent(async (prompt) => {
   const res = await fetch("https://my-agent/answer", {

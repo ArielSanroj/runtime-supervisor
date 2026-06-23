@@ -295,6 +295,89 @@ class GitHubInstallation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class SuperloopProduct(Base):
+    """Registro Canónico (SUPERLOOP.md §10) — current state of one business unit.
+
+    A unit is a scanned repo (`kind="repo"`, `producto_id="repo:<sha>"`) or a live
+    supervisor (`kind="supervisor"`, `producto_id="supervisor:<action_type>"`).
+    Single source of truth for the unit's state (R4); history is stacked in
+    `historial` (never overwritten).
+    """
+
+    __tablename__ = "superloop_products"
+
+    producto_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="repo")
+    nombre: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    estado_operativo: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    estado_comercial: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    confianza_estado: Mapped[float | None] = mapped_column(nullable=True)
+    metrica_principal: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    kpis: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    afirmaciones: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    hipotesis_vigente: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    decision_recomendada_ref: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    estado_aprobacion: Mapped[str] = mapped_column(String(24), nullable=False, default="pendiente")
+    proxima_mejor_accion: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    ultimo_ciclo: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    historial: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class SuperloopDecision(Base):
+    """Decision Ledger (SUPERLOOP.md §11) — append-only trace of decisions,
+    approvals, executions and learnings (R8). `review_item_id` links a Level >= 3
+    decision to the existing review queue (R1)."""
+
+    __tablename__ = "superloop_decisions"
+
+    decision_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    producto_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    ciclo_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    fase_origen: Mapped[str] = mapped_column(String(16), nullable=False, default="decide")
+    decision_recomendada: Mapped[str] = mapped_column(String(2000), nullable=False)
+    accion_tipo: Mapped[str] = mapped_column(String(32), nullable=False, default="observe")
+    hipotesis: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    metrica_objetivo: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    criterio_exito: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    ventana_medicion: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nivel_autonomia: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    riesgo: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    razonamiento: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    opciones_consideradas: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    datos_usados: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    afirmaciones: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    estado_aprobacion: Mapped[str] = mapped_column(String(24), nullable=False, default="pendiente", index=True)
+    aprobador: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    review_item_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    accion_ejecutada: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    resultado: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    aprendizaje: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    siguiente_movimiento: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class SuperloopCycle(Base):
+    """One loop turn over one product (SUPERLOOP.md §6) — run history for /runs."""
+
+    __tablename__ = "superloop_cycles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    producto_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
+    fase_alcanzada: Mapped[str] = mapped_column(String(16), nullable=False)
+    detenido_en: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    business_card: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence_pack: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class EvidenceEvent(Base):
     __tablename__ = "evidence_log"
     __table_args__ = (UniqueConstraint("action_id", "seq", name="uq_evidence_action_seq"),)

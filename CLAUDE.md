@@ -1,5 +1,10 @@
 # CLAUDE.md — orientation for Claude sessions working in this repo
 
+> For business/portfolio tasks (run the closed-loop agent over repos and
+> supervisors, propose the next guard, gate it for human approval), follow
+> [`SUPERLOOP.md`](SUPERLOOP.md). It is the source of truth for that behaviour;
+> the implementation lives in `services/supervisor_api/src/supervisor_api/superloop/`.
+
 ## What this repo is
 
 Monorepo for **runtime-supervisor** (a.k.a. Vibefixing) — a runtime policy

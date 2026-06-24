@@ -5,6 +5,7 @@ import { tenantsApi } from "@/lib/tenants";
 
 const NAV = [
   { href: "/dashboard", label: "Fix" },
+  { href: "/superloop", label: "Superloop" },
   { href: "/repos", label: "Repos" },
   { href: "/scan", label: "Scan" },
   { href: "/review", label: "Reviews" },

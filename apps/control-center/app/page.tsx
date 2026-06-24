@@ -185,6 +185,49 @@ export default async function Landing() {
         </div>
       </section>
 
+      {/* CLOSED LOOP — Superloop capability. Capability statement, not a metric
+          claim: no interpolated numbers, just what the loop does. The live state
+          lives behind login at /superloop. */}
+      <section id="superloop" className="border-y border-zinc-900 bg-zinc-950/40 scroll-mt-20">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <div className="mx-auto mb-12 max-w-2xl text-center">
+            <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+              closed loop
+            </div>
+            <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+              From findings to fixes, without it going rogue
+            </h2>
+            <p className="mt-4 text-zinc-400">
+              Superloop watches each repo and supervisor, proposes the next guard to
+              add, and waits for your approval before anything changes. It never sends,
+              promotes, or blocks on its own — the risky moves stop at a human.
+            </p>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <Feature
+              icon="◎"
+              title="Watches what changed"
+              body="Reads your scan history and live decisions to spot a repo whose risk is creeping up, or a supervisor still running in shadow."
+            />
+            <Feature
+              icon="→"
+              title="Proposes the next guard"
+              body="Turns that into one concrete move — draft a wrapper around the risky call, or promote a shadow policy to enforce — with the why and how to check it."
+            />
+            <Feature
+              icon="✋"
+              title="Stops at you"
+              body="Anything that could block real traffic lands in your approval queue first. Approve, reject, or ask for changes — every call is logged."
+            />
+            <Feature
+              icon="↺"
+              title="Checks its own work"
+              body="After you approve, it applies the fix, re-measures on the next scan, and learns whether to scale it, tweak it, or drop it."
+            />
+          </div>
+        </div>
+      </section>
+
       {/* AGENT SHAPES — repo_type taxonomy. The labels are part of the
           product taxonomy (same status as the 3 risk axes); the scanner
           assigns one of these per scan. Hardcoded copy is fine here —

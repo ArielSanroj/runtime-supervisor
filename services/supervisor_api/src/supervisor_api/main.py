@@ -24,6 +24,7 @@ from .routes import (
     repos,
     review,
     scans,
+    superloop,
     tenants,
     threats,
     users,
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(scans.router)
     app.include_router(repos.router)
+    app.include_router(superloop.router)
     app.include_router(billing.router)
     app.include_router(auth_magic.router)
     app.include_router(public_signup.router)

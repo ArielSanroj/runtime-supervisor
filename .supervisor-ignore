@@ -1,0 +1,32 @@
+# .supervisor-ignore — findings triaged on this repo's own scan (dogfood 2026-06-23).
+# Format: PATH[:LINE]  reason  [reviewer]  [date]
+# Every entry below is a non-agent-action call site or an intentional test trap —
+# none is an unguarded runtime action. Re-scans show them in the Suppressed
+# section with reason + reviewer for audit.
+
+# Intentional detection traps — the scanner's own tests assert these are caught.
+# They are fixtures, not real call sites in this product.
+packages/supervisor-discover/tests/**            test-fixtures-intentional  ariel  2026-06-23
+services/supervisor_api/tests/**                 test-fixtures-intentional  ariel  2026-06-23
+
+# The scanners' own pattern-definition files match their own detection strings.
+packages/supervisor-discover/src/supervisor_discover/scanners/db_mutations.py:7   scanner-self-match  ariel  2026-06-23
+packages/supervisor-discover/src/supervisor_discover/scanners/fs_shell.py:47      scanner-self-match  ariel  2026-06-23
+
+# Code generator emits example SQL in the templates it writes — not a runtime call.
+packages/supervisor-discover/src/supervisor_discover/templates.py:96   codegen-example-not-runtime  ariel  2026-06-23
+
+# Landing page shows example attack strings as marketing copy (what vibefixing catches).
+apps/control-center/app/page.tsx:130   landing-demo-copy  ariel  2026-06-23
+apps/control-center/app/page.tsx:221   landing-demo-copy  ariel  2026-06-23
+
+# "Delete this" is a button label, not a DB mutation.
+apps/control-center/*WebhooksPanel.tsx:55   ui-label-not-db  ariel  2026-06-23
+
+# The `ac` local dev CLI shells out to start uvicorn/next and write logs —
+# developer tooling, not a supervised agent runtime action.
+packages/agentic-controls/src/agentic_controls/cli.py:146   dev-cli-not-agent-runtime  ariel  2026-06-23
+packages/agentic-controls/src/agentic_controls/cli.py:165   dev-cli-not-agent-runtime  ariel  2026-06-23
+packages/agentic-controls/src/agentic_controls/cli.py:166   dev-cli-not-agent-runtime  ariel  2026-06-23
+packages/agentic-controls/src/agentic_controls/cli.py:230   dev-cli-not-agent-runtime  ariel  2026-06-23
+packages/agentic-controls/src/agentic_controls/cli.py:231   dev-cli-not-agent-runtime  ariel  2026-06-23
